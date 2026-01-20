@@ -12,10 +12,8 @@ class DNS(pulumi.ComponentResource):
         name: str,
         subdomain: pulumi.Input[str],
         parent_zone_name: str,
-        organization_id: pulumi.Input[str],
-        environment_name: pulumi.Input[str],
         api_url: str,
-        cpgw_secret: pulumi.Input[str],
+        cpgw_api_key: pulumi.Input[str],
         tags: dict[str, str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -42,12 +40,10 @@ class DNS(pulumi.ComponentResource):
         self.delegation = DnsDelegation(
             f"{name}-delegation",
             DnsDelegationArgs(
-                organization_id=organization_id,
-                environment_name=environment_name,
                 subdomain=subdomain,
                 nameservers=self.zone.name_servers,
                 api_url=api_url,
-                secret=cpgw_secret,
+                cpgw_api_key=cpgw_api_key,
             ),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
         )

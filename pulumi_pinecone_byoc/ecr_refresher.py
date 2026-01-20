@@ -25,7 +25,7 @@ echo "Fetching ECR token from cpgw..."
 RESPONSE=$(wget -qO- --header="Content-Type: application/json" \
   --header="api-key: ${CPGW_API_KEY}" \
   --post-data="{}" \
-  "${CPGW_URL}/internal/cpgw/admin/ecr-token")
+  "${CPGW_URL}/internal/cpgw/infra/ecr-token")
 
 # parse json without jq - extract values between quotes after key
 extract_json() {
@@ -196,6 +196,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(
                     spec=k8s.batch.v1.JobSpecArgs(
                         backoff_limit=3,
+                        ttl_seconds_after_finished=300,  # cleanup after 5 minutes
                         template=k8s.core.v1.PodTemplateSpecArgs(
                             spec=k8s.core.v1.PodSpecArgs(
                                 service_account_name="ecr-credential-refresher",

@@ -22,7 +22,7 @@ class Pinetools(pulumi.ComponentResource):
         self,
         name: str,
         k8s_provider: pulumi.ProviderResource,
-        pinetools_image: str = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4/pinetools:smbyoc-20",
+        pinetools_image: str = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4/pinetools:latest",
         schedule: str = "0 * * * *",
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -93,6 +93,7 @@ class Pinetools(pulumi.ComponentResource):
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(
                     spec=k8s.batch.v1.JobSpecArgs(
                         backoff_limit=3,
+                        ttl_seconds_after_finished=3600,  # cleanup after 1 hour
                         template=k8s.core.v1.PodTemplateSpecArgs(
                             spec=k8s.core.v1.PodSpecArgs(
                                 service_account_name="pinetools",

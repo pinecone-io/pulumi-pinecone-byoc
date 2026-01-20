@@ -102,9 +102,9 @@ class S3Buckets(pulumi.ComponentResource):
         enable_versioning: bool,
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
-    ) -> aws.s3.BucketV2:
+    ) -> aws.s3.Bucket:
         """Create an S3 bucket with standard configuration."""
-        bucket = aws.s3.BucketV2(
+        bucket = aws.s3.Bucket(
             name,
             bucket=bucket_name,
             force_destroy=True,
@@ -125,12 +125,12 @@ class S3Buckets(pulumi.ComponentResource):
 
         # Server-side encryption
         if kms_key_arn:
-            aws.s3.BucketServerSideEncryptionConfigurationV2(
+            aws.s3.BucketServerSideEncryptionConfiguration(
                 f"{name}-encryption",
                 bucket=bucket.id,
                 rules=[
-                    aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(
-                        apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(
+                    aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(
+                        apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(
                             sse_algorithm="aws:kms",
                             kms_master_key_id=kms_key_arn,
                         ),
@@ -140,12 +140,12 @@ class S3Buckets(pulumi.ComponentResource):
                 opts=opts,
             )
         else:
-            aws.s3.BucketServerSideEncryptionConfigurationV2(
+            aws.s3.BucketServerSideEncryptionConfiguration(
                 f"{name}-encryption",
                 bucket=bucket.id,
                 rules=[
-                    aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(
-                        apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(
+                    aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(
+                        apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(
                             sse_algorithm="AES256",
                         ),
                     ),
@@ -155,24 +155,24 @@ class S3Buckets(pulumi.ComponentResource):
 
         # Versioning
         if enable_versioning:
-            aws.s3.BucketVersioningV2(
+            aws.s3.BucketVersioning(
                 f"{name}-versioning",
                 bucket=bucket.id,
-                versioning_configuration=aws.s3.BucketVersioningV2VersioningConfigurationArgs(
+                versioning_configuration=aws.s3.BucketVersioningVersioningConfigurationArgs(
                     status="Enabled",
                 ),
                 opts=opts,
             )
 
         # Lifecycle rules
-        aws.s3.BucketLifecycleConfigurationV2(
+        aws.s3.BucketLifecycleConfiguration(
             f"{name}-lifecycle",
             bucket=bucket.id,
             rules=[
-                aws.s3.BucketLifecycleConfigurationV2RuleArgs(
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
                     id="abort-incomplete-multipart",
                     status="Enabled",
-                    abort_incomplete_multipart_upload=aws.s3.BucketLifecycleConfigurationV2RuleAbortIncompleteMultipartUploadArgs(
+                    abort_incomplete_multipart_upload=aws.s3.BucketLifecycleConfigurationRuleAbortIncompleteMultipartUploadArgs(
                         days_after_initiation=2,
                     ),
                 ),

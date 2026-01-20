@@ -27,6 +27,8 @@ from .api import (
     delete_service_account,
     create_api_key,
     delete_api_key,
+    create_cpgw_api_key,
+    delete_cpgw_api_key,
     create_dns_delegation,
     delete_dns_delegation,
     create_datadog_api_key,
@@ -187,19 +189,16 @@ class ServiceAccountArgs:
     """Arguments for creating a Pinecone Service Account."""
 
     name: str
-    org_id: str
     api_url: str
     secret: str
 
     def __init__(
         self,
         name: str,
-        org_id: str,
         api_url: str,
         secret: str,
     ):
         self.name = name
-        self.org_id = org_id
         self.api_url = api_url
         self.secret = secret
 
@@ -208,9 +207,8 @@ class ServiceAccountProvider(ResourceProvider):
     """Provider for managing Pinecone service accounts."""
 
     def create(self, props):
-        name, org_id, api_url, secret = (
+        name, api_url, secret = (
             props["name"],
-            props["org_id"],
             props["api_url"],
             props["secret"],
         )
@@ -218,7 +216,6 @@ class ServiceAccountProvider(ResourceProvider):
             asyncio.to_thread(
                 create_service_account,
                 name=name,
-                org_id=org_id,
                 api_url=api_url,
                 secret=secret,
             )
@@ -235,12 +232,10 @@ class ServiceAccountProvider(ResourceProvider):
             return DiffResult(
                 changes=True, replaces=["client_id"], delete_before_replace=True
             )
-        # replace if name or org_id changes
+        # replace if name changes
         replaces = []
         if olds.get("name") != news.get("name"):
             replaces.append("name")
-        if olds.get("org_id") != news.get("org_id"):
-            replaces.append("org_id")
         return DiffResult(
             changes=len(replaces) > 0,
             replaces=replaces,
@@ -287,7 +282,6 @@ class ServiceAccount(Resource):
             "client_id": None,
             "client_secret": None,
             "name": args.name,
-            "org_id": args.org_id,
             "api_url": args.api_url,
             "secret": args.secret,
         }
@@ -447,28 +441,24 @@ class ApiKey(Resource):
 
 
 class DnsDelegationArgs:
-    organization_id: str
-    environment_name: str
+    """Arguments for creating a DNS delegation."""
+
     subdomain: str
     nameservers: list[str]
     api_url: str
-    secret: str
+    cpgw_api_key: str
 
     def __init__(
         self,
-        organization_id: str,
-        environment_name: str,
         subdomain: str,
         nameservers: list[str],
         api_url: str,
-        secret: str,
+        cpgw_api_key: str,
     ):
-        self.organization_id = organization_id
-        self.environment_name = environment_name
         self.subdomain = subdomain
         self.nameservers = nameservers
         self.api_url = api_url
-        self.secret = secret
+        self.cpgw_api_key = cpgw_api_key
 
 
 class DnsDelegationProvider(ResourceProvider):
@@ -476,12 +466,10 @@ class DnsDelegationProvider(ResourceProvider):
         result = asyncio.run(
             asyncio.to_thread(
                 create_dns_delegation,
-                organization_id=props["organization_id"],
-                environment_name=props["environment_name"],
                 subdomain=props["subdomain"],
                 nameservers=props["nameservers"],
                 api_url=props["api_url"],
-                secret=props["secret"],
+                cpgw_api_key=props["cpgw_api_key"],
             )
         )
 
@@ -491,12 +479,10 @@ class DnsDelegationProvider(ResourceProvider):
         )
 
     def diff(self, id, olds, news):
-        # force replace if subdomain or environment_name changes
+        # force replace if subdomain changes
         replaces = []
         if olds.get("subdomain") != news.get("subdomain"):
             replaces.append("subdomain")
-        if olds.get("environment_name") != news.get("environment_name"):
-            replaces.append("environment_name")
         changes = len(replaces) > 0 or olds.get("nameservers") != news.get(
             "nameservers"
         )
@@ -509,12 +495,10 @@ class DnsDelegationProvider(ResourceProvider):
         result = asyncio.run(
             asyncio.to_thread(
                 create_dns_delegation,
-                organization_id=news["organization_id"],
-                environment_name=news["environment_name"],
                 subdomain=news["subdomain"],
                 nameservers=news["nameservers"],
                 api_url=news["api_url"],
-                secret=news["secret"],
+                cpgw_api_key=news["cpgw_api_key"],
             )
         )
         return UpdateResult(
@@ -522,22 +506,20 @@ class DnsDelegationProvider(ResourceProvider):
         )
 
     def delete(self, id, props):
-        org_id = props.get("organization_id")
         subdomain = props.get("subdomain")
         nameservers = props.get("nameservers")
         api_url = props.get("api_url")
-        secret = props.get("secret")
+        cpgw_api_key = props.get("cpgw_api_key")
         # skip delete if we don't have the required props (state corruption)
-        if not all([org_id, subdomain, nameservers, api_url, secret]):
+        if not all([subdomain, nameservers, api_url, cpgw_api_key]):
             return {}
         asyncio.run(
             asyncio.to_thread(
                 delete_dns_delegation,
-                organization_id=org_id,
                 subdomain=subdomain,
                 nameservers=nameservers,
                 api_url=api_url,
-                secret=secret,
+                cpgw_api_key=cpgw_api_key,
             )
         )
         return {}
@@ -558,12 +540,10 @@ class DnsDelegation(Resource):
             "id": None,
             "fqdn": None,
             "change_id": None,
-            "organization_id": args.organization_id,
-            "environment_name": args.environment_name,
             "subdomain": args.subdomain,
             "nameservers": args.nameservers,
             "api_url": args.api_url,
-            "secret": args.secret,
+            "cpgw_api_key": args.cpgw_api_key,
         }
         super().__init__(
             DnsDelegationProvider(),
@@ -581,22 +561,16 @@ class DnsDelegation(Resource):
 class DatadogApiKeyArgs:
     """Arguments for creating a Datadog API Key via cpgw."""
 
-    organization_id: str
-    environment_name: str
     api_url: str
-    secret: str
+    cpgw_api_key: str
 
     def __init__(
         self,
-        organization_id: str,
-        environment_name: str,
         api_url: str,
-        secret: str,
+        cpgw_api_key: str,
     ):
-        self.organization_id = organization_id
-        self.environment_name = environment_name
         self.api_url = api_url
-        self.secret = secret
+        self.cpgw_api_key = cpgw_api_key
 
 
 class DatadogApiKeyProvider(ResourceProvider):
@@ -606,10 +580,8 @@ class DatadogApiKeyProvider(ResourceProvider):
         result = asyncio.run(
             asyncio.to_thread(
                 create_datadog_api_key,
-                organization_id=props["organization_id"],
-                environment_name=props["environment_name"],
                 api_url=props["api_url"],
-                secret=props["secret"],
+                cpgw_api_key=props["cpgw_api_key"],
             )
         )
 
@@ -619,34 +591,27 @@ class DatadogApiKeyProvider(ResourceProvider):
         )
 
     def diff(self, id, olds, news):
-        # Replace if organization_id or environment_name changes
-        replaces = []
-        if olds.get("organization_id") != news.get("organization_id"):
-            replaces.append("organization_id")
-        if olds.get("environment_name") != news.get("environment_name"):
-            replaces.append("environment_name")
+        # Datadog keys are immutable - no changes supported
         return DiffResult(
-            changes=len(replaces) > 0,
-            replaces=replaces,
+            changes=False,
+            replaces=[],
             stables=["api_key", "key_id"],
             delete_before_replace=True,
         )
 
     def delete(self, id, props):
-        organization_id = props.get("organization_id")
         key_id = props.get("key_id")
         api_url = props.get("api_url")
-        secret = props.get("secret")
+        cpgw_api_key = props.get("cpgw_api_key")
         # skip delete if we don't have the required props (state corruption)
-        if not all([organization_id, key_id, api_url, secret]):
+        if not all([key_id, api_url, cpgw_api_key]):
             return {}
         asyncio.run(
             asyncio.to_thread(
                 delete_datadog_api_key,
-                organization_id=organization_id,
                 key_id=key_id,
                 api_url=api_url,
-                secret=secret,
+                cpgw_api_key=cpgw_api_key,
             )
         )
         return {}
@@ -673,10 +638,8 @@ class DatadogApiKey(Resource):
             "id": None,
             "api_key": None,
             "key_id": None,
-            "organization_id": args.organization_id,
-            "environment_name": args.environment_name,
             "api_url": args.api_url,
-            "secret": args.secret,
+            "cpgw_api_key": args.cpgw_api_key,
         }
         super().__init__(
             DatadogApiKeyProvider(),
@@ -692,25 +655,21 @@ class DatadogApiKey(Resource):
 
 
 class AmpAccessArgs:
-    organization_id: str
-    environment_name: str
+    """Arguments for creating AMP access for a BYOC environment."""
+
     workload_role_arn: str
     api_url: str
-    secret: str
+    cpgw_api_key: str
 
     def __init__(
         self,
-        organization_id: str,
-        environment_name: str,
         workload_role_arn: str,
         api_url: str,
-        secret: str,
+        cpgw_api_key: str,
     ):
-        self.organization_id = organization_id
-        self.environment_name = environment_name
         self.workload_role_arn = workload_role_arn
         self.api_url = api_url
-        self.secret = secret
+        self.cpgw_api_key = cpgw_api_key
 
 
 class AmpAccessProvider(ResourceProvider):
@@ -729,16 +688,14 @@ class AmpAccessProvider(ResourceProvider):
                 result = asyncio.run(
                     asyncio.to_thread(
                         create_amp_access,
-                        organization_id=props["organization_id"],
-                        environment_name=props["environment_name"],
                         workload_role_arn=props["workload_role_arn"],
                         api_url=props["api_url"],
-                        secret=props["secret"],
+                        cpgw_api_key=props["cpgw_api_key"],
                     )
                 )
 
                 return CreateResult(
-                    props["environment_name"],
+                    props["workload_role_arn"],
                     {
                         **props,
                         "pinecone_role_arn": result.pinecone_role_arn,
@@ -753,17 +710,11 @@ class AmpAccessProvider(ResourceProvider):
         raise last_error or Exception("AmpAccess creation failed after retries")
 
     def diff(self, id, olds, news):
-        replaces = []
-        if olds.get("environment_name") != news.get("environment_name"):
-            replaces.append("environment_name")
-        if olds.get("organization_id") != news.get("organization_id"):
-            replaces.append("organization_id")
-        changes = len(replaces) > 0 or olds.get("workload_role_arn") != news.get(
-            "workload_role_arn"
-        )
+        # Replace if workload_role_arn changes
+        changes = olds.get("workload_role_arn") != news.get("workload_role_arn")
         return DiffResult(
             changes=changes,
-            replaces=replaces,
+            replaces=[],
             stables=["pinecone_role_arn", "amp_remote_write_endpoint", "amp_region"],
             delete_before_replace=True,
         )
@@ -782,11 +733,9 @@ class AmpAccessProvider(ResourceProvider):
                 result = asyncio.run(
                     asyncio.to_thread(
                         create_amp_access,
-                        organization_id=news["organization_id"],
-                        environment_name=news["environment_name"],
                         workload_role_arn=news["workload_role_arn"],
                         api_url=news["api_url"],
-                        secret=news["secret"],
+                        cpgw_api_key=news["cpgw_api_key"],
                     )
                 )
                 return UpdateResult(
@@ -804,19 +753,15 @@ class AmpAccessProvider(ResourceProvider):
         raise last_error or Exception("AmpAccess update failed after retries")
 
     def delete(self, id, props):
-        organization_id = props.get("organization_id")
-        environment_name = props.get("environment_name")
         api_url = props.get("api_url")
-        secret = props.get("secret")
-        if not all([organization_id, environment_name, api_url, secret]):
+        cpgw_api_key = props.get("cpgw_api_key")
+        if not all([api_url, cpgw_api_key]):
             return {}
         asyncio.run(
             asyncio.to_thread(
                 delete_amp_access,
-                organization_id=organization_id,
-                environment_name=environment_name,
                 api_url=api_url,
-                secret=secret,
+                cpgw_api_key=cpgw_api_key,
             )
         )
         return {}
@@ -839,14 +784,104 @@ class AmpAccess(Resource):
             "pinecone_role_arn": None,
             "amp_remote_write_endpoint": None,
             "amp_region": None,
-            "organization_id": args.organization_id,
-            "environment_name": args.environment_name,
             "workload_role_arn": args.workload_role_arn,
             "api_url": args.api_url,
-            "secret": args.secret,
+            "cpgw_api_key": args.cpgw_api_key,
         }
         super().__init__(
             AmpAccessProvider(),
+            name,
+            full_args,
+            opts,
+        )
+
+
+# =============================================================================
+# CpgwApiKey Resource
+# =============================================================================
+
+
+class CpgwApiKeyArgs:
+    environment: str
+    api_url: str
+    pinecone_api_key: str
+
+    def __init__(
+        self,
+        environment: str,
+        api_url: str,
+        pinecone_api_key: str,
+    ):
+        self.environment = environment
+        self.api_url = api_url
+        self.pinecone_api_key = pinecone_api_key
+
+
+class CpgwApiKeyProvider(ResourceProvider):
+    def create(self, props):
+        result = asyncio.run(
+            asyncio.to_thread(
+                create_cpgw_api_key,
+                environment=props["environment"],
+                api_url=props["api_url"],
+                pinecone_api_key=props["pinecone_api_key"],
+            )
+        )
+
+        return CreateResult(
+            result.id,
+            {**props, "key_id": result.id, "key": result.key},
+        )
+
+    def diff(self, id, olds, news):
+        replaces = []
+        if olds.get("environment") != news.get("environment"):
+            replaces.append("environment")
+        return DiffResult(
+            changes=len(replaces) > 0,
+            replaces=replaces,
+            stables=["key_id", "key"],
+            delete_before_replace=True,
+        )
+
+    def delete(self, id, props):
+        key_id = props.get("key_id")
+        api_url = props.get("api_url")
+        pinecone_api_key = props.get("pinecone_api_key")
+        if not all([key_id, api_url, pinecone_api_key]):
+            return {}
+        asyncio.run(
+            asyncio.to_thread(
+                delete_cpgw_api_key,
+                key_id=key_id,
+                api_url=api_url,
+                pinecone_api_key=pinecone_api_key,
+            )
+        )
+        return {}
+
+
+class CpgwApiKey(Resource):
+    id: Output[str]
+    key_id: Output[str]
+    key: Output[str]
+
+    def __init__(
+        self,
+        name: str,
+        args: CpgwApiKeyArgs,
+        opts: Optional[pulumi.ResourceOptions] = None,
+    ):
+        full_args = {
+            "id": None,
+            "key_id": None,
+            "key": None,
+            "environment": args.environment,
+            "api_url": args.api_url,
+            "pinecone_api_key": args.pinecone_api_key,
+        }
+        super().__init__(
+            CpgwApiKeyProvider(),
             name,
             full_args,
             opts,

@@ -1,4 +1,5 @@
 import json
+import time
 from typing import Tuple
 from dataclasses import dataclass
 
@@ -84,8 +85,12 @@ def management_plane_headers(jwt: str) -> dict:
     }
 
 
-def cpgw_url(api_url: str) -> str:
+def cpgw_admin_url(api_url: str) -> str:
     return f"{api_url}/internal/cpgw/admin"
+
+
+def cpgw_infra_url(api_url: str) -> str:
+    return f"{api_url}/internal/cpgw/infra"
 
 
 def cpgw_headers(pulumi_sa_secret) -> dict:
@@ -100,27 +105,41 @@ def request(
     url: str,
     headers: dict | None = None,
     body: dict | None = None,
+    max_retries: int = 3,
+    base_delay: float = 2.0,
 ):
-    response = requests.request(
-        method=method,
-        url=url,
-        headers=headers or {},
-        json=body,
-    )
+    last_error = None
+    for attempt in range(max_retries + 1):
+        response = requests.request(
+            method=method,
+            url=url,
+            headers=headers or {},
+            json=body,
+        )
 
-    try:
-        message = response.json()
-    except json.JSONDecodeError:
-        message = response.text
+        try:
+            message = response.json()
+        except json.JSONDecodeError:
+            message = response.text
 
-    if not response.ok:
+        if response.ok:
+            return message
+
         error_msg = f"{response.status_code}: {message}"
+
+        # retry on 5xx errors
         if 500 <= response.status_code < 600:
-            raise PineconeApiInternalError(error_msg)
+            last_error = PineconeApiInternalError(error_msg)
+            if attempt < max_retries:
+                delay = base_delay * (2**attempt)
+                pulumi.log.warn(f"request failed ({error_msg}), retrying in {delay}s...")
+                time.sleep(delay)
+                continue
+            raise last_error
         else:
             raise PineconeApiError(response.status_code, error_msg)
 
-    return message
+    raise last_error
 
 
 def create_environment(
@@ -139,7 +158,7 @@ def create_environment(
     }
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/environments",
+        f"{cpgw_admin_url(api_url)}/environments",
         headers=cpgw_headers(secret),
         body=body,
     )
@@ -160,25 +179,23 @@ def delete_environment(
 ):
     request(
         "DELETE",
-        f"{cpgw_url(api_url)}/environments/{env_id}?org-id={org_id}",
+        f"{cpgw_admin_url(api_url)}/environments/{env_id}?org-id={org_id}",
         headers=cpgw_headers(secret),
     )
 
 
 def create_service_account(
     name: str,
-    org_id: str,
     api_url: str,
     secret: str,
 ) -> Tuple[str, str, str]:
     try:
         resp = request(
             "POST",
-            f"{cpgw_url(api_url)}/service-accounts",
+            f"{cpgw_infra_url(api_url)}/service-accounts",
             headers=cpgw_headers(secret),
             body={
                 "name": name,
-                "org_id": org_id,
             },
         )
 
@@ -199,7 +216,7 @@ def delete_service_account(
     try:
         request(
             "DELETE",
-            f"{cpgw_url(api_url)}/service-accounts/{id}",
+            f"{cpgw_infra_url(api_url)}/service-accounts/{id}",
             headers=cpgw_headers(secret),
         )
     except Exception as e:
@@ -306,6 +323,47 @@ def delete_api_key(
     )
 
 
+class CreateCpgwApiKeyResponse(BaseModel):
+    id: str
+    environment: str
+    key: str
+
+
+def create_cpgw_api_key(
+    environment: str,
+    api_url: str,
+    pinecone_api_key: str,
+) -> CreateCpgwApiKeyResponse:
+    body = {
+        "environment": environment,
+    }
+    resp = request(
+        "POST",
+        f"{cpgw_admin_url(api_url)}/cpgw-api-keys",
+        headers=cpgw_headers(pinecone_api_key),
+        body=body,
+    )
+
+    try:
+        result = CreateCpgwApiKeyResponse.model_validate_json(json.dumps(resp))
+    except Exception as e:
+        raise PineconeApiError(500, f"invalid response: {e}")
+
+    return result
+
+
+def delete_cpgw_api_key(
+    key_id: str,
+    api_url: str,
+    pinecone_api_key: str,
+):
+    request(
+        "DELETE",
+        f"{cpgw_admin_url(api_url)}/cpgw-api-keys/{key_id}",
+        headers=cpgw_headers(pinecone_api_key),
+    )
+
+
 class CreateDnsDelegationResponse(BaseModel):
     change_id: str
     status: str
@@ -318,23 +376,19 @@ class DeleteDnsDelegationResponse(BaseModel):
 
 
 def create_dns_delegation(
-    organization_id: str,
-    environment_name: str,
     subdomain: str,
     nameservers: list[str],
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> CreateDnsDelegationResponse:
     body = {
-        "_organization_id": organization_id,
-        "_environment_name": environment_name,
         "subdomain": subdomain,
         "nameservers": nameservers,
     }
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/dns-delegation",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/dns-delegation",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 
@@ -347,21 +401,19 @@ def create_dns_delegation(
 
 
 def delete_dns_delegation(
-    organization_id: str,
     subdomain: str,
     nameservers: list[str],
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> DeleteDnsDelegationResponse:
     body = {
-        "_organization_id": organization_id,
         "subdomain": subdomain,
         "nameservers": nameservers,
     }
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/dns-delegation/delete",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/dns-delegation/delete",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 
@@ -384,21 +436,17 @@ class DeleteAmpAccessResponse(BaseModel):
 
 
 def create_amp_access(
-    organization_id: str,
-    environment_name: str,
     workload_role_arn: str,
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> CreateAmpAccessResponse:
     body = {
-        "_organization_id": organization_id,
-        "environment_name": environment_name,
         "workload_role_arn": workload_role_arn,
     }
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/amp-access",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/amp-access",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 
@@ -409,19 +457,14 @@ def create_amp_access(
 
 
 def delete_amp_access(
-    organization_id: str,
-    environment_name: str,
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> DeleteAmpAccessResponse:
-    body = {
-        "_organization_id": organization_id,
-        "environment_name": environment_name,
-    }
+    body = {}
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/amp-access/delete",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/amp-access/delete",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 
@@ -441,19 +484,14 @@ class DeleteDatadogApiKeyResponse(BaseModel):
 
 
 def create_datadog_api_key(
-    organization_id: str,
-    environment_name: str,
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> CreateDatadogApiKeyResponse:
-    body = {
-        "_organization_id": organization_id,
-        "_environment_name": environment_name,
-    }
+    body = {}
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/datadog-credentials",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/datadog-credentials",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 
@@ -466,19 +504,17 @@ def create_datadog_api_key(
 
 
 def delete_datadog_api_key(
-    organization_id: str,
     key_id: str,
     api_url: str,
-    secret: str,
+    cpgw_api_key: str,
 ) -> DeleteDatadogApiKeyResponse:
     body = {
-        "_organization_id": organization_id,
         "key_id": key_id,
     }
     resp = request(
         "POST",
-        f"{cpgw_url(api_url)}/datadog-credentials/delete",
-        headers=cpgw_headers(secret),
+        f"{cpgw_infra_url(api_url)}/datadog-credentials/delete",
+        headers=cpgw_headers(cpgw_api_key),
         body=body,
     )
 

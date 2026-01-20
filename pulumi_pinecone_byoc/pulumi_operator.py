@@ -81,11 +81,11 @@ class PulumiOperator(pulumi.ComponentResource):
 
     def _create_state_bucket(
         self, name: str, opts: pulumi.ResourceOptions
-    ) -> aws.s3.BucketV2:
+    ) -> aws.s3.Bucket:
         """Create S3 bucket for Pulumi state storage."""
         bucket_name = f"{self.config.resource_prefix}-pulumi-state"
 
-        bucket = aws.s3.BucketV2(
+        bucket = aws.s3.Bucket(
             f"{name}-state-bucket",
             bucket=bucket_name,
             force_destroy=True,
@@ -105,22 +105,22 @@ class PulumiOperator(pulumi.ComponentResource):
         )
 
         # enable versioning for state files
-        aws.s3.BucketVersioningV2(
+        aws.s3.BucketVersioning(
             f"{name}-state-bucket-versioning",
             bucket=bucket.id,
-            versioning_configuration=aws.s3.BucketVersioningV2VersioningConfigurationArgs(
+            versioning_configuration=aws.s3.BucketVersioningVersioningConfigurationArgs(
                 status="Enabled",
             ),
             opts=opts,
         )
 
         # server-side encryption with AES256 (state itself isn't sensitive)
-        aws.s3.BucketServerSideEncryptionConfigurationV2(
+        aws.s3.BucketServerSideEncryptionConfiguration(
             f"{name}-state-bucket-encryption",
             bucket=bucket.id,
             rules=[
-                aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(
-                    apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(
+                aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(
+                    apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(
                         sse_algorithm="AES256",
                     ),
                 ),
@@ -129,22 +129,22 @@ class PulumiOperator(pulumi.ComponentResource):
         )
 
         # lifecycle rules
-        aws.s3.BucketLifecycleConfigurationV2(
+        aws.s3.BucketLifecycleConfiguration(
             f"{name}-state-bucket-lifecycle",
             bucket=bucket.id,
             rules=[
-                aws.s3.BucketLifecycleConfigurationV2RuleArgs(
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
                     id="abort-incomplete-multipart",
                     status="Enabled",
-                    abort_incomplete_multipart_upload=aws.s3.BucketLifecycleConfigurationV2RuleAbortIncompleteMultipartUploadArgs(
+                    abort_incomplete_multipart_upload=aws.s3.BucketLifecycleConfigurationRuleAbortIncompleteMultipartUploadArgs(
                         days_after_initiation=2,
                     ),
                 ),
                 # keep old state versions for 30 days
-                aws.s3.BucketLifecycleConfigurationV2RuleArgs(
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
                     id="expire-old-versions",
                     status="Enabled",
-                    noncurrent_version_expiration=aws.s3.BucketLifecycleConfigurationV2RuleNoncurrentVersionExpirationArgs(
+                    noncurrent_version_expiration=aws.s3.BucketLifecycleConfigurationRuleNoncurrentVersionExpirationArgs(
                         noncurrent_days=30,
                     ),
                 ),

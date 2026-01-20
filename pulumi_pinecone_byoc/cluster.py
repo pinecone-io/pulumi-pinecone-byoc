@@ -28,6 +28,8 @@ from .providers import (
     ServiceAccountArgs,
     ApiKey,
     ApiKeyArgs,
+    CpgwApiKey,
+    CpgwApiKeyArgs,
     DatadogApiKey,
     DatadogApiKeyArgs,
     AmpAccess,
@@ -94,7 +96,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._config = config
 
         self._environment = Environment(
-            f"{name}-environment",
+            f"{config.resource_prefix}-environment",
             EnvironmentArgs(
                 cloud="aws",
                 region=args.region,
@@ -106,19 +108,28 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self._service_account = ServiceAccount(
-            f"{name}-service-account",
-            ServiceAccountArgs(
-                name=f"{config.cell_name}-sa",
-                org_id=args.organization_id,
+        self._cpgw_api_key = CpgwApiKey(
+            f"{config.resource_prefix}-cpgw-api-key",
+            CpgwApiKeyArgs(
+                environment=self._environment.env_name,
                 api_url=args.api_url,
-                secret=args.pinecone_api_key,
+                pinecone_api_key=args.pinecone_api_key,
             ),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._environment]),
         )
 
+        self._service_account = ServiceAccount(
+            f"{config.resource_prefix}-service-account",
+            ServiceAccountArgs(
+                name=f"{config.cell_name}-sa",
+                api_url=args.api_url,
+                secret=self._cpgw_api_key.key,
+            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
+        )
+
         self._api_key = ApiKey(
-            f"{name}-api-key",
+            f"{config.resource_prefix}-api-key",
             ApiKeyArgs(
                 org_id=args.organization_id,
                 project_name=config.cell_name,
@@ -134,27 +145,25 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
         self._datadog_api_key = DatadogApiKey(
-            f"{name}-datadog-api-key",
+            f"{config.resource_prefix}-datadog-api-key",
             DatadogApiKeyArgs(
-                organization_id=args.organization_id,
-                environment_name=self._environment.env_name,
                 api_url=args.api_url,
-                secret=args.pinecone_api_key,
+                cpgw_api_key=self._cpgw_api_key.key,
             ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._environment]),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
-        self._vpc = VPC(f"{name}-vpc", config, opts=child_opts)
+        self._vpc = VPC(f"{config.resource_prefix}-vpc", config, opts=child_opts)
 
         self._eks = EKS(
-            f"{name}-eks",
+            f"{config.resource_prefix}-eks",
             config,
             self._vpc,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
 
         self._s3 = S3Buckets(
-            f"{name}-s3",
+            f"{config.resource_prefix}-s3",
             config,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
@@ -176,21 +185,21 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             )
         )
         self._storage_integration_role = aws.iam.Role(
-            f"{name}-storage-integration-role",
+            f"{config.resource_prefix}-storage-integration-role",
             name=f"{config.resource_prefix}-storage-integration",
             assume_role_policy=assume_role_policy,
             tags=config.tags(Name=f"{config.resource_prefix}-storage-integration"),
             opts=child_opts,
         )
         aws.iam.RolePolicyAttachment(
-            f"{name}-storage-integration-policy",
+            f"{config.resource_prefix}-storage-integration-policy",
             role=self._storage_integration_role.id,
             policy_arn="arn:aws:iam::aws:policy/AmazonS3FullAccess",
             opts=child_opts,
         )
         # allow ec2 node role to assume storage integration role (for data-importer)
         aws.iam.RolePolicy(
-            f"{name}-ec2-allow-assume-role",
+            f"{config.resource_prefix}-ec2-allow-assume-role",
             role=self._eks.node_role_name,
             policy=json.dumps(
                 {
@@ -210,26 +219,24 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._subdomain = self._environment.env_name
 
         self._dns = DNS(
-            f"{name}-dns",
+            f"{config.resource_prefix}-dns",
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
             parent_zone_name=args.parent_dns_zone_name,
-            organization_id=args.organization_id,
-            environment_name=self._environment.env_name,
             api_url=args.api_url,
-            cpgw_secret=args.pinecone_api_key,
+            cpgw_api_key=self._cpgw_api_key.key,
             tags={"pinecone:cell": config.cell_name, "pinecone:managed-by": "pulumi"},
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._environment]),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
         self._rds = RDS(
-            f"{name}-rds",
+            f"{config.resource_prefix}-rds",
             config,
             self._vpc,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
 
         self._k8s_addons = K8sAddons(
-            f"{name}-k8s-addons",
+            f"{config.resource_prefix}-k8s-addons",
             config,
             self._eks,
             self._vpc.vpc_id,
@@ -238,22 +245,20 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         # AMP access for Prometheus remote write
         self._amp_access = AmpAccess(
-            f"{name}-amp-access",
+            f"{config.resource_prefix}-amp-access",
             AmpAccessArgs(
-                organization_id=args.organization_id,
-                environment_name=self._environment.env_name,
                 workload_role_arn=self._k8s_addons.amp_ingest_role.arn,
                 api_url=args.api_url,
-                secret=args.pinecone_api_key,
+                cpgw_api_key=self._cpgw_api_key.key,
             ),
             opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._environment, self._k8s_addons]
+                parent=self, depends_on=[self._cpgw_api_key, self._k8s_addons]
             ),
         )
 
         # Allow the AMP ingest role to assume the Pinecone role
         aws.iam.RolePolicy(
-            f"{name}-amp-allow-assume-pinecone-role",
+            f"{config.resource_prefix}-amp-allow-assume-pinecone-role",
             role=self._k8s_addons.amp_ingest_role.id,
             policy=self._amp_access.pinecone_role_arn.apply(
                 lambda arn: json.dumps(
@@ -275,7 +280,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         # NLB for private endpoint access (creates private ALB + NLB)
         # must be after K8sAddons so ALB Controller is available
         self._nlb = NLB(
-            f"{name}-nlb",
+            f"{config.resource_prefix}-nlb",
             config,
             self._vpc,
             self._dns,
@@ -288,9 +293,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
         self._k8s_secrets = K8sSecrets(
-            f"{name}-k8s-secrets",
+            f"{config.resource_prefix}-k8s-secrets",
             k8s_provider=self._eks.provider,
-            cpgw_api_key=args.pinecone_api_key,
+            cpgw_api_key=self._cpgw_api_key.key,
             gcps_api_key=self._api_key.value,
             dd_api_key=self._datadog_api_key.api_key,
             control_db=self._rds.control_db,
@@ -305,7 +310,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         # create before K8sConfigMaps so we can include backend_url and secrets_provider
         # note: the ServiceAccount is created by the Helm chart via helmfile config
         self._pulumi_operator = PulumiOperator(
-            f"{name}-pulumi-operator",
+            f"{config.resource_prefix}-pulumi-operator",
             config,
             oidc_provider_arn=self._eks.oidc_provider_arn,
             oidc_provider_url=self._eks.oidc_provider_url,
@@ -314,7 +319,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         # allow ec2 nodes to use pulumi kms key (for stack crds using node credentials)
         aws.iam.RolePolicy(
-            f"{name}-ec2-allow-kms",
+            f"{config.resource_prefix}-ec2-allow-kms",
             role=self._eks.node_role_name,
             policy=self._pulumi_operator.kms_key_arn.apply(
                 lambda kms_arn: json.dumps(
@@ -377,7 +382,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         }
 
         self._k8s_configmaps = K8sConfigMaps(
-            f"{name}-k8s-configmaps",
+            f"{config.resource_prefix}-k8s-configmaps",
             k8s_provider=self._eks.provider,
             cloud="aws",
             cell_name=config.cell_name,
@@ -395,7 +400,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         # ecr credential refresher - distributes regcred to all pc-* namespaces
         # uses cpgw-credentials secret created by K8sSecrets
         self._ecr_refresher = EcrCredentialRefresher(
-            f"{name}-ecr-refresher",
+            f"{config.resource_prefix}-ecr-refresher",
             k8s_provider=self._eks.provider,
             cpgw_url=args.api_url,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._k8s_secrets]),
@@ -403,7 +408,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         # pinetools for cluster management
         self._pinetools = Pinetools(
-            f"{name}-pinetools",
+            f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
@@ -430,6 +435,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "subdomain": self._subdomain,
                 "sli_checkers_project_id": self._api_key.project_id,
                 "cpgw_api_key": self._k8s_secrets.cpgw_api_key,
+                "cpgw_admin_api_key_id": self._cpgw_api_key.key_id,
                 "datadog_api_key_id": self._datadog_api_key.key_id,
                 "customer_tags": args.tags or {},
                 "pulumi_backend_url": self._pulumi_operator.backend_url,
@@ -642,6 +648,18 @@ class PineconeAWSCluster(pulumi.ComponentResource):
     @property
     def datadog_api_key_id(self) -> pulumi.Output[str]:
         return self._datadog_api_key.key_id
+
+    @property
+    def cpgw_admin_api_key(self) -> CpgwApiKey:
+        return self._cpgw_api_key
+
+    @property
+    def cpgw_admin_api_key_id(self) -> pulumi.Output[str]:
+        return self._cpgw_api_key.key_id
+
+    @property
+    def cpgw_admin_api_key_value(self) -> pulumi.Output[str]:
+        return self._cpgw_api_key.key
 
     @property
     def pulumi_operator(self) -> PulumiOperator:
