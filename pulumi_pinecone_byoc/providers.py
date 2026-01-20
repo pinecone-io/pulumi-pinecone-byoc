@@ -6,6 +6,7 @@ service accounts, and API keys through the Pulumi resource lifecycle.
 """
 
 import asyncio
+import time
 from typing import Optional
 
 import pulumi
@@ -19,6 +20,7 @@ from pulumi.dynamic import (
 )
 
 from .api import (
+    PineconeApiInternalError,
     create_environment,
     delete_environment,
     create_service_account,
@@ -29,6 +31,8 @@ from .api import (
     delete_dns_delegation,
     create_datadog_api_key,
     delete_datadog_api_key,
+    create_amp_access,
+    delete_amp_access,
 )
 
 
@@ -674,6 +678,173 @@ class DatadogApiKey(Resource):
         }
         super().__init__(
             DatadogApiKeyProvider(),
+            name,
+            full_args,
+            opts,
+        )
+
+
+# =============================================================================
+# AmpAccess Resource
+# =============================================================================
+
+
+class AmpAccessArgs:
+    organization_id: str
+    environment_name: str
+    workload_role_arn: str
+    api_url: str
+    secret: str
+
+    def __init__(
+        self,
+        organization_id: str,
+        environment_name: str,
+        workload_role_arn: str,
+        api_url: str,
+        secret: str,
+    ):
+        self.organization_id = organization_id
+        self.environment_name = environment_name
+        self.workload_role_arn = workload_role_arn
+        self.api_url = api_url
+        self.secret = secret
+
+
+class AmpAccessProvider(ResourceProvider):
+    def create(self, props):
+        # retry with exponential backoff for IAM eventual consistency
+        # (cross-account principal validation can fail if the role was just created)
+        max_retries = 5
+        last_error = None
+
+        for attempt in range(max_retries):
+            if attempt > 0:
+                delay = 2 ** attempt  # 2s, 4s, 8s, 16s
+                time.sleep(delay)
+
+            try:
+                result = asyncio.run(
+                    asyncio.to_thread(
+                        create_amp_access,
+                        organization_id=props["organization_id"],
+                        environment_name=props["environment_name"],
+                        workload_role_arn=props["workload_role_arn"],
+                        api_url=props["api_url"],
+                        secret=props["secret"],
+                    )
+                )
+
+                return CreateResult(
+                    props["environment_name"],
+                    {
+                        **props,
+                        "pinecone_role_arn": result.pinecone_role_arn,
+                        "amp_remote_write_endpoint": result.amp_remote_write_endpoint,
+                        "amp_region": result.amp_region,
+                    },
+                )
+            except PineconeApiInternalError as e:
+                last_error = e
+                continue
+
+        raise last_error or Exception("AmpAccess creation failed after retries")
+
+    def diff(self, id, olds, news):
+        replaces = []
+        if olds.get("environment_name") != news.get("environment_name"):
+            replaces.append("environment_name")
+        if olds.get("organization_id") != news.get("organization_id"):
+            replaces.append("organization_id")
+        changes = len(replaces) > 0 or olds.get("workload_role_arn") != news.get(
+            "workload_role_arn"
+        )
+        return DiffResult(
+            changes=changes,
+            replaces=replaces,
+            stables=["pinecone_role_arn", "amp_remote_write_endpoint", "amp_region"],
+            delete_before_replace=True,
+        )
+
+    def update(self, id, olds, news):
+        # retry with exponential backoff for IAM eventual consistency
+        max_retries = 5
+        last_error = None
+
+        for attempt in range(max_retries):
+            if attempt > 0:
+                delay = 2 ** attempt
+                time.sleep(delay)
+
+            try:
+                result = asyncio.run(
+                    asyncio.to_thread(
+                        create_amp_access,
+                        organization_id=news["organization_id"],
+                        environment_name=news["environment_name"],
+                        workload_role_arn=news["workload_role_arn"],
+                        api_url=news["api_url"],
+                        secret=news["secret"],
+                    )
+                )
+                return UpdateResult(
+                    {
+                        **news,
+                        "pinecone_role_arn": result.pinecone_role_arn,
+                        "amp_remote_write_endpoint": result.amp_remote_write_endpoint,
+                        "amp_region": result.amp_region,
+                    }
+                )
+            except PineconeApiInternalError as e:
+                last_error = e
+                continue
+
+        raise last_error or Exception("AmpAccess update failed after retries")
+
+    def delete(self, id, props):
+        organization_id = props.get("organization_id")
+        environment_name = props.get("environment_name")
+        api_url = props.get("api_url")
+        secret = props.get("secret")
+        if not all([organization_id, environment_name, api_url, secret]):
+            return {}
+        asyncio.run(
+            asyncio.to_thread(
+                delete_amp_access,
+                organization_id=organization_id,
+                environment_name=environment_name,
+                api_url=api_url,
+                secret=secret,
+            )
+        )
+        return {}
+
+
+class AmpAccess(Resource):
+    id: Output[str]
+    pinecone_role_arn: Output[str]
+    amp_remote_write_endpoint: Output[str]
+    amp_region: Output[str]
+
+    def __init__(
+        self,
+        name: str,
+        args: AmpAccessArgs,
+        opts: Optional[pulumi.ResourceOptions] = None,
+    ):
+        full_args = {
+            "id": None,
+            "pinecone_role_arn": None,
+            "amp_remote_write_endpoint": None,
+            "amp_region": None,
+            "organization_id": args.organization_id,
+            "environment_name": args.environment_name,
+            "workload_role_arn": args.workload_role_arn,
+            "api_url": args.api_url,
+            "secret": args.secret,
+        }
+        super().__init__(
+            AmpAccessProvider(),
             name,
             full_args,
             opts,

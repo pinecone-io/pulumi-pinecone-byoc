@@ -30,6 +30,8 @@ from .providers import (
     ApiKeyArgs,
     DatadogApiKey,
     DatadogApiKeyArgs,
+    AmpAccess,
+    AmpAccessArgs,
 )
 
 
@@ -233,6 +235,42 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
+        # AMP access for Prometheus remote write
+        self._amp_access = AmpAccess(
+            f"{name}-amp-access",
+            AmpAccessArgs(
+                organization_id=args.organization_id,
+                environment_name=self._environment.env_name,
+                workload_role_arn=self._k8s_addons.amp_ingest_role.arn,
+                api_url=args.api_url,
+                secret=args.pinecone_api_key,
+            ),
+            opts=pulumi.ResourceOptions(
+                parent=self, depends_on=[self._environment, self._k8s_addons]
+            ),
+        )
+
+        # Allow the AMP ingest role to assume the Pinecone role
+        aws.iam.RolePolicy(
+            f"{name}-amp-allow-assume-pinecone-role",
+            role=self._k8s_addons.amp_ingest_role.id,
+            policy=self._amp_access.pinecone_role_arn.apply(
+                lambda arn: json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": "sts:AssumeRole",
+                                "Resource": arn,
+                            }
+                        ],
+                    }
+                )
+            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._amp_access]),
+        )
+
         # NLB for private endpoint access (creates private ALB + NLB)
         # must be after K8sAddons so ALB Controller is available
         self._nlb = NLB(
@@ -329,6 +367,11 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
             "pulumi_operator_role_arn": self._pulumi_operator.operator_role_arn,
+            # AMP remote write config
+            "aws_amp_region": self._amp_access.amp_region,
+            "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
+            "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
+            "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -392,6 +435,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "pulumi_backend_url": self._pulumi_operator.backend_url,
                 "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
                 "storage_integration_role_arn": self._storage_integration_role.arn,
+                "amp_region": self._amp_access.amp_region,
+                "amp_remote_write_endpoint": self._amp_access.amp_remote_write_endpoint,
+                "amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
+                "amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
             }
         )
 
@@ -614,3 +661,23 @@ class PineconeAWSCluster(pulumi.ComponentResource):
     @property
     def pulumi_operator_role_arn(self) -> pulumi.Output[str]:
         return self._pulumi_operator.operator_role_arn
+
+    @property
+    def amp_access(self) -> AmpAccess:
+        return self._amp_access
+
+    @property
+    def amp_region(self) -> pulumi.Output[str]:
+        return self._amp_access.amp_region
+
+    @property
+    def amp_remote_write_endpoint(self) -> pulumi.Output[str]:
+        return self._amp_access.amp_remote_write_endpoint
+
+    @property
+    def amp_sigv4_role_arn(self) -> pulumi.Output[str]:
+        return self._amp_access.pinecone_role_arn
+
+    @property
+    def amp_ingest_role_arn(self) -> pulumi.Output[str]:
+        return self._k8s_addons.amp_ingest_role.arn

@@ -311,6 +311,14 @@ class K8sAddons(pulumi.ComponentResource):
             child_opts,
         )
 
+        # Create AMP ingest role for Prometheus remote write
+        self.amp_ingest_role = self._create_amp_ingest_role(
+            name,
+            eks.oidc_provider_arn,
+            eks.oidc_provider_url,
+            child_opts,
+        )
+
         self.register_outputs(
             {
                 "gloo_namespace": self.gloo_namespace.metadata.name,
@@ -319,6 +327,7 @@ class K8sAddons(pulumi.ComponentResource):
                 "external_dns_role_arn": self.external_dns_role.arn,
                 "ebs_csi_role_arn": self.ebs_csi_role.arn,
                 "azrebalance_role_arn": self.azrebalance_role.arn,
+                "amp_ingest_role_arn": self.amp_ingest_role.arn,
             }
         )
 
@@ -687,3 +696,21 @@ class K8sAddons(pulumi.ComponentResource):
         )
 
         return role
+
+    def _create_amp_ingest_role(
+        self,
+        name: str,
+        oidc_arn: pulumi.Output[str],
+        oidc_url: pulumi.Output[str],
+        opts: pulumi.ResourceOptions,
+    ) -> aws.iam.Role:
+        """Create IAM role for Prometheus to assume for AMP remote write."""
+        return aws.iam.Role(
+            f"{name}-amp-ingest-role",
+            name="amp-iamproxy-ingest-role",
+            assume_role_policy=self._create_irsa_trust_policy(
+                oidc_arn, oidc_url, "prometheus", "amp-iamproxy-ingest-service-account"
+            ),
+            tags=self.config.tags(Name="amp-iamproxy-ingest-role"),
+            opts=opts,
+        )

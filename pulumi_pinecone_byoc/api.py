@@ -320,6 +320,64 @@ def delete_dns_delegation(
     return result
 
 
+class CreateAmpAccessResponse(BaseModel):
+    pinecone_role_arn: str
+    amp_remote_write_endpoint: str
+    amp_region: str
+
+
+class DeleteAmpAccessResponse(BaseModel):
+    deleted: bool
+
+
+def create_amp_access(
+    organization_id: str,
+    environment_name: str,
+    workload_role_arn: str,
+    api_url: str,
+    secret: str,
+) -> CreateAmpAccessResponse:
+    body = {
+        "_organization_id": organization_id,
+        "environment_name": environment_name,
+        "workload_role_arn": workload_role_arn,
+    }
+    resp = request(
+        "POST",
+        f"{cpgw_url(api_url)}/amp-access",
+        headers=cpgw_headers(secret),
+        body=body,
+    )
+
+    try:
+        return CreateAmpAccessResponse.model_validate_json(json.dumps(resp))
+    except Exception as e:
+        raise PineconeApiError(500, f"invalid response: {e}")
+
+
+def delete_amp_access(
+    organization_id: str,
+    environment_name: str,
+    api_url: str,
+    secret: str,
+) -> DeleteAmpAccessResponse:
+    body = {
+        "_organization_id": organization_id,
+        "environment_name": environment_name,
+    }
+    resp = request(
+        "POST",
+        f"{cpgw_url(api_url)}/amp-access/delete",
+        headers=cpgw_headers(secret),
+        body=body,
+    )
+
+    try:
+        return DeleteAmpAccessResponse.model_validate_json(json.dumps(resp))
+    except Exception as e:
+        raise PineconeApiError(500, f"invalid response: {e}")
+
+
 class CreateDatadogApiKeyResponse(BaseModel):
     api_key: str
     key_id: str
