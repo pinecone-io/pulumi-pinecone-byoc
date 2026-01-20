@@ -37,19 +37,13 @@ class EKS(pulumi.ComponentResource):
         self.config = config
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # Create IAM role for EKS cluster
-        cluster_role = self._create_cluster_role(name, child_opts)
+        self._create_cluster_role(name, child_opts)
 
-        # Create IAM role for node groups
         self._node_role = self._create_node_role(name, child_opts)
 
-        # Create EKS cluster using pulumi-eks
-        # Skip default node group - we create managed node groups with AL2023 AMI
-        # TODO: use naming convention `cluster-{cell_name}` to match nodepool.yaml template
-        # which expects clusterName: cluster-{{ $.Values.cell_name }}
         self.cluster = eks.Cluster(
-            f"{name}-cluster",
-            name=config.resource_prefix,
+            resource_name=f"{config.resource_prefix}-eks-cluster",
+            name=f"cluster-{config.cell_name}",
             vpc_id=vpc.vpc_id,
             public_subnet_ids=vpc.public_subnet_ids,
             private_subnet_ids=vpc.private_subnet_ids,
@@ -70,7 +64,6 @@ class EKS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Create managed node groups
         self.node_groups: list[aws.eks.NodeGroup] = []
         for np_config in config.node_pools:
             node_group = self._create_node_group(
@@ -78,14 +71,12 @@ class EKS(pulumi.ComponentResource):
             )
             self.node_groups.append(node_group)
 
-        # Create K8s provider from kubeconfig
         self._k8s_provider = k8s.Provider(
             f"{name}-k8s-provider",
             kubeconfig=self.cluster.kubeconfig,
             opts=child_opts,
         )
 
-        # Register outputs
         self.register_outputs(
             {
                 "cluster_name": self.cluster.eks_cluster.name,
@@ -157,8 +148,6 @@ class EKS(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # Attach required policies for nodes
-        # S3FullAccess enables data plane services (shard-manager, etc.) to access S3
         for policy_arn in [
             "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy",
             "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy",
@@ -219,17 +208,14 @@ class EKS(pulumi.ComponentResource):
         opts: pulumi.ResourceOptions,
     ) -> aws.eks.NodeGroup:
         """Create a managed node group."""
-        # Create launch template with IMDS settings
         launch_template = self._create_launch_template(name, np_config, opts)
 
-        # Build labels
         labels = {
             "pinecone.io/cell": self.config.cell_name,
             "pinecone.io/nodepool": np_config.name,
             **np_config.labels,
         }
 
-        # Build taints
         taints = [
             aws.eks.NodeGroupTaintArgs(
                 key=t.key,

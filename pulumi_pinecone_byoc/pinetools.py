@@ -78,8 +78,6 @@ class Pinetools(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # cronjob - suspended by default, runs "pinetools doctor" as placeholder
-        # TODO: actual command will be "pinetools cluster install"
         cronjob = k8s.batch.v1.CronJob(
             f"{name}-cronjob",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -111,7 +109,13 @@ class Pinetools(pulumi.ComponentResource):
                                         name="pinetools",
                                         image=pinetools_image,
                                         # TODO: get image version dynamically
-                                        command=["pinetools", "cluster", "install", "--image", "main-97441a7"],
+                                        command=[
+                                            "pinetools",
+                                            "cluster",
+                                            "install",
+                                            "--image",
+                                            "main-3d6741d",
+                                        ],
                                         resources=k8s.core.v1.ResourceRequirementsArgs(
                                             requests={
                                                 "ephemeral-storage": "1Gi",

@@ -88,6 +88,7 @@ class PulumiOperator(pulumi.ComponentResource):
         bucket = aws.s3.BucketV2(
             f"{name}-state-bucket",
             bucket=bucket_name,
+            force_destroy=True,
             tags=self.config.tags(Name=bucket_name),
             opts=opts,
         )

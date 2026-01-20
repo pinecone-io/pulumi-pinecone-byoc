@@ -107,6 +107,7 @@ class S3Buckets(pulumi.ComponentResource):
         bucket = aws.s3.BucketV2(
             name,
             bucket=bucket_name,
+            force_destroy=True,
             tags=self.config.tags(Name=bucket_name),
             opts=opts,
         )

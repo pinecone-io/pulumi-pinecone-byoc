@@ -33,6 +33,7 @@ class DNS(pulumi.ComponentResource):
         self.zone = aws.route53.Zone(
             f"{name}-zone",
             name=fqdn,
+            force_destroy=True,
             tags={**tags, "Name": f"{name}-zone"},
             opts=child_opts,
         )

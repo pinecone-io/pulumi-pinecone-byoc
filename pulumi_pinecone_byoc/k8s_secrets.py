@@ -8,7 +8,6 @@ from typing import Optional, TYPE_CHECKING
 
 import pulumi
 import pulumi_kubernetes as k8s
-import pulumi_random as random
 
 if TYPE_CHECKING:
     from .rds import RDSInstance
@@ -23,7 +22,6 @@ def b64(data: str | pulumi.Output[str]) -> pulumi.Output[str]:
 def postgres_url(
     host: str, port: int, username: str, password: str, db_name: str
 ) -> str:
-    """Build a postgres connection URL - matches satellites/pinecone/utils.py."""
     return f"postgres://{username}:{password}@{host}:{port}/{db_name}"
 
 
@@ -34,6 +32,7 @@ class K8sSecrets(pulumi.ComponentResource):
         self,
         name: str,
         k8s_provider: pulumi.ProviderResource,
+        cpgw_api_key: pulumi.Input[str],
         gcps_api_key: Optional[pulumi.Input[str]] = None,
         dd_api_key: Optional[pulumi.Input[str]] = None,
         control_db: Optional["RDSInstance"] = None,
@@ -41,6 +40,8 @@ class K8sSecrets(pulumi.ComponentResource):
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
+
+        self.cpgw_api_key = pulumi.Output.secret(cpgw_api_key)
 
         self.namespace = k8s.core.v1.Namespace(
             f"{name}-external-secrets-ns",
@@ -64,15 +65,7 @@ class K8sSecrets(pulumi.ComponentResource):
             depends_on=[self.namespace],
         )
 
-        # cpgw credentials
-        cpgw_password = random.RandomPassword(
-            f"{name}-cpgw-key",
-            length=32,
-            special=False,
-            opts=pulumi.ResourceOptions(parent=self),
-        )
-        self.cpgw_api_key = pulumi.Output.secret(cpgw_password.result)
-
+        # cpgw credentials - the actual api key for cpgw auth
         k8s.core.v1.Secret(
             f"{name}-cpgw-credentials",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -118,9 +111,7 @@ class K8sSecrets(pulumi.ComponentResource):
 
         # Create tooling namespace and database secrets if RDS is provided
         if control_db is not None and system_db is not None:
-            self._create_db_secrets(
-                name, k8s_provider, control_db, system_db
-            )
+            self._create_db_secrets(name, k8s_provider, control_db, system_db)
 
         self.register_outputs(
             {
@@ -279,4 +270,3 @@ class K8sSecrets(pulumi.ComponentResource):
             type="Opaque",
             opts=ns_opts,
         )
-

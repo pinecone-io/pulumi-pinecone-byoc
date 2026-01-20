@@ -2,8 +2,7 @@
 ECR credential refresher cronjob - fetches tokens from cpgw and distributes
 regcred secrets to all pc-* namespaces plus prometheus/metering.
 
-TODO: auth scheme is temporary - using main pinecone api key for admin routes.
-need to finalize cpgw auth for all internal routes (ecr-token, datadog, etc).
+Auth is handled by the CPGW API key middleware layer.
 """
 
 from typing import Optional
@@ -21,11 +20,11 @@ set -e
 echo "=== ECR Credential Refresher ==="
 echo "Time: $(date -Iseconds)"
 
-# 1. Get ECR token from cpgw
+# 1. Get ECR token from cpgw (auth via api-key header)
 echo "Fetching ECR token from cpgw..."
 RESPONSE=$(wget -qO- --header="Content-Type: application/json" \
   --header="api-key: ${CPGW_API_KEY}" \
-  --post-data="{\"_organization_id\": \"${ORGANIZATION_ID}\", \"_environment_name\": \"${ENVIRONMENT_NAME}\"}" \
+  --post-data="{}" \
   "${CPGW_URL}/internal/cpgw/admin/ecr-token")
 
 # parse json without jq - extract values between quotes after key
@@ -109,9 +108,6 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
         name: str,
         k8s_provider: pulumi.ProviderResource,
         cpgw_url: pulumi.Input[str],
-        organization_id: pulumi.Input[str],
-        environment_name: pulumi.Input[str],
-        pinecone_api_key: pulumi.Input[str],  # TODO: temp auth, see module docstring
         schedule: str = "* * * * *",  # every minute during bootstrap, change to "0 */6 * * *" after stable
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -119,24 +115,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
 
         namespace = "external-secrets"
 
-        # secret for cpgw admin auth (temporary - see module docstring)
-        import base64
-
-        def b64(s: str) -> str:
-            return base64.b64encode(s.encode()).decode()
-
-        api_key_secret = k8s.core.v1.Secret(
-            f"{name}-api-key",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-refresher-api-key",
-                namespace=namespace,
-            ),
-            data={
-                "api-key": pulumi.Output.from_input(pinecone_api_key).apply(b64),
-            },
-            type="Opaque",
-            opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider),
-        )
+        # uses the cpgw-credentials secret created by K8sSecrets
 
         cluster_role = k8s.rbac.v1.ClusterRole(
             f"{name}-cluster-role",
@@ -199,8 +178,6 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
             ),
             data={
                 "cpgw-url": cpgw_url,
-                "organization-id": organization_id,
-                "environment-name": environment_name,
             },
             opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider),
         )
@@ -232,7 +209,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                                                 name="CPGW_API_KEY",
                                                 value_from=k8s.core.v1.EnvVarSourceArgs(
                                                     secret_key_ref=k8s.core.v1.SecretKeySelectorArgs(
-                                                        name="ecr-refresher-api-key",
+                                                        name="cpgw-credentials",
                                                         key="api-key",
                                                     ),
                                                 ),
@@ -243,24 +220,6 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                                                     config_map_key_ref=k8s.core.v1.ConfigMapKeySelectorArgs(
                                                         name="ecr-refresher-config",
                                                         key="cpgw-url",
-                                                    ),
-                                                ),
-                                            ),
-                                            k8s.core.v1.EnvVarArgs(
-                                                name="ORGANIZATION_ID",
-                                                value_from=k8s.core.v1.EnvVarSourceArgs(
-                                                    config_map_key_ref=k8s.core.v1.ConfigMapKeySelectorArgs(
-                                                        name="ecr-refresher-config",
-                                                        key="organization-id",
-                                                    ),
-                                                ),
-                                            ),
-                                            k8s.core.v1.EnvVarArgs(
-                                                name="ENVIRONMENT_NAME",
-                                                value_from=k8s.core.v1.EnvVarSourceArgs(
-                                                    config_map_key_ref=k8s.core.v1.ConfigMapKeySelectorArgs(
-                                                        name="ecr-refresher-config",
-                                                        key="environment-name",
                                                     ),
                                                 ),
                                             ),
@@ -285,7 +244,6 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                     service_account,
                     cluster_role_binding,
                     config_map,
-                    api_key_secret,
                 ],
             ),
         )
