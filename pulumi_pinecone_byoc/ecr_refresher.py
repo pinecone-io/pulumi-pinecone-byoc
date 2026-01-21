@@ -24,7 +24,7 @@ echo "Time: $(date -Iseconds)"
 echo "Fetching ECR token from cpgw..."
 RESPONSE=$(wget -qO- --header="Content-Type: application/json" \
   --header="api-key: ${CPGW_API_KEY}" \
-  --post-data="{}" \
+  --post-data="" \
   "${CPGW_URL}/internal/cpgw/infra/ecr-token")
 
 # parse json without jq - extract values between quotes after key

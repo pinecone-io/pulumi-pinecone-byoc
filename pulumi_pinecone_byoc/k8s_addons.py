@@ -662,7 +662,6 @@ class K8sAddons(pulumi.ComponentResource):
         opts: pulumi.ResourceOptions,
     ) -> aws.iam.Role:
         """Create IAM role for suspend-azrebalance cronjob to manage ASG processes."""
-        # Use cell_name (not resource_prefix) to match helm chart expectations
         role_name = f"control-plane-azrebalance-role-{self.config.cell_name}"
         role = aws.iam.Role(
             f"{name}-azrebalance-role",

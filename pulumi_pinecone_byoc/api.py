@@ -27,6 +27,8 @@ class PineconeApiInternalError(Exception):
 class CreateEnvironmentResponse(BaseModel):
     id: str
     name: str
+    org_id: str
+    org_name: str
 
 
 class CreateServiceAccountResponse(BaseModel):
@@ -85,12 +87,13 @@ def management_plane_headers(jwt: str) -> dict:
     }
 
 
-def cpgw_admin_url(api_url: str) -> str:
-    return f"{api_url}/internal/cpgw/admin"
-
-
 def cpgw_infra_url(api_url: str) -> str:
     return f"{api_url}/internal/cpgw/infra"
+
+
+def cpgw_bootstrap_url(api_url: str) -> str:
+    # bootstrap routes use pinecone api key auth (not cpgw api key)
+    return f"{api_url}/internal/cpgw/infra/bootstrap"
 
 
 def cpgw_headers(pulumi_sa_secret) -> dict:
@@ -132,33 +135,35 @@ def request(
             last_error = PineconeApiInternalError(error_msg)
             if attempt < max_retries:
                 delay = base_delay * (2**attempt)
-                pulumi.log.warn(f"request failed ({error_msg}), retrying in {delay}s...")
+                pulumi.log.warn(
+                    f"request failed ({error_msg}), retrying in {delay}s..."
+                )
                 time.sleep(delay)
                 continue
             raise last_error
         else:
             raise PineconeApiError(response.status_code, error_msg)
 
-    raise last_error
+    if last_error:
+        raise last_error
 
 
 def create_environment(
     cloud: str,
     region: str,
     global_env: str,
-    org_id: str,
     api_url: str,
     secret: str,
 ) -> CreateEnvironmentResponse:
+    # org_id is now derived from the pinecone api key auth context
     body = {
-        "organization_id": org_id,
         "cloud": cloud,
         "region": region,
         "global_env": global_env,
     }
     resp = request(
         "POST",
-        f"{cpgw_admin_url(api_url)}/environments",
+        f"{cpgw_bootstrap_url(api_url)}/environments",
         headers=cpgw_headers(secret),
         body=body,
     )
@@ -173,13 +178,13 @@ def create_environment(
 
 def delete_environment(
     env_id: str,
-    org_id: str,
     api_url: str,
     secret: str,
 ):
+    # org_id is now derived from the pinecone api key auth context
     request(
         "DELETE",
-        f"{cpgw_admin_url(api_url)}/environments/{env_id}?org-id={org_id}",
+        f"{cpgw_bootstrap_url(api_url)}/environments/{env_id}",
         headers=cpgw_headers(secret),
     )
 
@@ -339,7 +344,7 @@ def create_cpgw_api_key(
     }
     resp = request(
         "POST",
-        f"{cpgw_admin_url(api_url)}/cpgw-api-keys",
+        f"{cpgw_bootstrap_url(api_url)}/cpgw-api-keys",
         headers=cpgw_headers(pinecone_api_key),
         body=body,
     )
@@ -359,7 +364,7 @@ def delete_cpgw_api_key(
 ):
     request(
         "DELETE",
-        f"{cpgw_admin_url(api_url)}/cpgw-api-keys/{key_id}",
+        f"{cpgw_bootstrap_url(api_url)}/cpgw-api-keys/{key_id}",
         headers=cpgw_headers(pinecone_api_key),
     )
 
@@ -460,12 +465,10 @@ def delete_amp_access(
     api_url: str,
     cpgw_api_key: str,
 ) -> DeleteAmpAccessResponse:
-    body = {}
     resp = request(
         "POST",
         f"{cpgw_infra_url(api_url)}/amp-access/delete",
         headers=cpgw_headers(cpgw_api_key),
-        body=body,
     )
 
     try:
@@ -487,12 +490,11 @@ def create_datadog_api_key(
     api_url: str,
     cpgw_api_key: str,
 ) -> CreateDatadogApiKeyResponse:
-    body = {}
+    # no body needed - org/env derived from cpgw api key auth context
     resp = request(
         "POST",
         f"{cpgw_infra_url(api_url)}/datadog-credentials",
         headers=cpgw_headers(cpgw_api_key),
-        body=body,
     )
 
     try:

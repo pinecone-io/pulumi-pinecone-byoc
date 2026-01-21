@@ -52,7 +52,6 @@ class NodePool:
 @dataclass
 class PineconeAWSClusterArgs:
     # required
-    organization_id: pulumi.Input[str]
     organization_name: pulumi.Input[str]
     pinecone_api_key: pulumi.Input[str]
 
@@ -105,7 +104,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 cloud="aws",
                 region=args.region,
                 global_env=args.global_env,
-                org_id=args.organization_id,
                 api_url=args.api_url,
                 secret=args.pinecone_api_key,
             ),
@@ -135,7 +133,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._api_key = ApiKey(
             f"{config.resource_prefix}-api-key",
             ApiKeyArgs(
-                org_id=args.organization_id,
+                org_id=self._environment.org_id,
                 project_name=config.cell_name,
                 key_name=f"{config.cell_name}-key",
                 api_url=args.api_url,
@@ -421,7 +419,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             {
                 "cluster_name": config.cell_name,
                 "region": args.region,
-                "organization_id": args.organization_id,
+                "organization_id": self._environment.org_id,
+                "organization_name": self._environment.org_name,
                 "vpc_id": self._vpc.vpc_id,
                 "cluster_endpoint": self._eks.cluster.eks_cluster.endpoint,
                 "kubeconfig": self._eks.kubeconfig,

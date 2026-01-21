@@ -49,7 +49,6 @@ class EnvironmentArgs:
     cloud: str
     region: str
     global_env: str
-    org_id: str
     api_url: str
     secret: str
 
@@ -58,14 +57,12 @@ class EnvironmentArgs:
         cloud: str,
         region: str,
         global_env: str,
-        org_id: str,
         api_url: str,
         secret: str,
     ):
         self.cloud = cloud
         self.region = region
         self.global_env = global_env
-        self.org_id = org_id
         self.api_url = api_url
         self.secret = secret
 
@@ -74,11 +71,10 @@ class EnvironmentProvider(ResourceProvider):
     """Provider for managing Pinecone environments."""
 
     def create(self, props):
-        cloud, region, global_env, org_id, api_url, secret = (
+        cloud, region, global_env, api_url, secret = (
             props["cloud"],
             props["region"],
             props["global_env"],
-            props["org_id"],
             props["api_url"],
             props["secret"],
         )
@@ -88,13 +84,20 @@ class EnvironmentProvider(ResourceProvider):
                 cloud=cloud,
                 region=region,
                 global_env=global_env,
-                org_id=org_id,
                 api_url=api_url,
                 secret=secret,
             )
         )
 
-        return CreateResult(environment.id, {**props, "env_name": environment.name})
+        return CreateResult(
+            environment.id,
+            {
+                **props,
+                "env_name": environment.name,
+                "org_id": environment.org_id,
+                "org_name": environment.org_name,
+            },
+        )
 
     def diff(self, id, olds, news):
         # force replace if env_name is missing (state corruption)
@@ -113,32 +116,34 @@ class EnvironmentProvider(ResourceProvider):
             replaces.append("region")
         if olds.get("global_env") != news.get("global_env"):
             replaces.append("global_env")
-        if olds.get("org_id") != news.get("org_id"):
-            replaces.append("org_id")
         return DiffResult(
             changes=len(replaces) > 0 or olds.get("cloud") != news.get("cloud"),
             replaces=replaces,
-            stables=["env_name"],
+            stables=["env_name", "org_id", "org_name"],
             delete_before_replace=True,
         )
 
     def update(self, id, olds, news):
-        # env_name is stable, carry it forward
-        env_name = olds.get("env_name")
-        return UpdateResult({**news, "env_name": env_name})
+        # env_name, org_id, org_name are stable, carry them forward
+        return UpdateResult(
+            {
+                **news,
+                "env_name": olds.get("env_name"),
+                "org_id": olds.get("org_id"),
+                "org_name": olds.get("org_name"),
+            }
+        )
 
     def delete(self, id, props):
-        org_id = props.get("org_id")
         api_url = props.get("api_url")
         secret = props.get("secret")
         # skip delete if we don't have the required props (state corruption)
-        if not all([org_id, api_url, secret]):
+        if not all([api_url, secret]):
             return {}
         asyncio.run(
             asyncio.to_thread(
                 delete_environment,
                 env_id=id,
-                org_id=org_id,
                 api_url=api_url,
                 secret=secret,
             )
@@ -155,6 +160,8 @@ class Environment(Resource):
 
     id: Output[str]
     env_name: Output[str]
+    org_id: Output[str]
+    org_name: Output[str]
 
     def __init__(
         self,
@@ -165,10 +172,11 @@ class Environment(Resource):
         full_args = {
             "id": None,
             "env_name": None,
+            "org_id": None,  # returned from api (derived from auth context)
+            "org_name": None,  # returned from api (derived from auth context)
             "cloud": args.cloud,
             "region": args.region,
             "global_env": args.global_env,
-            "org_id": args.org_id,
             "api_url": args.api_url,
             "secret": args.secret,
         }
@@ -387,7 +395,9 @@ class ApiKeyProvider(ResourceProvider):
         auth0_client_secret = props.get("auth0_client_secret")
         api_url = props.get("api_url")
         api_key = props.get("value")
-        if not all([auth0_domain, auth0_client_id, auth0_client_secret, api_url, api_key]):
+        if not all(
+            [auth0_domain, auth0_client_id, auth0_client_secret, api_url, api_key]
+        ):
             return {}
 
         auth0 = Auth0Config(
@@ -681,7 +691,7 @@ class AmpAccessProvider(ResourceProvider):
 
         for attempt in range(max_retries):
             if attempt > 0:
-                delay = 2 ** attempt  # 2s, 4s, 8s, 16s
+                delay = 2**attempt  # 2s, 4s, 8s, 16s
                 time.sleep(delay)
 
             try:
@@ -726,7 +736,7 @@ class AmpAccessProvider(ResourceProvider):
 
         for attempt in range(max_retries):
             if attempt > 0:
-                delay = 2 ** attempt
+                delay = 2**attempt
                 time.sleep(delay)
 
             try:
