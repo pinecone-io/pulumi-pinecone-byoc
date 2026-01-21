@@ -54,9 +54,13 @@ class PineconeAWSClusterArgs:
     # required
     organization_id: pulumi.Input[str]
     organization_name: pulumi.Input[str]
-    region: pulumi.Input[str]
-    availability_zones: pulumi.Input[list[str]]
     pinecone_api_key: pulumi.Input[str]
+
+    # aws specific
+    region: pulumi.Input[str] = "us-east-1"
+    availability_zones: pulumi.Input[list[str]] = field(
+        default_factory=lambda: ["us-east-1a", "us-east-1b"]
+    )
 
     # networking
     vpc_cidr: pulumi.Input[str] = "10.0.0.0/16"

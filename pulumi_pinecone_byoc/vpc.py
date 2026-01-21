@@ -34,7 +34,7 @@ class VPC(pulumi.ComponentResource):
 
         # Create VPC
         self.vpc = aws.ec2.Vpc(
-            f"{name}-vpc",
+            f"{name}",
             cidr_block=config.vpc_cidr,
             enable_dns_hostnames=True,
             enable_dns_support=True,
@@ -162,9 +162,7 @@ class VPC(pulumi.ComponentResource):
             )
 
         # Private route tables (one per AZ for NAT gateway routing)
-        for i, (subnet, nat) in enumerate(
-            zip(self.private_subnets, self.nat_gateways)
-        ):
+        for i, (subnet, nat) in enumerate(zip(self.private_subnets, self.nat_gateways)):
             az = self.config.availability_zones[i]
             private_rt = aws.ec2.RouteTable(
                 f"{name}-private-rt-{az}",

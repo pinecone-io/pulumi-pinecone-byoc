@@ -39,7 +39,6 @@ class RDSInstance(pulumi.ComponentResource):
         self.db_config = db_config
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # Generate password using pulumi_random (persists across updates)
         self._random_password = random.RandomPassword(
             f"{name}-random-password",
             length=32,
@@ -50,7 +49,10 @@ class RDSInstance(pulumi.ComponentResource):
         self.master_password = aws.secretsmanager.Secret(
             f"{name}-master-password",
             name=f"{config.resource_prefix}/{db_config.name}/master-password",
-            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-master-password"),
+            recovery_window_in_days=0,
+            tags=config.tags(
+                Name=f"{config.resource_prefix}-{db_config.name}-master-password"
+            ),
             opts=child_opts,
         )
 
@@ -61,7 +63,6 @@ class RDSInstance(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Cluster parameter group
         cluster_parameter_group = aws.rds.ClusterParameterGroup(
             f"{name}-cluster-params",
             family="aurora-postgresql15",
@@ -80,9 +81,6 @@ class RDSInstance(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Create Aurora cluster
-        # Note: Use password.result directly (like satellites/aws_exdb.py) instead of
-        # going through SecretVersion to avoid potential timing/resolution issues
         cluster_args = {
             "cluster_identifier": f"{config.resource_prefix}-{db_config.name}",
             "engine": "aurora-postgresql",
@@ -98,10 +96,7 @@ class RDSInstance(pulumi.ComponentResource):
             "preferred_backup_window": "03:00-04:00",
             "preferred_maintenance_window": "sun:04:00-sun:05:00",
             "deletion_protection": db_config.deletion_protection,
-            "skip_final_snapshot": not config.is_production,
-            "final_snapshot_identifier": f"{config.resource_prefix}-{db_config.name}-final"
-            if config.is_production
-            else None,
+            "skip_final_snapshot": True,
             "tags": config.tags(Name=f"{config.resource_prefix}-{db_config.name}"),
         }
 
@@ -115,7 +110,6 @@ class RDSInstance(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Create single instance (db.r8g.large)
         self.instance = aws.rds.ClusterInstance(
             f"{name}-instance",
             identifier=f"{config.resource_prefix}-{db_config.name}-instance-0",
@@ -128,15 +122,19 @@ class RDSInstance(pulumi.ComponentResource):
             performance_insights_enabled=True,
             performance_insights_retention_period=7,
             auto_minor_version_upgrade=False,
-            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-instance-0"),
+            tags=config.tags(
+                Name=f"{config.resource_prefix}-{db_config.name}-instance-0"
+            ),
             opts=child_opts,
         )
 
-        # Store connection info in Secrets Manager
         self.connection_secret = aws.secretsmanager.Secret(
             f"{name}-connection",
             name=f"{config.resource_prefix}/{db_config.name}/connection",
-            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-connection"),
+            recovery_window_in_days=0,
+            tags=config.tags(
+                Name=f"{config.resource_prefix}-{db_config.name}-connection"
+            ),
             opts=child_opts,
         )
 
@@ -257,7 +255,9 @@ class RDS(pulumi.ComponentResource):
             security_group_id=self.security_group.id,
             subnet_group_name=self.subnet_group.name,
             kms_key_arn=kms_key_arn,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.subnet_group, self.security_group]),
+            opts=pulumi.ResourceOptions(
+                parent=self, depends_on=[self.subnet_group, self.security_group]
+            ),
         )
 
         # Create system-db
@@ -269,7 +269,9 @@ class RDS(pulumi.ComponentResource):
             security_group_id=self.security_group.id,
             subnet_group_name=self.subnet_group.name,
             kms_key_arn=kms_key_arn,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.subnet_group, self.security_group]),
+            opts=pulumi.ResourceOptions(
+                parent=self, depends_on=[self.subnet_group, self.security_group]
+            ),
         )
 
         self.register_outputs(

@@ -96,10 +96,6 @@ class Config(BaseModel):
     # DNS
     parent_zone_name: str = "pinecone.io"
 
-    @property
-    def is_production(self) -> bool:
-        return self.environment in ("prod", "production")
-
     @computed_field
     @property
     def cell_name(self) -> str:
