@@ -538,9 +538,12 @@ class K8sAddons(pulumi.ComponentResource):
                         }
                     },
                     "extraArgs": {
-                        "balance-similar-node-groups": "true",
-                        "scale-down-delay-after-add": "1m",
-                        "scale-down-unneeded-time": "1m",
+                        "balance-similar-node-groups": "false",
+                        "skip-nodes-with-local-storage": "false",
+                        "scale-down-delay-after-add": "30s",
+                        "scale-down-delay-after-delete": "0s",
+                        "scale-down-unneeded-time": "30s",
+                        "max-node-provision-time": "10m",
                     },
                 },
             ),
