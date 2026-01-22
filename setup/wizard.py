@@ -183,11 +183,9 @@ class SetupWizard:
         project_name = self._get_project_name()
 
         # step 10: generate everything
-        self._generate_project(
+        return self._generate_project(
             output_dir, project_name, api_key, region, azs, cidr, deletion_protection
         )
-
-        return True
 
     def _print_header(self):
         console.print()
@@ -405,7 +403,7 @@ class SetupWizard:
             console.print(
                 "  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/"
             )
-            return
+            return False
 
         import subprocess
 
@@ -544,6 +542,8 @@ dependencies = ["pulumi-pinecone-byoc"]
         console.print("  [dim]To deploy, run:[/]")
         console.print(f"    [bold {BLUE}]pulumi up[/]")
         console.print()
+
+        return True
 
 
 class PreflightChecker:
