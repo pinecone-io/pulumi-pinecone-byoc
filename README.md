@@ -2,7 +2,7 @@
 
 Deploy Pinecone in your own AWS account with full control over your infrastructure.
 
-[![Demo](https://asciinema.org/a/Aq6Hf0lzMADO5OHe.svg)]((https://asciinema.org/a/Aq6Hf0lzMADO5OHe))
+[![asciicast](https://asciinema.org/a/FLyvBZYcA8zn23ov.svg)](https://asciinema.org/a/FLyvBZYcA8zn23ov)
 
 ## Quick Start
 
@@ -34,33 +34,6 @@ Provisioning takes approximately 25-30 minutes.
 | AWS CLI | AWS access | [AWS docs](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
 | Pulumi | Infrastructure | [pulumi.com/docs/install](https://www.pulumi.com/docs/install/) |
 | kubectl | Cluster access | [kubernetes.io](https://kubernetes.io/docs/tasks/tools/) |
-
-## What Gets Deployed
-
-### Networking
-- **VPC** with public and private subnets across 2 availability zones
-- **NAT Gateways** for outbound internet access from private subnets
-- **Network Load Balancer** for private endpoint access (PrivateLink)
-
-### Compute
-- **EKS Cluster** (Kubernetes 1.33) with managed node groups
-- **Cluster Autoscaler** for automatic node scaling
-- **ALB Ingress Controller** for load balancing
-
-### Storage
-- **S3 Buckets** for vector data, write-ahead logs, and operational data
-- **RDS PostgreSQL** (Aurora) for control plane and system databases
-
-### DNS & Certificates
-- **Route53 Hosted Zone** for your cluster subdomain
-- **ACM Certificate** with automatic DNS validation
-
-### Platform Components
-- **Gloo Edge** API gateway for routing
-- **External DNS** for automatic DNS record management
-- **ECR Credential Refresher** for private image registry access
-- **Prometheus** for metrics collection
-- **Pulumi Kubernetes Operator** for GitOps-style deployments
 
 ## Architecture
 
