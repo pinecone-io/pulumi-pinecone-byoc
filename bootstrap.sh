@@ -92,7 +92,8 @@ echo "Downloading setup wizard..."
 # download wizard.py
 curl -fsSL "https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/setup/wizard.py" -o wizard.py
 
-# create a minimal pyproject.toml for the setup wizard dependencies
+# create a temp pyproject.toml for the setup wizard dependencies
+# (wizard.py will overwrite this with the actual project pyproject.toml)
 cat > pyproject.toml << 'EOF'
 [project]
 name = "pinecone-byoc-setup"
@@ -109,11 +110,11 @@ echo ""
 echo "Running setup wizard..."
 echo ""
 
-# run the wizard
+# run the wizard (generates __main__.py and pyproject.toml for pulumi)
 uv run python wizard.py
 
-# cleanup setup files
-rm -f wizard.py pyproject.toml uv.lock
+# cleanup wizard setup files (keep the wizard-generated pyproject.toml)
+rm -f wizard.py uv.lock
 rm -rf .venv 2>/dev/null || true
 
 echo ""
