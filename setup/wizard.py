@@ -523,10 +523,12 @@ dependencies = ["pulumi-pinecone-byoc"]
                 text=True,
             )
 
-        if result.returncode == 0:
-            console.print("  [green]✓[/] API key stored securely")
-        else:
-            console.print(f"  [yellow]⚠[/] API key: {result.stderr.strip()}")
+        if result.returncode != 0:
+            console.print(f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}")
+            console.print("  [dim]Run manually:[/] pulumi config set --secret pinecone_api_key <key>")
+            return False
+
+        console.print("  [green]✓[/] API key stored securely")
 
         # print success
         console.print()
