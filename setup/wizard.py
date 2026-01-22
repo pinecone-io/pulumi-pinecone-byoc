@@ -13,7 +13,6 @@ from typing import Optional
 
 import boto3
 import yaml
-from botocore.exceptions import ClientError
 from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
@@ -602,13 +601,13 @@ class PreflightChecker:
                 ServiceCode=service_code, QuotaCode=quota_code
             )
             return response["Quota"]["Value"]
-        except ClientError:
+        except Exception:
             try:
                 response = self.servicequotas.get_aws_default_service_quota(
                     ServiceCode=service_code, QuotaCode=quota_code
                 )
                 return response["Quota"]["Value"]
-            except ClientError:
+            except Exception:
                 return None
 
     def _check_vpc_quota(self):
@@ -626,7 +625,7 @@ class PreflightChecker:
                 if available < 1
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("VPC Quota", False, "Failed to check", str(e))
 
     def _check_eip_quota(self):
@@ -645,7 +644,7 @@ class PreflightChecker:
                 if available < needed
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("Elastic IPs", False, "Failed to check", str(e))
 
     def _check_nat_gateway_quota(self):
@@ -666,7 +665,7 @@ class PreflightChecker:
                 if available < needed
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("NAT Gateways", False, "Failed to check", str(e))
 
     def _check_igw_quota(self):
@@ -684,7 +683,7 @@ class PreflightChecker:
                 if available < 1
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("Internet Gateways", False, "Failed to check", str(e))
 
     def _check_nlb_quota(self):
@@ -704,7 +703,7 @@ class PreflightChecker:
                 if available < 1
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("Network Load Balancers", False, "Failed to check", str(e))
 
     def _check_eks_cluster_quota(self):
@@ -720,7 +719,7 @@ class PreflightChecker:
                 f"{available} available [dim](using {current}/{int(quota)})[/]",
                 "Request quota increase for 'Clusters'" if available < 1 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("EKS Cluster Quota", False, "Failed to check", str(e))
 
     def _check_az_availability(self):
@@ -739,7 +738,7 @@ class PreflightChecker:
                 else f"AZs not available: {', '.join(missing)}",
                 f"Available AZs: {', '.join(available_azs)}" if missing else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("Availability Zones", False, "Failed to check", str(e))
 
     def _check_instance_types(self):
@@ -773,7 +772,7 @@ class PreflightChecker:
                 if not all_available
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("Instance Types", False, "Failed to check", str(e))
 
     def _check_cidr_conflicts(self):
@@ -816,7 +815,7 @@ class PreflightChecker:
                 if conflicts
                 else None,
             )
-        except ClientError as e:
+        except Exception as e:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
 
 

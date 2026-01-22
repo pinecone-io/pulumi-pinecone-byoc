@@ -72,10 +72,10 @@ fi
 echo -e "  ${GREEN}✓${RESET} AWS credentials configured"
 echo ""
 
-# get project directory
+# get project directory (read from /dev/tty for curl pipe compatibility)
 default_dir="pinecone-byoc"
 echo -n "Project directory [$default_dir]: "
-read project_dir
+read project_dir < /dev/tty
 project_dir="${project_dir:-$default_dir}"
 
 if [ -d "$project_dir" ]; then
