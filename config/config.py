@@ -1,5 +1,5 @@
 """
-Clean configuration for Pinecone BYOC AWS infrastructure.
+Configuration for Pinecone BYOC AWS infrastructure.
 """
 
 from pydantic import BaseModel, Field

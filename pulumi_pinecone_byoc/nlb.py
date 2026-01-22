@@ -42,7 +42,6 @@ class NLB(pulumi.ComponentResource):
         self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # security group for NLB
         self.nlb_security_group = aws.ec2.SecurityGroup(
             f"{name}-nlb-sg",
             vpc_id=vpc.vpc_id,
@@ -69,7 +68,6 @@ class NLB(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # security group for private ALB - only allow traffic from NLB
         self.alb_security_group = aws.ec2.SecurityGroup(
             f"{name}-private-alb-sg",
             vpc_id=vpc.vpc_id,
@@ -195,7 +193,6 @@ class NLB(pulumi.ComponentResource):
             ),
             spec=k8s.networking.v1.IngressSpecArgs(
                 rules=[
-                    # rule for NLB health checks (no host header)
                     k8s.networking.v1.IngressRuleArgs(
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
@@ -214,7 +211,6 @@ class NLB(pulumi.ComponentResource):
                             ],
                         ),
                     ),
-                    # rule for normal traffic
                     k8s.networking.v1.IngressRuleArgs(
                         host="*.pinecone.io",
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
@@ -250,10 +246,9 @@ class NLB(pulumi.ComponentResource):
         )
 
         # target group for the private ALB
-        # aws target group names must be <= 32 chars
         self.target_group = aws.lb.TargetGroup(
             f"{name}-alb-tg",
-            name=self._cell_name.apply(lambda cn: f"{cn}-tg"[:32]),
+            name=self._cell_name.apply(lambda cn: f"{cn}-tg"[:32]),  # AWS tg name limit
             target_type="alb",
             port=443,
             protocol="TCP",
@@ -302,7 +297,6 @@ class NLB(pulumi.ComponentResource):
             ),
         )
 
-        # Network Load Balancer
         self.nlb = aws.lb.LoadBalancer(
             f"{name}-nlb",
             name=f"{config.resource_prefix}-nlb",

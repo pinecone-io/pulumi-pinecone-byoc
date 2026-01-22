@@ -9,6 +9,7 @@ import json
 import pulumi
 import pulumi_aws as aws
 
+from config import sanitize
 from .vpc import VPC
 from .eks import EKS
 from .s3 import S3Buckets
@@ -72,6 +73,7 @@ class PineconeAWSClusterArgs:
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
+    deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
 
     # pinecone specific
     api_url: pulumi.Input[str] = "https://api.pinecone.io"
@@ -111,11 +113,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
         # cell_name derived from org_name (from environment response)
-        def sanitize(name: str) -> str:
-            import re
-
-            return re.sub(r"[^a-z0-9]", "", name.lower())
-
         self._cell_name = self._environment.org_name.apply(
             lambda org_name: f"{args.global_env}-aws-{sanitize(org_name)}"
         )
@@ -179,6 +176,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-s3",
             config,
             cell_name=self._cell_name,
+            force_destroy=not args.deletion_protection,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
@@ -509,7 +507,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
-            database=DatabaseConfig(),
+            database=DatabaseConfig(deletion_protection=args.deletion_protection),
         )
 
     @property

@@ -1,3 +1,3 @@
-from .config import Config, NodePoolConfig, DatabaseConfig, DatabaseInstanceConfig
+from .config import Config, NodePoolConfig, DatabaseConfig, DatabaseInstanceConfig, sanitize
 
-__all__ = ["Config", "NodePoolConfig", "DatabaseConfig", "DatabaseInstanceConfig"]
+__all__ = ["Config", "NodePoolConfig", "DatabaseConfig", "DatabaseInstanceConfig", "sanitize"]

@@ -72,7 +72,6 @@ class Pinetools(pulumi.ComponentResource):
             depends_on=[ns],
         )
 
-        # service account with imagePullSecrets
         sa = k8s.core.v1.ServiceAccount(
             f"{name}-sa",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -85,7 +84,6 @@ class Pinetools(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # cluster-admin binding for pinetools
         k8s.rbac.v1.ClusterRoleBinding(
             f"{name}-cluster-admin",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -182,7 +180,7 @@ class Pinetools(pulumi.ComponentResource):
                 ),
                 spec=k8s.batch.v1.JobSpecArgs(
                     backoff_limit=3,
-                    ttl_seconds_after_finished=3600,  # cleanup after 1 hour
+                    ttl_seconds_after_finished=3600,
                     template=k8s.core.v1.PodTemplateSpecArgs(
                         spec=k8s.core.v1.PodSpecArgs(
                             service_account_name="pinetools",

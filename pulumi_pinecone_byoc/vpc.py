@@ -32,7 +32,6 @@ class VPC(pulumi.ComponentResource):
         self.config = config
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # Create VPC
         self.vpc = aws.ec2.Vpc(
             f"{name}",
             cidr_block=config.vpc_cidr,
@@ -42,7 +41,6 @@ class VPC(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Internet Gateway for public subnets
         self.igw = aws.ec2.InternetGateway(
             f"{name}-igw",
             vpc_id=self.vpc.id,
@@ -50,18 +48,16 @@ class VPC(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Create subnets
         self.public_subnets: list[aws.ec2.Subnet] = []
         self.private_subnets: list[aws.ec2.Subnet] = []
         self.nat_gateways: list[aws.ec2.NatGateway] = []
 
         for i, az in enumerate(config.availability_zones):
-            # Calculate CIDR blocks for each subnet
-            # Public subnets get smaller blocks, private subnets get larger blocks
+            # calculate CIDR blocks for each subnet
+            # public subnets get smaller blocks, private subnets get larger blocks
             public_cidr = self._calculate_cidr(i, is_public=True)
             private_cidr = self._calculate_cidr(i, is_public=False)
 
-            # Public subnet
             public_subnet = aws.ec2.Subnet(
                 f"{name}-public-{az}",
                 vpc_id=self.vpc.id,
@@ -76,7 +72,6 @@ class VPC(pulumi.ComponentResource):
             )
             self.public_subnets.append(public_subnet)
 
-            # Elastic IP for NAT Gateway
             eip = aws.ec2.Eip(
                 f"{name}-eip-{az}",
                 domain="vpc",
@@ -84,7 +79,6 @@ class VPC(pulumi.ComponentResource):
                 opts=child_opts,
             )
 
-            # NAT Gateway in public subnet
             nat = aws.ec2.NatGateway(
                 f"{name}-nat-{az}",
                 allocation_id=eip.id,
@@ -94,7 +88,6 @@ class VPC(pulumi.ComponentResource):
             )
             self.nat_gateways.append(nat)
 
-            # Private subnet
             private_subnet = aws.ec2.Subnet(
                 f"{name}-private-{az}",
                 vpc_id=self.vpc.id,
@@ -108,10 +101,8 @@ class VPC(pulumi.ComponentResource):
             )
             self.private_subnets.append(private_subnet)
 
-        # Route tables
         self._create_route_tables(name, child_opts)
 
-        # Register outputs
         self.register_outputs(
             {
                 "vpc_id": self.vpc.id,
@@ -121,23 +112,19 @@ class VPC(pulumi.ComponentResource):
         )
 
     def _calculate_cidr(self, index: int, is_public: bool) -> str:
-        """Calculate CIDR block for subnet based on index and type."""
-        # Parse base CIDR
         base = self.config.vpc_cidr.split("/")[0]
         octets = [int(x) for x in base.split(".")]
 
         if is_public:
-            # Public subnets: /20 blocks starting at 10.0.0.0, 10.0.16.0, 10.0.32.0
+            # public subnets: /20 blocks starting at 10.0.0.0, 10.0.16.0, 10.0.32.0
             third_octet = index * 16
             return f"{octets[0]}.{octets[1]}.{third_octet}.0/{self.config.public_subnet_mask}"
         else:
-            # Private subnets: /18 blocks starting at 10.0.64.0, 10.0.128.0, 10.0.192.0
+            # private subnets: /18 blocks starting at 10.0.64.0, 10.0.128.0, 10.0.192.0
             third_octet = 64 + (index * 64)
             return f"{octets[0]}.{octets[1]}.{third_octet}.0/{self.config.private_subnet_mask}"
 
     def _create_route_tables(self, name: str, opts: pulumi.ResourceOptions):
-        """Create route tables for public and private subnets."""
-        # Public route table (shared by all public subnets)
         public_rt = aws.ec2.RouteTable(
             f"{name}-public-rt",
             vpc_id=self.vpc.id,
@@ -161,7 +148,6 @@ class VPC(pulumi.ComponentResource):
                 opts=opts,
             )
 
-        # Private route tables (one per AZ for NAT gateway routing)
         for i, (subnet, nat) in enumerate(zip(self.private_subnets, self.nat_gateways)):
             az = self.config.availability_zones[i]
             private_rt = aws.ec2.RouteTable(

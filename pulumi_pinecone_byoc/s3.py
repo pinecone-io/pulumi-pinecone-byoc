@@ -29,12 +29,14 @@ class S3Buckets(pulumi.ComponentResource):
         config: Config,
         cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,
+        force_destroy: bool = False,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:S3Buckets", name, None, opts)
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        self._force_destroy = force_destroy
         child_opts = pulumi.ResourceOptions(parent=self)
 
         # bucket naming follows reference pattern: pc-{type}-{cell_name}
@@ -83,7 +85,6 @@ class S3Buckets(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Register outputs
         self.register_outputs(
             {
                 "data_bucket_name": self.data_bucket.id,
@@ -107,14 +108,13 @@ class S3Buckets(pulumi.ComponentResource):
         bucket = aws.s3.Bucket(
             name,
             bucket=bucket_name,
-            force_destroy=True,
+            force_destroy=self._force_destroy,
             tags=pulumi.Output.from_input(bucket_name).apply(
                 lambda bn: self.config.tags(Name=bn)
             ),
             opts=opts,
         )
 
-        # Block public access
         aws.s3.BucketPublicAccessBlock(
             f"{name}-public-access-block",
             bucket=bucket.id,
@@ -125,7 +125,6 @@ class S3Buckets(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # Server-side encryption
         if kms_key_arn:
             aws.s3.BucketServerSideEncryptionConfiguration(
                 f"{name}-encryption",
@@ -155,7 +154,6 @@ class S3Buckets(pulumi.ComponentResource):
                 opts=opts,
             )
 
-        # Versioning
         if enable_versioning:
             aws.s3.BucketVersioning(
                 f"{name}-versioning",
@@ -166,7 +164,6 @@ class S3Buckets(pulumi.ComponentResource):
                 opts=opts,
             )
 
-        # Lifecycle rules
         aws.s3.BucketLifecycleConfiguration(
             f"{name}-lifecycle",
             bucket=bucket.id,

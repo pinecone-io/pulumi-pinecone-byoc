@@ -65,7 +65,6 @@ class K8sSecrets(pulumi.ComponentResource):
             depends_on=[self.namespace],
         )
 
-        # cpgw credentials - the actual api key for cpgw auth
         k8s.core.v1.Secret(
             f"{name}-cpgw-credentials",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -79,7 +78,6 @@ class K8sSecrets(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # gcps api key (for sli-checkers)
         if gcps_api_key is not None:
             k8s.core.v1.Secret(
                 f"{name}-gcps-api-key",
@@ -94,7 +92,6 @@ class K8sSecrets(pulumi.ComponentResource):
                 opts=ns_opts,
             )
 
-        # datadog api key (from cpgw)
         if dd_api_key is not None:
             k8s.core.v1.Secret(
                 f"{name}-datadog-api-key",
@@ -109,7 +106,6 @@ class K8sSecrets(pulumi.ComponentResource):
                 opts=ns_opts,
             )
 
-        # Create tooling namespace and database secrets if RDS is provided
         if control_db is not None and system_db is not None:
             self._create_db_secrets(name, k8s_provider, control_db, system_db)
 
@@ -134,7 +130,6 @@ class K8sSecrets(pulumi.ComponentResource):
             depends_on=[self.namespace],
         )
 
-        # helper to build DB credentials dict with simple keys (for external secrets)
         def build_db_credentials(
             db: "RDSInstance",
         ) -> dict[str, pulumi.Output[str] | str]:
@@ -165,7 +160,6 @@ class K8sSecrets(pulumi.ComponentResource):
                 "dbname": db.db_config.db_name,
             }
 
-        # exdb-control-db-credentials in external-secrets namespace
         control_creds = build_db_credentials(control_db)
         k8s.core.v1.Secret(
             f"{name}-exdb-control-db-credentials",
@@ -178,7 +172,6 @@ class K8sSecrets(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # exdb-system-db-credentials in external-secrets namespace
         system_creds = build_db_credentials(system_db)
         k8s.core.v1.Secret(
             f"{name}-exdb-system-db-credentials",
@@ -191,7 +184,6 @@ class K8sSecrets(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # exdb-data-db-credentials - for BYOC, data is in control-db
         k8s.core.v1.Secret(
             f"{name}-exdb-data-db-credentials",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -203,8 +195,6 @@ class K8sSecrets(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # exdb-all-credentials - JSON with all shard credentials
-        # for BYOC we have control-1 and system shards
         def build_shards_json(
             control_url: str,
             control_readonly_url: str,

@@ -46,19 +46,19 @@ from .api import (
 class EnvironmentArgs:
     """Arguments for creating a Pinecone Environment."""
 
-    cloud: str
-    region: str
-    global_env: str
-    api_url: str
-    secret: str
+    cloud: pulumi.Input[str]
+    region: pulumi.Input[str]
+    global_env: pulumi.Input[str]
+    api_url: pulumi.Input[str]
+    secret: pulumi.Input[str]
 
     def __init__(
         self,
-        cloud: str,
-        region: str,
-        global_env: str,
-        api_url: str,
-        secret: str,
+        cloud: pulumi.Input[str],
+        region: pulumi.Input[str],
+        global_env: pulumi.Input[str],
+        api_url: pulumi.Input[str],
+        secret: pulumi.Input[str],
     ):
         self.cloud = cloud
         self.region = region
@@ -196,15 +196,15 @@ class Environment(Resource):
 class ServiceAccountArgs:
     """Arguments for creating a Pinecone Service Account."""
 
-    name: str
-    api_url: str
-    secret: str
+    name: pulumi.Input[str]
+    api_url: pulumi.Input[str]
+    secret: pulumi.Input[str]
 
     def __init__(
         self,
-        name: str,
-        api_url: str,
-        secret: str,
+        name: pulumi.Input[str],
+        api_url: pulumi.Input[str],
+        secret: pulumi.Input[str],
     ):
         self.name = name
         self.api_url = api_url
@@ -307,23 +307,23 @@ class ServiceAccount(Resource):
 
 
 class ApiKeyArgs:
-    org_id: str
-    project_name: str
-    key_name: str
-    api_url: str
-    auth0_domain: str
-    auth0_client_id: str
-    auth0_client_secret: str
+    org_id: pulumi.Input[str]
+    project_name: pulumi.Input[str]
+    key_name: pulumi.Input[str]
+    api_url: pulumi.Input[str]
+    auth0_domain: pulumi.Input[str]
+    auth0_client_id: pulumi.Input[str]
+    auth0_client_secret: pulumi.Input[str]
 
     def __init__(
         self,
-        org_id: str,
-        project_name: str,
-        key_name: str,
-        api_url: str,
-        auth0_domain: str,
-        auth0_client_id: str,
-        auth0_client_secret: str,
+        org_id: pulumi.Input[str],
+        project_name: pulumi.Input[str],
+        key_name: pulumi.Input[str],
+        api_url: pulumi.Input[str],
+        auth0_domain: pulumi.Input[str],
+        auth0_client_id: pulumi.Input[str],
+        auth0_client_secret: pulumi.Input[str],
     ):
         self.org_id = org_id
         self.project_name = project_name
@@ -453,17 +453,17 @@ class ApiKey(Resource):
 class DnsDelegationArgs:
     """Arguments for creating a DNS delegation."""
 
-    subdomain: str
-    nameservers: list[str]
-    api_url: str
-    cpgw_api_key: str
+    subdomain: pulumi.Input[str]
+    nameservers: pulumi.Input[list[str]]
+    api_url: pulumi.Input[str]
+    cpgw_api_key: pulumi.Input[str]
 
     def __init__(
         self,
-        subdomain: str,
-        nameservers: list[str],
-        api_url: str,
-        cpgw_api_key: str,
+        subdomain: pulumi.Input[str],
+        nameservers: pulumi.Input[list[str]],
+        api_url: pulumi.Input[str],
+        cpgw_api_key: pulumi.Input[str],
     ):
         self.subdomain = subdomain
         self.nameservers = nameservers
@@ -571,13 +571,13 @@ class DnsDelegation(Resource):
 class DatadogApiKeyArgs:
     """Arguments for creating a Datadog API Key via cpgw."""
 
-    api_url: str
-    cpgw_api_key: str
+    api_url: pulumi.Input[str]
+    cpgw_api_key: pulumi.Input[str]
 
     def __init__(
         self,
-        api_url: str,
-        cpgw_api_key: str,
+        api_url: pulumi.Input[str],
+        cpgw_api_key: pulumi.Input[str],
     ):
         self.api_url = api_url
         self.cpgw_api_key = cpgw_api_key
@@ -667,15 +667,15 @@ class DatadogApiKey(Resource):
 class AmpAccessArgs:
     """Arguments for creating AMP access for a BYOC environment."""
 
-    workload_role_arn: str
-    api_url: str
-    cpgw_api_key: str
+    workload_role_arn: pulumi.Input[str]
+    api_url: pulumi.Input[str]
+    cpgw_api_key: pulumi.Input[str]
 
     def __init__(
         self,
-        workload_role_arn: str,
-        api_url: str,
-        cpgw_api_key: str,
+        workload_role_arn: pulumi.Input[str],
+        api_url: pulumi.Input[str],
+        cpgw_api_key: pulumi.Input[str],
     ):
         self.workload_role_arn = workload_role_arn
         self.api_url = api_url
@@ -812,15 +812,15 @@ class AmpAccess(Resource):
 
 
 class CpgwApiKeyArgs:
-    environment: str
-    api_url: str
-    pinecone_api_key: str
+    environment: pulumi.Input[str]
+    api_url: pulumi.Input[str]
+    pinecone_api_key: pulumi.Input[str]
 
     def __init__(
         self,
-        environment: str,
-        api_url: str,
-        pinecone_api_key: str,
+        environment: pulumi.Input[str],
+        api_url: pulumi.Input[str],
+        pinecone_api_key: pulumi.Input[str],
     ):
         self.environment = environment
         self.api_url = api_url

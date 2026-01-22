@@ -302,7 +302,6 @@ def delete_api_key(
 ):
     from concurrent.futures import ThreadPoolExecutor, as_completed
 
-    # delete all indexes in the project first using the api key
     indexes = list_indexes(api_url, api_key)
 
     # delete indexes concurrently

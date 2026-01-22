@@ -96,7 +96,7 @@ class RDSInstance(pulumi.ComponentResource):
             "preferred_backup_window": "03:00-04:00",
             "preferred_maintenance_window": "sun:04:00-sun:05:00",
             "deletion_protection": db_config.deletion_protection,
-            "skip_final_snapshot": True,
+            "skip_final_snapshot": not db_config.deletion_protection,
             "tags": config.tags(Name=f"{config.resource_prefix}-{db_config.name}"),
         }
 
@@ -246,7 +246,6 @@ class RDS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Create control-db (1 shard)
         self._control_db = RDSInstance(
             f"{name}-control-db",
             config=config,
@@ -260,7 +259,6 @@ class RDS(pulumi.ComponentResource):
             ),
         )
 
-        # Create system-db
         self._system_db = RDSInstance(
             f"{name}-system-db",
             config=config,

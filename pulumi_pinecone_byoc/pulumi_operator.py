@@ -42,13 +42,10 @@ class PulumiOperator(pulumi.ComponentResource):
         self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # state bucket for pulumi backend
         self._state_bucket = self._create_state_bucket(name, child_opts)
 
-        # kms key for secrets encryption
         self._kms_key = self._create_kms_key(name, child_opts)
 
-        # irsa role for the operator (helm chart creates SA with this role via helmfile)
         self._operator_role = self._create_operator_role(
             name,
             oidc_provider_arn,
@@ -57,13 +54,11 @@ class PulumiOperator(pulumi.ComponentResource):
             child_opts,
         )
 
-        # build backend url
         self._backend_url = pulumi.Output.all(
             self._state_bucket.bucket,
             config.region,
         ).apply(lambda args: f"s3://{args[0]}?region={args[1]}&awssdk=v2")
 
-        # build secrets provider url
         self._secrets_provider = pulumi.Output.all(
             self._kms_key.arn,
             config.region,
@@ -95,7 +90,6 @@ class PulumiOperator(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # block public access
         aws.s3.BucketPublicAccessBlock(
             f"{name}-state-bucket-public-access-block",
             bucket=bucket.id,
@@ -106,7 +100,6 @@ class PulumiOperator(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # enable versioning for state files
         aws.s3.BucketVersioning(
             f"{name}-state-bucket-versioning",
             bucket=bucket.id,
@@ -116,7 +109,6 @@ class PulumiOperator(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # server-side encryption with AES256 (state itself isn't sensitive)
         aws.s3.BucketServerSideEncryptionConfiguration(
             f"{name}-state-bucket-encryption",
             bucket=bucket.id,
@@ -130,7 +122,6 @@ class PulumiOperator(pulumi.ComponentResource):
             opts=opts,
         )
 
-        # lifecycle rules
         aws.s3.BucketLifecycleConfiguration(
             f"{name}-state-bucket-lifecycle",
             bucket=bucket.id,
@@ -142,7 +133,6 @@ class PulumiOperator(pulumi.ComponentResource):
                         days_after_initiation=2,
                     ),
                 ),
-                # keep old state versions for 30 days
                 aws.s3.BucketLifecycleConfigurationRuleArgs(
                     id="expire-old-versions",
                     status="Enabled",
