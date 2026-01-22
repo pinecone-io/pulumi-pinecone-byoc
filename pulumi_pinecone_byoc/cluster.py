@@ -468,7 +468,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeAWSClusterArgs):
-        from config import Config, NodePoolConfig, DatabaseConfig
+        from config import Config, NodePoolConfig, NodePoolTaint, DatabaseConfig
 
         node_pools = []
         if args.node_pools:
@@ -482,7 +482,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                         desired_size=np.desired_size,
                         disk_size_gb=np.disk_size_gb,
                         labels=np.labels,
-                        taints=[],
+                        taints=[
+                            NodePoolTaint(key=t.key, value=t.value, effect=t.effect)
+                            for t in np.taints
+                        ],
                     )
                 )
         else:

@@ -84,7 +84,7 @@ class DNS(pulumi.ComponentResource):
             ),
         )
 
-        # Create DNS validation records (one per domain in the cert)
+        # create DNS validation records (one per domain in the cert)
         # ACM may reuse the same validation record for multiple domains
         validation_records = []
         for i in range(3):

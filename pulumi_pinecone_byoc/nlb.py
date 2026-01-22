@@ -268,7 +268,7 @@ class NLB(pulumi.ComponentResource):
             """Wait for private ALB and return its ARN."""
             import boto3
 
-            elbv2 = boto3.client("elbv2")
+            elbv2 = boto3.client("elbv2", region_name=config.region)
             alb_name = f"{cn}-private-alb"
             for _ in range(30):
                 try:
@@ -366,7 +366,7 @@ class NLB(pulumi.ComponentResource):
             )
             import boto3
 
-            ec2 = boto3.client("ec2")
+            ec2 = boto3.client("ec2", region_name=config.region)
 
             resp = ec2.describe_vpc_endpoint_service_configurations(
                 ServiceIds=[service_id]

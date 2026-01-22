@@ -219,11 +219,7 @@ class EKS(pulumi.ComponentResource):
         )
 
         taints = [
-            aws.eks.NodeGroupTaintArgs(
-                key=t.key,
-                value=t.value,
-                effect=t.effect.upper().replace("SCHEDULE", "_SCHEDULE"),
-            )
+            aws.eks.NodeGroupTaintArgs(key=t.key, value=t.value, effect=t.effect)
             for t in np_config.taints
         ]
 

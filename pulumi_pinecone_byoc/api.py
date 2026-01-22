@@ -155,7 +155,6 @@ def create_environment(
     api_url: str,
     secret: str,
 ) -> CreateEnvironmentResponse:
-    # org_id is now derived from the pinecone api key auth context
     body = {
         "cloud": cloud,
         "region": region,
@@ -181,7 +180,6 @@ def delete_environment(
     api_url: str,
     secret: str,
 ):
-    # org_id is now derived from the pinecone api key auth context
     request(
         "DELETE",
         f"{cpgw_bootstrap_url(api_url)}/environments/{env_id}",
