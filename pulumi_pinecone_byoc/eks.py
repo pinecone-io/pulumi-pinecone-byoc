@@ -250,7 +250,11 @@ class EKS(pulumi.ComponentResource):
             tags=self.config.tags(
                 Name=f"{self.config.resource_prefix}-{np_config.name}"
             ),
-            opts=opts,
+            # ignore desired_size changes - managed by cluster autoscaler
+            opts=pulumi.ResourceOptions.merge(
+                opts,
+                pulumi.ResourceOptions(ignore_changes=["scalingConfig.desiredSize"]),
+            ),
         )
 
     @property
