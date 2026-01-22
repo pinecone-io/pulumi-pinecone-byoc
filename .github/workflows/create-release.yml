@@ -60,4 +60,4 @@ jobs:
       - name: TestPyPI publish info
         if: inputs.target == 'testpypi'
         run: |
-          echo "Tag v${{ inputs.version }} pushed - release.yml will automatically publish to TestPyPI"
+          echo "Tag v${{ inputs.version }} pushed - release.yaml will automatically publish to TestPyPI"
