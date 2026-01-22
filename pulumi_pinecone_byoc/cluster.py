@@ -73,11 +73,12 @@ class PineconeAWSClusterArgs:
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
 
-    # pinecone api
+    # pinecone specific
     api_url: pulumi.Input[str] = "https://api.pinecone.io"
     global_env: pulumi.Input[str] = "prod"
     auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
     gcp_project: Optional[pulumi.Input[str]] = None  # defaults based on global_env
+    pinecone_version: pulumi.Input[str] = "main-3d6741d"
 
     # tags
     tags: Optional[dict[str, str]] = None
@@ -426,6 +427,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._pinetools = Pinetools(
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
+            install_image_tag=args.pinecone_version,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._k8s_configmaps]
             ),

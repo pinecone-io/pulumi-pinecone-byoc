@@ -113,7 +113,7 @@ class Pinetools(pulumi.ComponentResource):
                 namespace=namespace,
             ),
             spec=k8s.batch.v1.CronJobSpecArgs(
-                suspend=True,  # manual trigger only for now
+                suspend=True,  # manual trigger only
                 schedule=schedule,
                 successful_jobs_history_limit=3,
                 failed_jobs_history_limit=3,
@@ -121,7 +121,7 @@ class Pinetools(pulumi.ComponentResource):
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(
                     spec=k8s.batch.v1.JobSpecArgs(
                         backoff_limit=3,
-                        ttl_seconds_after_finished=3600,  # cleanup after 1 hour
+                        ttl_seconds_after_finished=3600,
                         template=k8s.core.v1.PodTemplateSpecArgs(
                             spec=k8s.core.v1.PodSpecArgs(
                                 service_account_name="pinetools",
@@ -137,13 +137,15 @@ class Pinetools(pulumi.ComponentResource):
                                     k8s.core.v1.ContainerArgs(
                                         name="pinetools",
                                         image=pinetools_image,
-                                        # TODO: get image version dynamically
-                                        command=[
-                                            "pinetools",
-                                            "cluster",
-                                            "install",
-                                            "--image",
-                                            install_image_tag,
+                                        command=["/bin/sh", "-c"],
+                                        args=[
+                                            "pinetools cluster install && pinetools cluster check"
+                                        ],
+                                        env=[
+                                            k8s.core.v1.EnvVarArgs(
+                                                name="PINECONE_IMAGE_VERSION",
+                                                value=install_image_tag,
+                                            ),
                                         ],
                                         resources=k8s.core.v1.ResourceRequirementsArgs(
                                             requests={
