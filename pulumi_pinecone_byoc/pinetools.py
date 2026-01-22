@@ -104,69 +104,74 @@ class Pinetools(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
+        # shared config for cronjob and install job
+        tolerations = [
+            k8s.core.v1.TolerationArgs(
+                key="node.kubernetes.io/disk-pressure",
+                operator="Exists",
+                effect="NoSchedule",
+            ),
+        ]
+
+        pinetools_container = k8s.core.v1.ContainerArgs(
+            name="pinetools",
+            image=pinetools_image,
+            command=["/bin/sh", "-c"],
+            args=["pinetools cluster install && pinetools cluster check"],
+            env=[
+                k8s.core.v1.EnvVarArgs(
+                    name="PINECONE_IMAGE_VERSION",
+                    value=install_image_tag,
+                ),
+            ],
+            resources=k8s.core.v1.ResourceRequirementsArgs(
+                requests={"ephemeral-storage": "1Gi", "memory": "512Mi", "cpu": "100m"},
+                limits={"ephemeral-storage": "5Gi", "memory": "2Gi"},
+            ),
+        )
+
+        wait_for_regcred_container = k8s.core.v1.ContainerArgs(
+            name="wait-for-regcred",
+            image="alpine/k8s:1.31.3",
+            command=["/bin/sh", "-c"],
+            args=[WAIT_FOR_REGCRED_SCRIPT],
+        )
+
+        def make_pod_spec(
+            init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
+        ) -> k8s.core.v1.PodSpecArgs:
+            return k8s.core.v1.PodSpecArgs(
+                service_account_name="pinetools",
+                restart_policy="OnFailure",
+                tolerations=tolerations,
+                containers=[pinetools_container],
+                init_containers=init_containers,
+            )
+
+        def make_job_spec(
+            init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
+        ) -> k8s.batch.v1.JobSpecArgs:
+            return k8s.batch.v1.JobSpecArgs(
+                backoff_limit=3,
+                ttl_seconds_after_finished=3600,
+                template=k8s.core.v1.PodTemplateSpecArgs(
+                    spec=make_pod_spec(init_containers),
+                ),
+            )
+
         cronjob = k8s.batch.v1.CronJob(
             f"{name}-cronjob",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="pinetools",
-                namespace=namespace,
-            ),
+            metadata=k8s.meta.v1.ObjectMetaArgs(name="pinetools", namespace=namespace),
             spec=k8s.batch.v1.CronJobSpecArgs(
                 suspend=True,  # manual trigger only
                 schedule=schedule,
                 successful_jobs_history_limit=3,
                 failed_jobs_history_limit=3,
                 concurrency_policy="Forbid",
-                job_template=k8s.batch.v1.JobTemplateSpecArgs(
-                    spec=k8s.batch.v1.JobSpecArgs(
-                        backoff_limit=3,
-                        ttl_seconds_after_finished=3600,
-                        template=k8s.core.v1.PodTemplateSpecArgs(
-                            spec=k8s.core.v1.PodSpecArgs(
-                                service_account_name="pinetools",
-                                restart_policy="OnFailure",
-                                tolerations=[
-                                    k8s.core.v1.TolerationArgs(
-                                        key="node.kubernetes.io/disk-pressure",
-                                        operator="Exists",
-                                        effect="NoSchedule",
-                                    ),
-                                ],
-                                containers=[
-                                    k8s.core.v1.ContainerArgs(
-                                        name="pinetools",
-                                        image=pinetools_image,
-                                        command=["/bin/sh", "-c"],
-                                        args=[
-                                            "pinetools cluster install && pinetools cluster check"
-                                        ],
-                                        env=[
-                                            k8s.core.v1.EnvVarArgs(
-                                                name="PINECONE_IMAGE_VERSION",
-                                                value=install_image_tag,
-                                            ),
-                                        ],
-                                        resources=k8s.core.v1.ResourceRequirementsArgs(
-                                            requests={
-                                                "ephemeral-storage": "1Gi",
-                                                "memory": "512Mi",
-                                                "cpu": "100m",
-                                            },
-                                            limits={
-                                                "ephemeral-storage": "5Gi",
-                                                "memory": "2Gi",
-                                            },
-                                        ),
-                                    ),
-                                ],
-                            ),
-                        ),
-                    ),
-                ),
+                job_template=k8s.batch.v1.JobTemplateSpecArgs(spec=make_job_spec()),
             ),
             opts=pulumi.ResourceOptions(
-                parent=self,
-                provider=k8s_provider,
-                depends_on=[sa],
+                parent=self, provider=k8s_provider, depends_on=[sa]
             ),
         )
 
@@ -175,62 +180,14 @@ class Pinetools(pulumi.ComponentResource):
             install_job = k8s.batch.v1.Job(
                 f"{name}-install-job",
                 metadata=k8s.meta.v1.ObjectMetaArgs(
-                    name="pinetools-install",
-                    namespace=namespace,
+                    name="pinetools-install", namespace=namespace
                 ),
-                spec=k8s.batch.v1.JobSpecArgs(
-                    backoff_limit=3,
-                    ttl_seconds_after_finished=3600,
-                    template=k8s.core.v1.PodTemplateSpecArgs(
-                        spec=k8s.core.v1.PodSpecArgs(
-                            service_account_name="pinetools",
-                            restart_policy="OnFailure",
-                            # init container waits for ECR credentials to be available
-                            init_containers=[
-                                k8s.core.v1.ContainerArgs(
-                                    name="wait-for-regcred",
-                                    image="alpine/k8s:1.31.3",
-                                    command=["/bin/sh", "-c"],
-                                    args=[WAIT_FOR_REGCRED_SCRIPT],
-                                ),
-                            ],
-                            tolerations=[
-                                k8s.core.v1.TolerationArgs(
-                                    key="node.kubernetes.io/disk-pressure",
-                                    operator="Exists",
-                                    effect="NoSchedule",
-                                ),
-                            ],
-                            containers=[
-                                k8s.core.v1.ContainerArgs(
-                                    name="pinetools",
-                                    image=pinetools_image,
-                                    command=["/bin/sh", "-c"],
-                                    args=[
-                                        f"pinetools cluster install --image {install_image_tag} && pinetools cluster check"
-                                    ],
-                                    resources=k8s.core.v1.ResourceRequirementsArgs(
-                                        requests={
-                                            "ephemeral-storage": "1Gi",
-                                            "memory": "512Mi",
-                                            "cpu": "100m",
-                                        },
-                                        limits={
-                                            "ephemeral-storage": "5Gi",
-                                            "memory": "2Gi",
-                                        },
-                                    ),
-                                ),
-                            ],
-                        ),
-                    ),
-                ),
+                spec=make_job_spec(init_containers=[wait_for_regcred_container]),
                 opts=pulumi.ResourceOptions(
                     parent=self,
                     provider=k8s_provider,
                     depends_on=[sa, cronjob],
                     # ignore changes so this job only runs on first provision
-                    # subsequent pulumi up runs will not recreate/update this job
                     ignore_changes=["*"],
                 ),
             )
