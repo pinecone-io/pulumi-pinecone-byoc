@@ -41,7 +41,7 @@ from .providers import (
 @dataclass
 class NodePool:
     name: str
-    instance_type: str = "m6i.xlarge"
+    instance_type: str = "r6in.large"
     min_size: int = 1
     max_size: int = 10
     desired_size: int = 3
@@ -80,7 +80,7 @@ class PineconeAWSClusterArgs:
     global_env: pulumi.Input[str] = "prod"
     auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
     gcp_project: Optional[pulumi.Input[str]] = None  # defaults based on global_env
-    pinecone_version: pulumi.Input[str] = "main-3d6741d"
+    pinecone_version: pulumi.Input[str] = "main-a1ff459"
 
     # tags
     tags: Optional[dict[str, str]] = None

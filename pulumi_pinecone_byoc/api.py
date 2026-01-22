@@ -247,17 +247,25 @@ def create_api_key(
     except Exception as e:
         raise PineconeApiInternalError(f"invalid response: {e}")
 
-    resp = request(
-        "POST",
-        f"{management_plane_url(api_url)}/projects/{project.id}/api-keys",
-        headers=management_plane_headers(get_access_token(api_url, auth0)),
-        body={"name": key_name, "roles": ["ProjectEditor"]},
-    )
-
+    # if this fails, clean up the project to avoid orphans
     try:
+        resp = request(
+            "POST",
+            f"{management_plane_url(api_url)}/projects/{project.id}/api-keys",
+            headers=management_plane_headers(get_access_token(api_url, auth0)),
+            body={"name": key_name, "roles": ["ProjectEditor"]},
+        )
         api_key = CreateApiKeyResponse.model_validate_json(json.dumps(resp))
     except Exception as e:
-        raise PineconeApiInternalError(f"invalid response: {e}")
+        try:
+            request(
+                "DELETE",
+                f"{management_plane_url(api_url)}/projects/{project.id}",
+                headers=management_plane_headers(get_access_token(api_url, auth0)),
+            )
+        except Exception:
+            pass  # best effort cleanup
+        raise PineconeApiInternalError(f"failed to create api key: {e}")
 
     return api_key
 
