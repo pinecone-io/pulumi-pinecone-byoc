@@ -1,0 +1,45 @@
+[project]
+name = "pulumi-pinecone-byoc"
+version = "0.1.0"
+description = "Pulumi components for Pinecone BYOC clusters"
+readme = "README.md"
+license = "Apache-2.0"
+requires-python = ">=3.12"
+keywords = ["pulumi", "pinecone", "byoc", "kubernetes", "aws", "infrastructure"]
+dependencies = [
+    "pulumi>=3.216.0,<4.0.0",
+    "pulumi-aws>=7.14.0,<8.0.0",
+    "pulumi-kubernetes>=4.25.0,<5.0.0",
+    "pulumi-eks>=4.2.0,<5.0.0",
+    "pulumi-random>=4.19.0,<5.0.0",
+    "pydantic>=2.12.0,<3.0.0",
+    "requests>=2.32.0,<3.0.0",
+    "boto3>=1.42.0,<2.0.0",
+    "rich>=14.0.0,<15.0.0",
+]
+
+[project.urls]
+Homepage = "https://www.pinecone.io"
+Documentation = "https://docs.pinecone.io/guides/production/bring-your-own-cloud"
+Repository = "https://github.com/pinecone-io/pulumi-pinecone-byoc"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["pulumi_pinecone_byoc", "config"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "pulumi_pinecone_byoc/**/*.py",
+    "config/**/*.py",
+    "README.md",
+    "LICENSE",
+]
+exclude = [
+    "examples",
+    "cronjobs",
+    "**/__pycache__",
+    "**/*.pyc",
+]
