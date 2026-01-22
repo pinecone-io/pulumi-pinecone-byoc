@@ -57,12 +57,7 @@ jobs:
             --title "v${{ inputs.version }}" \
             --generate-notes
 
-      - name: Trigger TestPyPI publish
+      - name: TestPyPI publish info
         if: inputs.target == 'testpypi'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh workflow run release.yml \
-            -f target=testpypi \
-            --ref "v${{ inputs.version }}"
-          echo "Triggered TestPyPI publish for v${{ inputs.version }}"
+          echo "Tag v${{ inputs.version }} pushed - release.yml will automatically publish to TestPyPI"

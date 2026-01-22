@@ -1,6 +1,9 @@
 name: Release to PyPI
 
 on:
+  push:
+    tags:
+      - 'v*'  # triggered by create-release workflow pushing a tag
   release:
     types: [published]
   workflow_dispatch:
@@ -44,7 +47,7 @@ jobs:
           path: dist/
 
   publish-testpypi:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi'
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.target == 'testpypi')
     needs: build
     runs-on: ubuntu-latest
     environment:
