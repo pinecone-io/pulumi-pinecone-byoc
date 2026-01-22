@@ -31,7 +31,9 @@ def _read_input_with_placeholder(
     """Read input with a dimmed placeholder that disappears when typing."""
     console.print(f"  {prompt}: ", end="")
 
-    fd = sys.stdin.fileno()
+    # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
+    tty_file = open("/dev/tty", "r")
+    fd = tty_file.fileno()
     old_settings = termios.tcgetattr(fd)
 
     def show_placeholder():
@@ -54,7 +56,7 @@ def _read_input_with_placeholder(
         placeholder_visible = True
 
         while True:
-            char = sys.stdin.read(1)
+            char = tty_file.read(1)
 
             # enter - accept
             if char in ("\r", "\n"):
@@ -66,8 +68,8 @@ def _read_input_with_placeholder(
             if char == "\t" or char == "\x1b":
                 if char == "\x1b":
                     # read arrow key sequence
-                    next1 = sys.stdin.read(1)
-                    next2 = sys.stdin.read(1)
+                    next1 = tty_file.read(1)
+                    next2 = tty_file.read(1)
                     if next1 == "[" and next2 == "C":  # right arrow
                         if placeholder and not result:
                             clear_placeholder()
@@ -124,6 +126,7 @@ def _read_input_with_placeholder(
 
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        tty_file.close()
         console.print()
 
 
@@ -436,7 +439,7 @@ cluster = PineconeAWSCluster(
         region=config.require("region"),
         vpc_cidr=config.get("vpc_cidr"),
         availability_zones=config.require_object("availability_zones"),
-        deletion_protection=config.get_bool("deletion_protection") or True,
+        deletion_protection=config.get_bool("deletion_protection") if config.get_bool("deletion_protection") is not None else True,
     ),
 )
 
@@ -451,6 +454,18 @@ pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
         with open(main_py_path, "w") as f:
             f.write(main_py)
         console.print("  [green]✓[/] Created __main__.py")
+
+        # create pyproject.toml for uv toolchain to install dependencies
+        pyproject_content = """[project]
+name = "pinecone-byoc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pulumi-pinecone-byoc"]
+"""
+        pyproject_path = os.path.join(output_dir, "pyproject.toml")
+        with open(pyproject_path, "w") as f:
+            f.write(pyproject_content)
+        console.print("  [green]✓[/] Created pyproject.toml")
 
         # create stack config
         stack_name = "dev"
