@@ -52,7 +52,6 @@ class NodePool:
 @dataclass
 class PineconeAWSClusterArgs:
     # required
-    organization_name: pulumi.Input[str]
     pinecone_api_key: pulumi.Input[str]
 
     # aws specific
@@ -110,6 +109,16 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
+        # cell_name derived from org_name (from environment response)
+        def sanitize(name: str) -> str:
+            import re
+
+            return re.sub(r"[^a-z0-9]", "", name.lower())
+
+        self._cell_name = self._environment.org_name.apply(
+            lambda org_name: f"{args.global_env}-aws-{sanitize(org_name)}"
+        )
+
         self._cpgw_api_key = CpgwApiKey(
             f"{config.resource_prefix}-cpgw-api-key",
             CpgwApiKeyArgs(
@@ -123,7 +132,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._service_account = ServiceAccount(
             f"{config.resource_prefix}-service-account",
             ServiceAccountArgs(
-                name=f"{config.cell_name}-sa",
+                name=self._cell_name.apply(lambda cn: f"{cn}-sa"),
                 api_url=args.api_url,
                 secret=self._cpgw_api_key.key,
             ),
@@ -134,8 +143,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-api-key",
             ApiKeyArgs(
                 org_id=self._environment.org_id,
-                project_name=config.cell_name,
-                key_name=f"{config.cell_name}-key",
+                project_name="__SLI__",
+                key_name=self._cell_name.apply(lambda cn: f"{cn}-key"),
                 api_url=args.api_url,
                 auth0_domain=args.auth0_domain,
                 auth0_client_id=self._service_account.client_id,
@@ -161,12 +170,14 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-eks",
             config,
             self._vpc,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
 
         self._s3 = S3Buckets(
             f"{config.resource_prefix}-s3",
             config,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
@@ -226,7 +237,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             parent_zone_name=args.parent_dns_zone_name,
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
-            tags={"pinecone:cell": config.cell_name, "pinecone:managed-by": "pulumi"},
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
@@ -242,6 +252,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             config,
             self._eks,
             self._vpc.vpc_id,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
@@ -288,6 +299,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             self._dns,
             k8s_provider=self._eks.provider,
             cluster_security_group_id=self._eks.cluster_security_group_id,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[self._vpc, self._dns, self._eks, self._k8s_addons],
@@ -316,6 +328,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             config,
             oidc_provider_arn=self._eks.oidc_provider_arn,
             oidc_provider_url=self._eks.oidc_provider_url,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
@@ -353,7 +366,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             return "production-pinecone" if env == "prod" else "development-pinecone"
 
         pulumi_outputs = {
-            "cell_name": config.cell_name,
+            "cell_name": self._cell_name,
             "cloud": "aws",
             "region": args.region,
             "global_env": args.global_env,
@@ -387,7 +400,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-k8s-configmaps",
             k8s_provider=self._eks.provider,
             cloud="aws",
-            cell_name=config.cell_name,
+            cell_name=self._cell_name,
             env=args.global_env,
             is_prod=args.global_env == "prod",
             domain=self._subdomain,
@@ -409,15 +422,18 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
         # pinetools for cluster management
+        # depends on k8s_configmaps because pinetools needs the config configmap
         self._pinetools = Pinetools(
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
+            opts=pulumi.ResourceOptions(
+                parent=self, depends_on=[self._eks, self._k8s_configmaps]
+            ),
         )
 
         self.register_outputs(
             {
-                "cluster_name": config.cell_name,
+                "cluster_name": self._cell_name,
                 "region": args.region,
                 "organization_id": self._environment.org_id,
                 "organization_name": self._environment.org_name,
@@ -481,13 +497,11 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 ),
             ]
 
-        # cell_name is computed by Config from global_env, cloud, and organization_name
         return Config(
             region=args.region,
             environment="prod",
             global_env=args.global_env,
             cloud="aws",
-            organization_name=args.organization_name,
             availability_zones=args.availability_zones,
             vpc_cidr=args.vpc_cidr,
             kubernetes_version=args.kubernetes_version,

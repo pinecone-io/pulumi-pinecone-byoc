@@ -27,21 +27,21 @@ class S3Buckets(pulumi.ComponentResource):
         self,
         name: str,
         config: Config,
+        cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:S3Buckets", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
         # bucket naming follows reference pattern: pc-{type}-{cell_name}
-        cell = config.cell_name
-
         # Data bucket - main vector storage
         self.data_bucket = self._create_bucket(
             name=f"{name}-data",
-            bucket_name=f"pc-data-{cell}",
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-data-{cn}"),
             enable_versioning=True,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -50,7 +50,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Index backups bucket
         self.index_backups_bucket = self._create_bucket(
             name=f"{name}-index-backups",
-            bucket_name=f"pc-index-backups-{cell}",
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-index-backups-{cn}"),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -59,7 +59,7 @@ class S3Buckets(pulumi.ComponentResource):
         # WAL bucket - write-ahead logs
         self.wal_bucket = self._create_bucket(
             name=f"{name}-wal",
-            bucket_name=f"pc-wal-{cell}",
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-wal-{cn}"),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -68,7 +68,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Janitor bucket - cleanup operations
         self.janitor_bucket = self._create_bucket(
             name=f"{name}-janitor",
-            bucket_name=f"pc-janitor-{cell}",
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-janitor-{cn}"),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -77,7 +77,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Internal bucket - operational data
         self.internal_bucket = self._create_bucket(
             name=f"{name}-internal",
-            bucket_name=f"pc-internal-{cell}",
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-internal-{cn}"),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -98,7 +98,7 @@ class S3Buckets(pulumi.ComponentResource):
     def _create_bucket(
         self,
         name: str,
-        bucket_name: str,
+        bucket_name: pulumi.Input[str],
         enable_versioning: bool,
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
@@ -108,7 +108,9 @@ class S3Buckets(pulumi.ComponentResource):
             name,
             bucket=bucket_name,
             force_destroy=True,
-            tags=self.config.tags(Name=bucket_name),
+            tags=pulumi.Output.from_input(bucket_name).apply(
+                lambda bn: self.config.tags(Name=bn)
+            ),
             opts=opts,
         )
 

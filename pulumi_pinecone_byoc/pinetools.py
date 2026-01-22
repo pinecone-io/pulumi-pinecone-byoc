@@ -205,12 +205,9 @@ class Pinetools(pulumi.ComponentResource):
                                 k8s.core.v1.ContainerArgs(
                                     name="pinetools",
                                     image=pinetools_image,
-                                    command=[
-                                        "pinetools",
-                                        "cluster",
-                                        "install",
-                                        "--image",
-                                        install_image_tag,
+                                    command=["/bin/sh", "-c"],
+                                    args=[
+                                        f"pinetools cluster install --image {install_image_tag} && pinetools cluster check"
                                     ],
                                     resources=k8s.core.v1.ResourceRequirementsArgs(
                                         requests={

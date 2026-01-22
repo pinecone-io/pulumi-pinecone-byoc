@@ -14,20 +14,19 @@ class DNS(pulumi.ComponentResource):
         parent_zone_name: str,
         api_url: str,
         cpgw_api_key: pulumi.Input[str],
-        tags: dict[str, str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
 
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # Build fqdn from subdomain and parent zone
+        tags = {"pinecone:managed-by": "pulumi"}
+
         def build_fqdn(sub: str) -> str:
             return f"{sub}.{parent_zone_name}"
 
         fqdn = pulumi.Output.from_input(subdomain).apply(build_fqdn)
 
-        # Create hosted zone
         self.zone = aws.route53.Zone(
             f"{name}-zone",
             name=fqdn,
@@ -36,7 +35,6 @@ class DNS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # Delegate the zone to byoc.pinecone.io via cpgw
         self.delegation = DnsDelegation(
             f"{name}-delegation",
             DnsDelegationArgs(
@@ -48,7 +46,7 @@ class DNS(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
         )
 
-        # Create CNAME records pointing to ingress (public ALB)
+        # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB
         cnames = [
             "*.svc",
@@ -68,7 +66,7 @@ class DNS(pulumi.ComponentResource):
                 opts=child_opts,
             )
 
-        # Create ACM certificate - include *.svc subdomain for data plane endpoints
+        # create ACM certificate - include *.svc subdomain for data plane endpoints
         # wildcard certs only match one level, so we need explicit *.svc.{fqdn}
         self.certificate = aws.acm.Certificate(
             f"{name}-cert",
@@ -112,11 +110,9 @@ class DNS(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=validation_records),
         )
 
-        # Private endpoint certificate - for PrivateLink access
+        # private endpoint certificate - for PrivateLink access
         # these domains use .private suffix pattern
-        private_cnames = [
-            f"{c}.private" for c in cnames
-        ]
+        private_cnames = [f"{c}.private" for c in cnames]
         self._private_dns_domains = [
             fqdn.apply(lambda f, c=c: f"{c}.{f}") for c in private_cnames
         ]
@@ -134,17 +130,22 @@ class DNS(pulumi.ComponentResource):
             ),
         )
 
-        # Private cert validation records
         # number of unique validation records depends on domain count
         private_validation_records = []
         for i in range(len(private_cnames)):
             private_validation_record = aws.route53.Record(
                 f"{name}-private-cert-validation-{i}",
                 zone_id=self.zone.id,
-                name=self.private_certificate.domain_validation_options[i].resource_record_name,
-                type=self.private_certificate.domain_validation_options[i].resource_record_type,
+                name=self.private_certificate.domain_validation_options[
+                    i
+                ].resource_record_name,
+                type=self.private_certificate.domain_validation_options[
+                    i
+                ].resource_record_type,
                 records=[
-                    self.private_certificate.domain_validation_options[i].resource_record_value
+                    self.private_certificate.domain_validation_options[
+                        i
+                    ].resource_record_value
                 ],
                 ttl=300,
                 allow_overwrite=True,
@@ -156,13 +157,14 @@ class DNS(pulumi.ComponentResource):
             f"{name}-private-cert-validation",
             certificate_arn=self.private_certificate.arn,
             validation_record_fqdns=[r.fqdn for r in private_validation_records],
-            opts=pulumi.ResourceOptions(parent=self, depends_on=private_validation_records),
+            opts=pulumi.ResourceOptions(
+                parent=self, depends_on=private_validation_records
+            ),
         )
 
         self._fqdn = fqdn
         self._subdomain = subdomain
 
-        # Register outputs
         self.register_outputs(
             {
                 "zone_id": self.zone.id,

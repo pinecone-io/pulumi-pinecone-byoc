@@ -33,14 +33,14 @@ class NLB(pulumi.ComponentResource):
         dns: DNS,
         k8s_provider: pulumi.ProviderResource,
         cluster_security_group_id: pulumi.Output[str],
+        cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:NLB", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
-
-        cell_name = config.cell_name
 
         # security group for NLB
         self.nlb_security_group = aws.ec2.SecurityGroup(
@@ -98,11 +98,11 @@ class NLB(pulumi.ComponentResource):
 
         # build annotations - let AWS LB Controller manage security groups automatically
         # (allows controller to create rules for ALB -> pod traffic)
-        def build_http2_annotations(cert_arn: str, subdomain: str) -> dict:
+        def build_http2_annotations(cert_arn: str, subdomain: str, cn: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
-                "alb.ingress.kubernetes.io/load-balancer-name": f"{cell_name}-private-alb",
+                "alb.ingress.kubernetes.io/load-balancer-name": f"{cn}-private-alb",
                 "alb.ingress.kubernetes.io/scheme": "internal",
                 "alb.ingress.kubernetes.io/target-type": "ip",
                 "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -118,7 +118,7 @@ class NLB(pulumi.ComponentResource):
             }
 
         http2_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain
+            dns.private_certificate_arn, dns.subdomain, self._cell_name
         ).apply(lambda args: build_http2_annotations(*args))
 
         # private ingress for HTTP2/gRPC traffic
@@ -164,11 +164,11 @@ class NLB(pulumi.ComponentResource):
             ),
         )
 
-        def build_http1_annotations(cert_arn: str) -> dict:
+        def build_http1_annotations(cert_arn: str, cn: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
-                "alb.ingress.kubernetes.io/load-balancer-name": f"{cell_name}-private-alb",
+                "alb.ingress.kubernetes.io/load-balancer-name": f"{cn}-private-alb",
                 "alb.ingress.kubernetes.io/scheme": "internal",
                 "alb.ingress.kubernetes.io/target-type": "ip",
                 "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -181,7 +181,9 @@ class NLB(pulumi.ComponentResource):
                 "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
             }
 
-        http1_annotations = dns.private_certificate_arn.apply(build_http1_annotations)
+        http1_annotations = pulumi.Output.all(
+            dns.private_certificate_arn, self._cell_name
+        ).apply(lambda args: build_http1_annotations(*args))
 
         # private ingress for HTTP1 traffic
         private_lb_http1 = k8s.networking.v1.Ingress(
@@ -248,9 +250,10 @@ class NLB(pulumi.ComponentResource):
         )
 
         # target group for the private ALB
+        # aws target group names must be <= 32 chars
         self.target_group = aws.lb.TargetGroup(
             f"{name}-alb-tg",
-            name=f"{cell_name}-alb-tg",
+            name=self._cell_name.apply(lambda cn: f"{cn}-tg"[:32]),
             target_type="alb",
             port=443,
             protocol="TCP",
@@ -260,18 +263,18 @@ class NLB(pulumi.ComponentResource):
                 port="traffic-port",
                 protocol="HTTPS",
             ),
-            tags=config.tags(Name=f"{cell_name}-alb-tg"),
+            tags=self._cell_name.apply(lambda cn: config.tags(Name=f"{cn}-alb-tg")),
             opts=child_opts,
         )
 
         # wait for private ALB to be created and attach it to target group
         # the ALB is created by the AWS Load Balancer Controller when ingress is applied
-        def get_private_alb_arn(ingress_status):
+        def get_private_alb_arn(ingress_status, cn: str):
             """Wait for private ALB and return its ARN."""
             import boto3
 
             elbv2 = boto3.client("elbv2")
-            alb_name = f"{cell_name}-private-alb"
+            alb_name = f"{cn}-private-alb"
             for _ in range(30):
                 try:
                     resp = elbv2.describe_load_balancers(Names=[alb_name])
@@ -285,8 +288,8 @@ class NLB(pulumi.ComponentResource):
             raise Exception(f"Failed to find private ALB {alb_name}")
 
         private_alb_arn = pulumi.Output.all(
-            private_lb_http2.status, private_lb_http1.status
-        ).apply(lambda _: get_private_alb_arn(_))
+            private_lb_http2.status, private_lb_http1.status, self._cell_name
+        ).apply(lambda args: get_private_alb_arn(args[0], args[2]))
 
         aws.lb.TargetGroupAttachment(
             f"{name}-tg-attachment",

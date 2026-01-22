@@ -227,11 +227,13 @@ class K8sAddons(pulumi.ComponentResource):
         config: Config,
         eks: EKS,
         vpc_id: pulumi.Output[str],
+        cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:K8sAddons", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self.gloo_namespace = self._create_gloo_namespace(
@@ -662,14 +664,16 @@ class K8sAddons(pulumi.ComponentResource):
         opts: pulumi.ResourceOptions,
     ) -> aws.iam.Role:
         """Create IAM role for suspend-azrebalance cronjob to manage ASG processes."""
-        role_name = f"control-plane-azrebalance-role-{self.config.cell_name}"
+        role_name = self._cell_name.apply(
+            lambda cn: f"control-plane-azrebalance-role-{cn}"
+        )
         role = aws.iam.Role(
             f"{name}-azrebalance-role",
             name=role_name,
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "pc-control-plane", "suspend-azrebalance-sa"
             ),
-            tags=self.config.tags(Name=role_name),
+            tags=role_name.apply(lambda rn: self.config.tags(Name=rn)),
             opts=opts,
         )
 

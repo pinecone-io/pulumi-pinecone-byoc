@@ -2,12 +2,11 @@
 Clean configuration for Pinecone BYOC AWS infrastructure.
 """
 
-from pydantic import BaseModel, Field, computed_field
+from pydantic import BaseModel, Field
 import re
 
 
 def sanitize(name: str) -> str:
-    """sanitize name for use in cluster identifiers - lowercase, alphanumeric only"""
     return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
@@ -77,9 +76,6 @@ class Config(BaseModel):
     global_env: str = "prod"
     cloud: str = "aws"
 
-    # Pinecone organization
-    organization_name: str
-
     # Networking
     availability_zones: list[str]
     vpc_cidr: str = "10.0.0.0/16"
@@ -96,20 +92,13 @@ class Config(BaseModel):
     # DNS
     parent_zone_name: str = "pinecone.io"
 
-    @computed_field
-    @property
-    def cell_name(self) -> str:
-        """cluster name: {global_env}-{cloud}-{sanitized_org_name}"""
-        return f"{self.global_env}-{self.cloud}-{sanitize(self.organization_name)}"
-
     @property
     def resource_prefix(self) -> str:
-        return f"pc-{self.cell_name}"
+        return "pc"
 
     def tags(self, **extra: str) -> dict[str, str]:
         """Generate consistent resource tags."""
         base_tags = {
-            "pinecone:cell": self.cell_name,
             "pinecone:environment": self.environment,
             "pinecone:managed-by": "pulumi",
         }

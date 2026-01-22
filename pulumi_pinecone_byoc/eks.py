@@ -30,11 +30,13 @@ class EKS(pulumi.ComponentResource):
         name: str,
         config: Config,
         vpc: VPC,
+        cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:EKS", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self._create_cluster_role(name, child_opts)
@@ -43,7 +45,7 @@ class EKS(pulumi.ComponentResource):
 
         self.cluster = eks.Cluster(
             resource_name=f"{config.resource_prefix}-eks-cluster",
-            name=f"cluster-{config.cell_name}",
+            name=self._cell_name.apply(lambda cn: f"cluster-{cn}"),
             vpc_id=vpc.vpc_id,
             public_subnet_ids=vpc.public_subnet_ids,
             private_subnet_ids=vpc.private_subnet_ids,
@@ -210,11 +212,11 @@ class EKS(pulumi.ComponentResource):
         """Create a managed node group."""
         launch_template = self._create_launch_template(name, np_config, opts)
 
-        labels = {
-            "pinecone.io/cell": self.config.cell_name,
-            "pinecone.io/nodepool": np_config.name,
-            **np_config.labels,
-        }
+        # labels must be strings, so we need to use apply
+        base_labels = {"pinecone.io/nodepool": np_config.name, **np_config.labels}
+        labels = self._cell_name.apply(
+            lambda cn: {"pinecone.io/cell": cn, **base_labels}
+        )
 
         taints = [
             aws.eks.NodeGroupTaintArgs(
@@ -282,10 +284,9 @@ class EKS(pulumi.ComponentResource):
     @property
     def cluster_security_group_id(self) -> pulumi.Output[str]:
         # get the auto-created cluster security group by EKS tag
-        # cluster name is cluster-{cell_name}, not resource_prefix
-        cluster_name = f"cluster-{self.config.cell_name}"
-        return self.cluster.kubeconfig.apply(
-            lambda _: aws.ec2.get_security_group_output(
-                tags={"aws:eks:cluster-name": cluster_name},
+        # use the actual cluster name from the EKS cluster
+        return self.cluster.eks_cluster.name.apply(
+            lambda cn: aws.ec2.get_security_group_output(
+                tags={"aws:eks:cluster-name": cn},
             )
         ).apply(lambda sg: sg.id)

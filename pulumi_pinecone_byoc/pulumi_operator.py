@@ -32,12 +32,14 @@ class PulumiOperator(pulumi.ComponentResource):
         config: Config,
         oidc_provider_arn: pulumi.Input[str],
         oidc_provider_url: pulumi.Input[str],
+        cell_name: pulumi.Input[str],
         operator_namespace: str = "pulumi-kubernetes-operator",
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:PulumiOperator", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
         # state bucket for pulumi backend
@@ -83,13 +85,13 @@ class PulumiOperator(pulumi.ComponentResource):
         self, name: str, opts: pulumi.ResourceOptions
     ) -> aws.s3.Bucket:
         """Create S3 bucket for Pulumi state storage."""
-        bucket_name = f"{self.config.resource_prefix}-pulumi-state"
+        bucket_name = self._cell_name.apply(lambda cn: f"pc-pulumi-state-{cn}")
 
         bucket = aws.s3.Bucket(
             f"{name}-state-bucket",
             bucket=bucket_name,
             force_destroy=True,
-            tags=self.config.tags(Name=bucket_name),
+            tags=bucket_name.apply(lambda bn: self.config.tags(Name=bn)),
             opts=opts,
         )
 
@@ -158,7 +160,9 @@ class PulumiOperator(pulumi.ComponentResource):
         """Create KMS key for encrypting Pulumi secrets."""
         key = aws.kms.Key(
             f"{name}-pulumi-secrets-key",
-            description=f"KMS key for Pulumi secrets encryption - {self.config.cell_name}",
+            description=self._cell_name.apply(
+                lambda cn: f"KMS key for Pulumi secrets encryption - {cn}"
+            ),
             enable_key_rotation=True,
             tags=self.config.tags(Name=f"{self.config.resource_prefix}-pulumi-secrets"),
             opts=opts,
