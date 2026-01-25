@@ -14,7 +14,7 @@ import uuid
 from typing import Any, Optional
 
 import pulumi
-from pulumi.dynamic import Resource, ResourceProvider, CreateResult
+from pulumi.dynamic import Resource, ResourceProvider, CreateResult, DiffResult, UpdateResult
 
 
 class ClusterUninstallerProvider(ResourceProvider):
@@ -28,6 +28,14 @@ class ClusterUninstallerProvider(ResourceProvider):
     def create(self, props: dict[str, Any]) -> CreateResult:
         # no-op on create - just mark as "ready for uninstall"
         return CreateResult(id_="uninstaller-ready", outs=props)
+
+    def diff(self, id: str, old: dict[str, Any], new: dict[str, Any]) -> DiffResult:
+        # no-op - never trigger replacement, uninstall only runs on explicit delete
+        return DiffResult(changes=False)
+
+    def update(self, id: str, old: dict[str, Any], new: dict[str, Any]) -> UpdateResult:
+        # no-op - just pass through new props, no actual update needed
+        return UpdateResult(outs=new)
 
     def delete(self, id: str, props: dict[str, Any]) -> None:
         from kubernetes import client, config
