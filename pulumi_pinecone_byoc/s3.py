@@ -108,17 +108,14 @@ class S3Buckets(pulumi.ComponentResource):
         opts: Optional[pulumi.ResourceOptions] = None,
     ) -> aws.s3.Bucket:
         """Create an S3 bucket with standard configuration."""
+        bucket_name = self._cell_name.apply(
+            lambda cn: f"pc-{bucket_name}-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT].strip("-")
+        )
         bucket = aws.s3.Bucket(
             name,
-            bucket=self._cell_name.apply(
-                lambda cn: f"pc-{bucket_name}-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT].strip(
-                    "-"
-                )
-            ),
+            bucket=bucket_name,
             force_destroy=self._force_destroy,
-            tags=pulumi.Output.from_input(bucket_name).apply(
-                lambda bn: self.config.tags(Name=bn)
-            ),
+            tags=bucket_name.apply(lambda bn: self.config.tags(Name=bn)),
             opts=opts,
         )
 
