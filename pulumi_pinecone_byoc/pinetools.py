@@ -41,10 +41,12 @@ class Pinetools(pulumi.ComponentResource):
     - ServiceAccount with imagePullSecrets for ECR
     - ClusterRoleBinding for cluster-admin access
     - CronJob for periodic maintenance (suspended)
-    - One-time Job for initial cluster installation
+    - Job for cluster installation
 
-    The installation Job runs automatically on first `pulumi up` and is
-    ignored on subsequent runs (via ignore_changes).
+    The installation Job name includes the pinecone_version suffix, so:
+    - Same version = same job name = Pulumi sees no change (skips)
+    - New version = new job name = old job replaced
+    - Job has TTL of 60s after completion for automatic cleanup
     """
 
     def __init__(

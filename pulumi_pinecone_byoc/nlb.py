@@ -105,7 +105,7 @@ class NLB(pulumi.ComponentResource):
 
         # build annotations - let AWS LB Controller manage security groups automatically
         # (allows controller to create rules for ALB -> pod traffic)
-        def build_http2_annotations(cert_arn: str, subdomain: str, cn: str) -> dict:
+        def build_http2_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
@@ -125,7 +125,7 @@ class NLB(pulumi.ComponentResource):
             }
 
         http2_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain, self._cell_name
+            dns.private_certificate_arn, dns.subdomain
         ).apply(lambda args: build_http2_annotations(*args))
 
         # private ingress for HTTP2/gRPC traffic
