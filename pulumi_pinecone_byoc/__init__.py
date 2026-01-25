@@ -23,6 +23,7 @@ from .k8s_configmaps import K8sConfigMaps
 from .ecr_refresher import EcrCredentialRefresher
 from .pulumi_operator import PulumiOperator
 from .pinetools import Pinetools
+from .uninstaller import ClusterUninstaller
 
 # low-level providers (rarely needed directly)
 from .providers import (
@@ -57,6 +58,7 @@ __all__ = [
     "EcrCredentialRefresher",
     "PulumiOperator",
     "Pinetools",
+    "ClusterUninstaller",
     # providers
     "Environment",
     "EnvironmentArgs",

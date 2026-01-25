@@ -16,6 +16,14 @@ from config import Config
 from .vpc import VPC
 from .dns import DNS
 
+# https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html
+AWS_ALB_NAME_LIMIT = 32
+AWS_TARGET_GROUP_NAME_LIMIT = 32
+
+
+def _alb_name(subdomain: str) -> str:
+    return f"{subdomain.split('.')[0]}-priv-alb"[:AWS_ALB_NAME_LIMIT].strip("-")
+
 
 class NLB(pulumi.ComponentResource):
     """
@@ -40,6 +48,7 @@ class NLB(pulumi.ComponentResource):
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self.nlb_security_group = aws.ec2.SecurityGroup(
@@ -100,7 +109,7 @@ class NLB(pulumi.ComponentResource):
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
-                "alb.ingress.kubernetes.io/load-balancer-name": f"{cn}-private-alb",
+                "alb.ingress.kubernetes.io/load-balancer-name": _alb_name(subdomain),
                 "alb.ingress.kubernetes.io/scheme": "internal",
                 "alb.ingress.kubernetes.io/target-type": "ip",
                 "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -162,11 +171,11 @@ class NLB(pulumi.ComponentResource):
             ),
         )
 
-        def build_http1_annotations(cert_arn: str, cn: str) -> dict:
+        def build_http1_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
-                "alb.ingress.kubernetes.io/load-balancer-name": f"{cn}-private-alb",
+                "alb.ingress.kubernetes.io/load-balancer-name": _alb_name(subdomain),
                 "alb.ingress.kubernetes.io/scheme": "internal",
                 "alb.ingress.kubernetes.io/target-type": "ip",
                 "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -180,7 +189,7 @@ class NLB(pulumi.ComponentResource):
             }
 
         http1_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, self._cell_name
+            dns.private_certificate_arn, dns.subdomain
         ).apply(lambda args: build_http1_annotations(*args))
 
         # private ingress for HTTP1 traffic
@@ -248,7 +257,9 @@ class NLB(pulumi.ComponentResource):
         # target group for the private ALB
         self.target_group = aws.lb.TargetGroup(
             f"{name}-alb-tg",
-            name=self._cell_name.apply(lambda cn: f"{cn}-tg"[:32]),  # AWS tg name limit
+            name=self._cell_name.apply(
+                lambda cn: f"{cn}-tg"[:AWS_TARGET_GROUP_NAME_LIMIT]
+            ),
             target_type="alb",
             port=443,
             protocol="TCP",
@@ -264,12 +275,12 @@ class NLB(pulumi.ComponentResource):
 
         # wait for private ALB to be created and attach it to target group
         # the ALB is created by the AWS Load Balancer Controller when ingress is applied
-        def get_private_alb_arn(ingress_status, cn: str):
+        def get_private_alb_arn(_ingress_status, subdomain: str):
             """Wait for private ALB and return its ARN."""
             import boto3
 
             elbv2 = boto3.client("elbv2", region_name=config.region)
-            alb_name = f"{cn}-private-alb"
+            alb_name = _alb_name(subdomain)
             for _ in range(30):
                 try:
                     resp = elbv2.describe_load_balancers(Names=[alb_name])
@@ -283,7 +294,7 @@ class NLB(pulumi.ComponentResource):
             raise Exception(f"Failed to find private ALB {alb_name}")
 
         private_alb_arn = pulumi.Output.all(
-            private_lb_http2.status, private_lb_http1.status, self._cell_name
+            private_lb_http2.status, private_lb_http1.status, dns.subdomain
         ).apply(lambda args: get_private_alb_arn(args[0], args[2]))
 
         aws.lb.TargetGroupAttachment(
@@ -299,7 +310,9 @@ class NLB(pulumi.ComponentResource):
 
         self.nlb = aws.lb.LoadBalancer(
             f"{name}-nlb",
-            name=f"{config.resource_prefix}-nlb",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-nlb-{s}"
+            ),
             internal=True,
             load_balancer_type="network",
             subnets=vpc.private_subnet_ids,

@@ -13,7 +13,9 @@ def sanitize(name: str) -> str:
 class NodePoolTaint(BaseModel):
     key: str
     value: str
-    effect: str = "NO_SCHEDULE"  # AWS format: NO_SCHEDULE, PREFER_NO_SCHEDULE, NO_EXECUTE
+    effect: str = (
+        "NO_SCHEDULE"  # AWS format: NO_SCHEDULE, PREFER_NO_SCHEDULE, NO_EXECUTE
+    )
 
 
 class NodePoolConfig(BaseModel):
@@ -99,7 +101,6 @@ class Config(BaseModel):
     def tags(self, **extra: str) -> dict[str, str]:
         """Generate consistent resource tags."""
         base_tags = {
-            "pinecone:environment": self.environment,
             "pinecone:managed-by": "pulumi",
         }
         return {**base_tags, **extra}

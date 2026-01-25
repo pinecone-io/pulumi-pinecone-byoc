@@ -11,6 +11,9 @@ import pulumi_aws as aws
 
 from config import Config
 
+# https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
+AWS_S3_BUCKET_NAME_LIMIT = 63
+
 
 class S3Buckets(pulumi.ComponentResource):
     """
@@ -43,7 +46,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Data bucket - main vector storage
         self.data_bucket = self._create_bucket(
             name=f"{name}-data",
-            bucket_name=self._cell_name.apply(lambda cn: f"pc-data-{cn}"),
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-data-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT]),
             enable_versioning=True,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -52,7 +55,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Index backups bucket
         self.index_backups_bucket = self._create_bucket(
             name=f"{name}-index-backups",
-            bucket_name=self._cell_name.apply(lambda cn: f"pc-index-backups-{cn}"),
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-index-backups-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT]),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -61,7 +64,7 @@ class S3Buckets(pulumi.ComponentResource):
         # WAL bucket - write-ahead logs
         self.wal_bucket = self._create_bucket(
             name=f"{name}-wal",
-            bucket_name=self._cell_name.apply(lambda cn: f"pc-wal-{cn}"),
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-wal-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT]),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -70,7 +73,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Janitor bucket - cleanup operations
         self.janitor_bucket = self._create_bucket(
             name=f"{name}-janitor",
-            bucket_name=self._cell_name.apply(lambda cn: f"pc-janitor-{cn}"),
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-janitor-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT]),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
@@ -79,7 +82,7 @@ class S3Buckets(pulumi.ComponentResource):
         # Internal bucket - operational data
         self.internal_bucket = self._create_bucket(
             name=f"{name}-internal",
-            bucket_name=self._cell_name.apply(lambda cn: f"pc-internal-{cn}"),
+            bucket_name=self._cell_name.apply(lambda cn: f"pc-internal-{cn}"[:AWS_S3_BUCKET_NAME_LIMIT]),
             enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,

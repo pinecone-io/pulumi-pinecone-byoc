@@ -40,6 +40,7 @@ class PulumiOperator(pulumi.ComponentResource):
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self._state_bucket = self._create_state_bucket(name, child_opts)
@@ -160,7 +161,9 @@ class PulumiOperator(pulumi.ComponentResource):
 
         aws.kms.Alias(
             f"{name}-pulumi-secrets-key-alias",
-            name=f"alias/{self.config.resource_prefix}-pulumi-secrets",
+            name=self._resource_suffix.apply(
+                lambda s: f"alias/{self.config.resource_prefix}-pulumi-secrets-{s}"
+            ),
             target_key_id=key.id,
             opts=opts,
         )

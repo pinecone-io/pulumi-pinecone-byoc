@@ -143,52 +143,70 @@ class PreflightResult:
 class SetupWizard:
     """Interactive setup wizard for Pinecone BYOC deployment."""
 
+    TOTAL_STEPS = 12
+
     def __init__(self):
         self.results: list[PreflightResult] = []
+        self._current_step = 0
+
+    def _step(self, title: str) -> str:
+        """Return formatted step header and increment counter."""
+        self._current_step += 1
+        return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
 
     def run(self, output_dir: str = ".") -> bool:
         """Run the interactive setup wizard."""
         self._print_header()
 
-        # step 1: get pinecone api key
+        # get pinecone api key
         api_key = self._get_api_key()
         if not api_key:
             return False
 
-        # step 2: validate api key
+        # validate api key
         if not self._validate_api_key(api_key):
             return False
 
-        # step 3: validate aws credentials (early - we need them for everything else)
+        # validate aws credentials (early - we need them for everything else)
         if not self._validate_aws_creds():
             return False
 
-        # step 4: get region
+        # get region
         region = self._get_region()
 
-        # step 5: get availability zones
+        # get availability zones
         azs = self._get_azs(region)
 
-        # step 6: get vpc cidr
+        # get vpc cidr
         cidr = self._get_cidr()
 
-        # step 7: get deletion protection preference
+        # get deletion protection preference
         deletion_protection = self._get_deletion_protection()
 
-        # step 8: run preflight checks
+        # get public access preference
+        public_access = self._get_public_access()
+
+        # run preflight checks
         if not self._run_preflight_checks(region, azs, cidr):
             return False
 
-        # step 9: get project name
+        # get project name
         project_name = self._get_project_name()
 
-        # step 10: set up pulumi backend
+        # set up pulumi backend
         if not self._setup_pulumi_backend():
             return False
 
-        # step 11: generate everything
+        # generate everything
         return self._generate_project(
-            output_dir, project_name, api_key, region, azs, cidr, deletion_protection
+            output_dir,
+            project_name,
+            api_key,
+            region,
+            azs,
+            cidr,
+            deletion_protection,
+            public_access,
         )
 
     def _print_header(self):
@@ -216,7 +234,7 @@ class SetupWizard:
     def _get_api_key(self) -> Optional[str]:
         """Get Pinecone API key from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 1/10[/] · Pinecone API Key")
+        console.print(f"  {self._step('Pinecone API Key')}")
         console.print("  [dim]Find your key at app.pinecone.io[/]")
         console.print()
 
@@ -238,7 +256,7 @@ class SetupWizard:
     def _validate_api_key(self, api_key: str) -> bool:
         """Validate the Pinecone API key by calling the API."""
         console.print()
-        console.print(f"  [{BLUE}]Step 2/10[/] · Validating API Key")
+        console.print(f"  {self._step('Validating API Key')}")
         console.print()
 
         import urllib.error
@@ -268,7 +286,7 @@ class SetupWizard:
     def _validate_aws_creds(self) -> bool:
         """Validate AWS credentials early - we need them for everything else."""
         console.print()
-        console.print(f"  [{BLUE}]Step 3/10[/] · AWS Credentials")
+        console.print(f"  {self._step('AWS Credentials')}")
         console.print()
 
         with Status(
@@ -300,7 +318,7 @@ class SetupWizard:
     def _get_region(self) -> str:
         """Get AWS region from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 4/10[/] · AWS Region")
+        console.print(f"  {self._step('AWS Region')}")
         console.print()
         return self._prompt("Enter AWS region", "us-east-1")
 
@@ -319,7 +337,7 @@ class SetupWizard:
     def _get_azs(self, region: str) -> list[str]:
         """Get availability zones from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 5/10[/] · Availability Zones")
+        console.print(f"  {self._step('Availability Zones')}")
         console.print()
 
         with Status(
@@ -337,7 +355,7 @@ class SetupWizard:
     def _get_cidr(self) -> str:
         """Get VPC CIDR from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 6/10[/] · VPC CIDR Block")
+        console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(
             "  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]"
         )
@@ -347,7 +365,7 @@ class SetupWizard:
     def _get_deletion_protection(self) -> bool:
         """Get deletion protection preference from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 7/10[/] · Deletion Protection")
+        console.print(f"  {self._step('Deletion Protection')}")
         console.print(
             "  [dim]Protect RDS databases and S3 buckets from accidental deletion[/]"
         )
@@ -355,10 +373,20 @@ class SetupWizard:
         response = self._prompt("Enable deletion protection? (Y/n)", "Y")
         return response.lower() in ("y", "yes", "")
 
+    def _get_public_access(self) -> bool:
+        """Get public access preference from user."""
+        console.print()
+        console.print(f"  {self._step('Network Access')}")
+        console.print("  [dim]Public access allows connections from the internet[/]")
+        console.print("  [dim]Private access requires AWS PrivateLink (more secure)[/]")
+        console.print()
+        response = self._prompt("Enable public access? (Y/n)", "Y")
+        return response.lower() in ("y", "yes", "")
+
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
         """Run preflight checks for AWS environment."""
         console.print()
-        console.print(f"  [{BLUE}]Step 8/10[/] · Preflight Checks")
+        console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
         checker = PreflightChecker(region, azs, cidr)
@@ -374,7 +402,7 @@ class SetupWizard:
     def _get_project_name(self) -> str:
         """Get project name from user."""
         console.print()
-        console.print(f"  [{BLUE}]Step 9/11[/] · Project Name")
+        console.print(f"  {self._step('Project Name')}")
         console.print(
             "  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]"
         )
@@ -386,7 +414,7 @@ class SetupWizard:
         import subprocess
 
         console.print()
-        console.print(f"  [{BLUE}]Step 10/11[/] · Pulumi Backend")
+        console.print(f"  {self._step('Pulumi Backend')}")
         console.print("  [dim]Where to store infrastructure state[/]")
         console.print()
 
@@ -449,10 +477,12 @@ class SetupWizard:
         azs: list[str],
         cidr: str,
         deletion_protection: bool,
+        public_access: bool,
     ):
         """Generate complete Pulumi project."""
         console.print()
-        console.print(f"  [{BLUE}]Step 11/11[/] · Creating Project")
+
+        console.print(f"  {self._step('Creating Project')}")
         console.print()
 
         if not self._check_pulumi_installed():
@@ -490,12 +520,14 @@ config = pulumi.Config()
 cluster = PineconeAWSCluster(
     name="pinecone-aws-cluster",
     args=PineconeAWSClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone_api_key"),
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
         region=config.require("region"),
-        vpc_cidr=config.get("vpc_cidr"),
-        availability_zones=config.require_object("availability_zones"),
-        deletion_protection=config.get_bool("deletion_protection") if config.get_bool("deletion_protection") is not None else True,
-        global_env=config.get("global_env") or "dev",
+        vpc_cidr=config.get("vpc-cidr"),
+        availability_zones=config.require_object("availability-zones"),
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        global_env=config.get("global-env") or "dev",
     ),
 )
 
@@ -546,12 +578,15 @@ dependencies = ["pulumi-pinecone-byoc"]
         # create stack config
         stack_name = "dev"
         deletion_protection_str = str(deletion_protection).lower()
+        public_access_str = str(public_access).lower()
         config_content = f"""config:
   {project_name}:region: {region}
-  {project_name}:vpc_cidr: {cidr}
-  {project_name}:deletion_protection: {deletion_protection_str}
-  {project_name}:global_env: dev
-  {project_name}:availability_zones:
+  {project_name}:pinecone-version: main-96b2399
+  {project_name}:vpc-cidr: {cidr}
+  {project_name}:deletion-protection: {deletion_protection_str}
+  {project_name}:public-access-enabled: {public_access_str}
+  {project_name}:global-env: {stack_name}
+  {project_name}:availability-zones:
 """
         for az in azs:
             config_content += f"    - {az}\n"
@@ -592,7 +627,7 @@ dependencies = ["pulumi-pinecone-byoc"]
                     "config",
                     "set",
                     "--secret",
-                    "pinecone_api_key",
+                    "pinecone-api-key",
                     api_key,
                     "--stack",
                     stack_name,
@@ -608,7 +643,7 @@ dependencies = ["pulumi-pinecone-byoc"]
                 f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}"
             )
             console.print(
-                "  [dim]Run manually:[/] pulumi config set --secret pinecone_api_key <key>"
+                "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
             )
             return False
 

@@ -3,7 +3,12 @@ Pinetools setup for cluster management.
 
 Creates:
 - CronJob for periodic cluster maintenance (suspended by default)
-- One-time installation Job that runs on first provision
+- One-time installation Job
+
+Job naming includes version suffix, so:
+- Same version = same job name = Pulumi skips (no change)
+- New version = new job name = old job deleted, new one created
+- Failed jobs auto-cleanup after 60s, then retry with `pulumi up`
 """
 
 from typing import Optional
@@ -46,17 +51,16 @@ class Pinetools(pulumi.ComponentResource):
         self,
         name: str,
         k8s_provider: pulumi.ProviderResource,
+        pinecone_version: pulumi.Input[str],
         pinetools_image: str = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4/pinetools:latest",
-        install_image_tag: str = "main-3d6741d",
         schedule: str = "0 * * * *",
-        run_install_job: bool = True,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:Pinetools", name, None, opts)
 
         namespace = "pc-control-plane"
         self._pinetools_image = pinetools_image
-        self._install_image_tag = install_image_tag
+        self._pinecone_version = pinecone_version
 
         ns = k8s.core.v1.Namespace(
             f"{name}-namespace",
@@ -117,11 +121,14 @@ class Pinetools(pulumi.ComponentResource):
             name="pinetools",
             image=pinetools_image,
             command=["/bin/sh", "-c"],
-            args=["pinetools cluster install && pinetools cluster check"],
+            # Restart cluster-autoscaler after install so it discovers all node groups with correct taints
+            args=[
+                "pinetools cluster install && pinetools cluster check && kubectl rollout restart deployment -n kube-system -l app.kubernetes.io/name=cluster-autoscaler"
+            ],
             env=[
                 k8s.core.v1.EnvVarArgs(
                     name="PINECONE_IMAGE_VERSION",
-                    value=install_image_tag,
+                    value=pinecone_version,
                 ),
             ],
             resources=k8s.core.v1.ResourceRequirementsArgs(
@@ -148,12 +155,21 @@ class Pinetools(pulumi.ComponentResource):
                 init_containers=init_containers,
             )
 
-        def make_job_spec(
-            init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
-        ) -> k8s.batch.v1.JobSpecArgs:
+        def make_cronjob_spec() -> k8s.batch.v1.JobSpecArgs:
             return k8s.batch.v1.JobSpecArgs(
                 backoff_limit=3,
                 ttl_seconds_after_finished=3600,
+                template=k8s.core.v1.PodTemplateSpecArgs(
+                    spec=make_pod_spec(),
+                ),
+            )
+
+        def make_install_job_spec(
+            init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
+        ) -> k8s.batch.v1.JobSpecArgs:
+            return k8s.batch.v1.JobSpecArgs(
+                backoff_limit=0,
+                ttl_seconds_after_finished=60,
                 template=k8s.core.v1.PodTemplateSpecArgs(
                     spec=make_pod_spec(init_containers),
                 ),
@@ -168,32 +184,31 @@ class Pinetools(pulumi.ComponentResource):
                 successful_jobs_history_limit=3,
                 failed_jobs_history_limit=3,
                 concurrency_policy="Forbid",
-                job_template=k8s.batch.v1.JobTemplateSpecArgs(spec=make_job_spec()),
+                job_template=k8s.batch.v1.JobTemplateSpecArgs(spec=make_cronjob_spec()),
             ),
             opts=pulumi.ResourceOptions(
                 parent=self, provider=k8s_provider, depends_on=[sa]
             ),
         )
 
-        # one-time installation job - runs on first pulumi up only
-        if run_install_job:
-            install_job = k8s.batch.v1.Job(
-                f"{name}-install-job",
-                metadata=k8s.meta.v1.ObjectMetaArgs(
-                    name="pinetools-install", namespace=namespace
-                ),
-                spec=make_job_spec(init_containers=[wait_for_regcred_container]),
-                opts=pulumi.ResourceOptions(
-                    parent=self,
-                    provider=k8s_provider,
-                    depends_on=[sa, cronjob],
-                    # ignore changes so this job only runs on first provision
-                    ignore_changes=["*"],
-                ),
-            )
-            self.install_job_name = install_job.metadata.name
-        else:
-            self.install_job_name = None
+        # one-time installation job
+        # Job name includes version suffix so:
+        # - Same version = same job name = Pulumi sees no change = skips
+        # - New version = new job name = old job deleted, new one created
+        # - Failed job auto-deletes after 60s, so retry is just `pulumi up` again
+        version_output = pulumi.Output.from_input(pinecone_version)
+        job_name = version_output.apply(lambda v: f"pinetools-install-{v[-7:]}")
+        install_job = k8s.batch.v1.Job(
+            f"{name}-install-job",
+            metadata=k8s.meta.v1.ObjectMetaArgs(name=job_name, namespace=namespace),
+            spec=make_install_job_spec(init_containers=[wait_for_regcred_container]),
+            opts=pulumi.ResourceOptions(
+                parent=self,
+                provider=k8s_provider,
+                depends_on=[sa, cronjob],
+            ),
+        )
+        self.install_job_name = install_job.metadata.name
 
         self.namespace = namespace
         self.cronjob_name = cronjob.metadata.name

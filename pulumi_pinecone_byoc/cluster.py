@@ -22,6 +22,7 @@ from .k8s_configmaps import K8sConfigMaps
 from .ecr_refresher import EcrCredentialRefresher
 from .pulumi_operator import PulumiOperator
 from .pinetools import Pinetools
+from .uninstaller import ClusterUninstaller
 from .providers import (
     Environment,
     EnvironmentArgs,
@@ -54,6 +55,7 @@ class NodePool:
 class PineconeAWSClusterArgs:
     # required
     pinecone_api_key: pulumi.Input[str]
+    pinecone_version: pulumi.Input[str]
 
     # aws specific
     region: pulumi.Input[str] = "us-east-1"
@@ -80,7 +82,6 @@ class PineconeAWSClusterArgs:
     global_env: pulumi.Input[str] = "prod"
     auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
     gcp_project: Optional[pulumi.Input[str]] = None  # defaults based on global_env
-    pinecone_version: pulumi.Input[str] = "main-a1ff459"
 
     # tags
     tags: Optional[dict[str, str]] = None
@@ -112,10 +113,13 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # cell_name derived from org_name (from environment response)
-        self._cell_name = self._environment.org_name.apply(
-            lambda org_name: f"{args.global_env}-aws-{sanitize(org_name)}"
-        )
+        # cell_name derived from environment org_name and env_name - e.g. pinecone-byoc-0123
+        self._cell_name = pulumi.Output.all(
+            self._environment.org_name, self._environment.env_name
+        ).apply(lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}")
+
+        # resource_suffix for unique AWS resource names (last 4 chars of cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
 
         self._cpgw_api_key = CpgwApiKey(
             f"{config.resource_prefix}-cpgw-api-key",
@@ -198,7 +202,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
         self._storage_integration_role = aws.iam.Role(
             f"{config.resource_prefix}-storage-integration-role",
-            name=f"{config.resource_prefix}-storage-integration",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-storage-integration-{s}"
+            ),
             assume_role_policy=assume_role_policy,
             tags=config.tags(Name=f"{config.resource_prefix}-storage-integration"),
             opts=child_opts,
@@ -243,6 +249,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-rds",
             config,
             self._vpc,
+            cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
 
@@ -290,7 +297,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
         # NLB for private endpoint access (creates private ALB + NLB)
-        # must be after K8sAddons so ALB Controller is available
         self._nlb = NLB(
             f"{config.resource_prefix}-nlb",
             config,
@@ -384,6 +390,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "sli_checkers_project_id": self._api_key.project_id,
             "aws_storage_integration_role_arn": self._storage_integration_role.arn,
             "customer_tags": args.tags or {},
+            "public_access_enabled": args.public_access_enabled,
             # pulumi operator s3 backend config for Stack CRDs
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
@@ -425,9 +432,29 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._pinetools = Pinetools(
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
-            install_image_tag=args.pinecone_version,
+            pinecone_version=args.pinecone_version,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._k8s_configmaps]
+            ),
+        )
+
+        # cluster uninstaller - runs `pinetools cluster uninstall --force` on destroy
+        # MUST depend on all K8s resources so it's destroyed FIRST
+        # this ensures cleanup runs before any K8s resources are deleted
+        self._uninstaller = ClusterUninstaller(
+            f"{config.resource_prefix}-uninstaller",
+            kubeconfig=self._eks.kubeconfig.apply(json.dumps),
+            opts=pulumi.ResourceOptions(
+                parent=self,
+                depends_on=[
+                    self._pinetools,
+                    self._k8s_addons,
+                    self._k8s_secrets,
+                    self._k8s_configmaps,
+                    self._ecr_refresher,
+                    self._nlb,
+                    self._pulumi_operator,
+                ],
             ),
         )
 
@@ -687,12 +714,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
     @property
     def pulumi_backend_url(self) -> pulumi.Output[str]:
-        """S3 backend URL for Stack CRD spec.backend field."""
         return self._pulumi_operator.backend_url
 
     @property
     def pulumi_secrets_provider(self) -> pulumi.Output[str]:
-        """KMS secrets provider for Stack CRD spec.secretsProvider field."""
         return self._pulumi_operator.secrets_provider
 
     @property

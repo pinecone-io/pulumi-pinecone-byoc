@@ -15,6 +15,9 @@ import pulumi_kubernetes as k8s
 from config import Config
 from .vpc import VPC
 
+# https://docs.aws.amazon.com/eks/latest/userguide/clusters.html
+AWS_EKS_CLUSTER_NAME_LIMIT = 100
+
 
 class EKS(pulumi.ComponentResource):
     """
@@ -37,6 +40,7 @@ class EKS(pulumi.ComponentResource):
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self._create_cluster_role(name, child_opts)
@@ -45,7 +49,9 @@ class EKS(pulumi.ComponentResource):
 
         self.cluster = eks.Cluster(
             resource_name=f"{config.resource_prefix}-eks-cluster",
-            name=self._cell_name.apply(lambda cn: f"cluster-{cn}"),
+            name=self._cell_name.apply(
+                lambda cn: f"cluster-{cn}"[:AWS_EKS_CLUSTER_NAME_LIMIT]
+            ),
             vpc_id=vpc.vpc_id,
             public_subnet_ids=vpc.public_subnet_ids,
             private_subnet_ids=vpc.private_subnet_ids,
@@ -175,11 +181,11 @@ class EKS(pulumi.ComponentResource):
         opts: pulumi.ResourceOptions,
     ) -> aws.ec2.LaunchTemplate:
         """Create a launch template for the node group with IMDS settings."""
-        resource_name = f"{self.config.resource_prefix}-{np_config.name}-lt"
-
         return aws.ec2.LaunchTemplate(
             f"{name}-lt-{np_config.name}",
-            name=resource_name,
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-{np_config.name}-lt-{s}"
+            ),
             block_device_mappings=[
                 aws.ec2.LaunchTemplateBlockDeviceMappingArgs(
                     device_name="/dev/xvda",
@@ -197,7 +203,7 @@ class EKS(pulumi.ComponentResource):
                 http_put_response_hop_limit=2,
                 http_tokens="optional",
             ),
-            tags=self.config.tags(Name=resource_name),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-{np_config.name}-lt"),
             opts=opts,
         )
 
@@ -226,7 +232,9 @@ class EKS(pulumi.ComponentResource):
         return aws.eks.NodeGroup(
             f"{name}-ng-{np_config.name}",
             cluster_name=self.cluster.eks_cluster.name,
-            node_group_name=f"{self.config.resource_prefix}-{np_config.name}",
+            node_group_name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-{np_config.name}-{s}"
+            ),
             node_role_arn=node_role.arn,
             subnet_ids=vpc.private_subnet_ids,
             ami_type="AL2023_x86_64_STANDARD",
