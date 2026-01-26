@@ -1,0 +1,99 @@
+name: Create Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+      version_override:
+        description: 'Manual version override (e.g., 1.2.3) - leave empty to auto-increment'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # fetch all history and tags for tag existence check
+
+      - name: Calculate version
+        id: version
+        run: |
+          # if manual override provided, validate and use it
+          if [[ -n "${{ inputs.version_override }}" ]]; then
+            VERSION="${{ inputs.version_override }}"
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Error: Version must be in format X.Y.Z (e.g., 1.2.3)"
+              exit 1
+            fi
+            echo "version=$VERSION" >> $GITHUB_OUTPUT
+            echo "Using manual version: $VERSION"
+            exit 0
+          fi
+
+          # get latest version tag
+          LATEST_TAG=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+          if [[ -z "$LATEST_TAG" ]]; then
+            # no tags yet, start at 0.1.0
+            echo "version=0.1.0" >> $GITHUB_OUTPUT
+            echo "No existing tags, starting at 0.1.0"
+            exit 0
+          fi
+
+          # parse version (strip 'v' prefix)
+          LATEST_VERSION="${LATEST_TAG#v}"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$LATEST_VERSION"
+
+          # increment based on bump type
+          case "${{ inputs.bump_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+          esac
+
+          NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          echo "version=$NEW_VERSION" >> $GITHUB_OUTPUT
+          echo "Bumping ${{ inputs.bump_type }}: $LATEST_VERSION -> $NEW_VERSION"
+
+      - name: Check tag doesn't exist
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "Error: Tag v${{ steps.version.outputs.version }} already exists"
+            exit 1
+          fi
+
+      - name: Create and push tag
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "v${{ steps.version.outputs.version }}" \
+            --title "v${{ steps.version.outputs.version }}" \
+            --generate-notes
