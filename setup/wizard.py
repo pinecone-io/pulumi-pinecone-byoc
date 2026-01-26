@@ -143,7 +143,7 @@ class PreflightResult:
 class SetupWizard:
     """Interactive setup wizard for Pinecone BYOC deployment."""
 
-    TOTAL_STEPS = 12
+    TOTAL_STEPS = 13
 
     def __init__(self):
         self.results: list[PreflightResult] = []
@@ -186,6 +186,9 @@ class SetupWizard:
         # get public access preference
         public_access = self._get_public_access()
 
+        # get custom tags
+        tags = self._get_tags()
+
         # run preflight checks
         if not self._run_preflight_checks(region, azs, cidr):
             return False
@@ -207,6 +210,7 @@ class SetupWizard:
             cidr,
             deletion_protection,
             public_access,
+            tags,
         )
 
     def _print_header(self):
@@ -383,6 +387,34 @@ class SetupWizard:
         response = self._prompt("Enable public access? (Y/n)", "Y")
         return response.lower() in ("y", "yes", "")
 
+    def _get_tags(self) -> dict[str, str]:
+        """Get custom tags from user."""
+        console.print()
+        console.print(f"  {self._step('Resource Tags')}")
+        console.print(
+            "  [dim]Add custom tags to all AWS resources (for cost tracking, etc.)[/]"
+        )
+        console.print(
+            "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
+        )
+        console.print()
+
+        tags_input = self._prompt("Enter tags (or press Enter to skip)", "")
+        if not tags_input:
+            return {}
+
+        tags = {}
+        for pair in tags_input.split(","):
+            pair = pair.strip()
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+                tags[key.strip()] = value.strip()
+
+        if tags:
+            console.print(f"  [dim]Tags to apply: {tags}[/]")
+
+        return tags
+
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
         """Run preflight checks for AWS environment."""
         console.print()
@@ -478,6 +510,7 @@ class SetupWizard:
         cidr: str,
         deletion_protection: bool,
         public_access: bool,
+        tags: dict[str, str],
     ):
         """Generate complete Pulumi project."""
         console.print()
@@ -528,6 +561,7 @@ cluster = PineconeAWSCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         global_env=config.get("global-env") or "dev",
+        tags=config.get_object("tags"),
     ),
 )
 
@@ -590,6 +624,12 @@ dependencies = ["pulumi-pinecone-byoc"]
 """
         for az in azs:
             config_content += f"    - {az}\n"
+
+        # add tags if provided (quote values to handle YAML special chars)
+        if tags:
+            config_content += f"  {project_name}:tags:\n"
+            for key, value in tags.items():
+                config_content += f'    {key}: "{value}"\n'
 
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:

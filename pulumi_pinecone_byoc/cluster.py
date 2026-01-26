@@ -550,6 +550,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
             database=DatabaseConfig(deletion_protection=args.deletion_protection),
+            custom_tags=args.tags or {},
         )
 
     @property

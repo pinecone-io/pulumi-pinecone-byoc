@@ -1,5 +1,5 @@
 """
-Pulumi Kubernetes Operator setup for self-managed BYOC.
+Pulumi Kubernetes Operator setup.
 
 Creates S3 backend, KMS key for secrets, and IRSA for the operator.
 """
