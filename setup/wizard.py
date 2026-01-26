@@ -391,8 +391,12 @@ class SetupWizard:
         """Get custom tags from user."""
         console.print()
         console.print(f"  {self._step('Resource Tags')}")
-        console.print("  [dim]Add custom tags to all AWS resources (for cost tracking, etc.)[/]")
-        console.print("  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]")
+        console.print(
+            "  [dim]Add custom tags to all AWS resources (for cost tracking, etc.)[/]"
+        )
+        console.print(
+            "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
+        )
         console.print()
 
         tags_input = self._prompt("Enter tags (or press Enter to skip)", "")
@@ -621,11 +625,11 @@ dependencies = ["pulumi-pinecone-byoc"]
         for az in azs:
             config_content += f"    - {az}\n"
 
-        # add tags if provided
+        # add tags if provided (quote values to handle YAML special chars)
         if tags:
             config_content += f"  {project_name}:tags:\n"
             for key, value in tags.items():
-                config_content += f"    {key}: {value}\n"
+                config_content += f'    {key}: "{value}"\n'
 
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
