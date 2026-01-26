@@ -72,7 +72,7 @@ class ClusterUninstallerProvider(ResourceProvider):
                 namespace=namespace,
             ),
             spec=client.V1JobSpec(
-                backoff_limit=3,
+                backoff_limit=0,
                 ttl_seconds_after_finished=300,
                 template=client.V1PodTemplateSpec(
                     spec=client.V1PodSpec(

@@ -159,7 +159,7 @@ class Pinetools(pulumi.ComponentResource):
 
         def make_cronjob_spec() -> k8s.batch.v1.JobSpecArgs:
             return k8s.batch.v1.JobSpecArgs(
-                backoff_limit=3,
+                backoff_limit=0,
                 ttl_seconds_after_finished=3600,
                 template=k8s.core.v1.PodTemplateSpecArgs(
                     spec=make_pod_spec(),
