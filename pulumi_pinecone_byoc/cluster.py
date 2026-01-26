@@ -86,12 +86,16 @@ class PineconeAWSClusterArgs:
     tags: Optional[dict[str, str]] = None
 
 
+# max length of org name for cell name, to avoid exceeding AWS resource name limits
+ORG_NAME_MAX_LENGTH = 16
+
+
 # cell_name derived from environment org_name and env_name - e.g. pinecone-byoc-0123
 def _cell_name(environment: Environment) -> pulumi.Output[str]:
     def sanitize(name: str) -> str:
         import re
 
-        return re.sub(r"[^a-z0-9]", "", name.lower())
+        return re.sub(r"[^a-z0-9]", "", name.lower())[:ORG_NAME_MAX_LENGTH]
 
     return pulumi.Output.all(environment.org_name, environment.env_name).apply(
         lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}"
