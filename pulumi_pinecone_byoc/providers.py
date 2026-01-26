@@ -371,7 +371,7 @@ class ApiKeyProvider(ResourceProvider):
                 changes=True, replaces=["value"], delete_before_replace=True
             )
 
-        # replace if project_name or key_name changes
+        # replace if project_name, key_name, or auth credentials change
         replaces = []
         if olds.get("project_name") != news.get("project_name"):
             replaces.append("project_name")
@@ -379,6 +379,11 @@ class ApiKeyProvider(ResourceProvider):
             replaces.append("key_name")
         if olds.get("org_id") != news.get("org_id"):
             replaces.append("org_id")
+        # credentials change means service account was replaced - must recreate
+        if olds.get("auth0_client_id") != news.get("auth0_client_id"):
+            replaces.append("auth0_client_id")
+        if olds.get("auth0_client_secret") != news.get("auth0_client_secret"):
+            replaces.append("auth0_client_secret")
         return DiffResult(
             changes=len(replaces) > 0,
             replaces=replaces,

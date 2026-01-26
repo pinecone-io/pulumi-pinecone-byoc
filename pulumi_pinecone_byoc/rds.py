@@ -30,6 +30,7 @@ class RDSInstance(pulumi.ComponentResource):
         vpc: VPC,
         security_group_id: pulumi.Output[str],
         subnet_group_name: pulumi.Output[str],
+        resource_suffix: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -37,6 +38,7 @@ class RDSInstance(pulumi.ComponentResource):
 
         self.config = config
         self.db_config = db_config
+        self._resource_suffix = pulumi.Output.from_input(resource_suffix)
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self._random_password = random.RandomPassword(
@@ -48,7 +50,9 @@ class RDSInstance(pulumi.ComponentResource):
 
         self.master_password = aws.secretsmanager.Secret(
             f"{name}-master-password",
-            name=f"{config.resource_prefix}/{db_config.name}/master-password",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{s}/{db_config.name}/master-password"
+            ),
             recovery_window_in_days=0,
             tags=config.tags(
                 Name=f"{config.resource_prefix}-{db_config.name}-master-password"
@@ -66,7 +70,9 @@ class RDSInstance(pulumi.ComponentResource):
         cluster_parameter_group = aws.rds.ClusterParameterGroup(
             f"{name}-cluster-params",
             family="aurora-postgresql15",
-            name=f"{config.resource_prefix}-{db_config.name}-params",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{db_config.name}-params-{s}"
+            ),
             parameters=[
                 aws.rds.ClusterParameterGroupParameterArgs(
                     name="log_statement",
@@ -82,7 +88,9 @@ class RDSInstance(pulumi.ComponentResource):
         )
 
         cluster_args = {
-            "cluster_identifier": f"{config.resource_prefix}-{db_config.name}",
+            "cluster_identifier": self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{db_config.name}-{s}"
+            ),
             "engine": "aurora-postgresql",
             "engine_mode": "provisioned",
             "engine_version": db_config.engine_version,
@@ -112,7 +120,9 @@ class RDSInstance(pulumi.ComponentResource):
 
         self.instance = aws.rds.ClusterInstance(
             f"{name}-instance",
-            identifier=f"{config.resource_prefix}-{db_config.name}-instance-0",
+            identifier=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{db_config.name}-{s}-0"
+            ),
             cluster_identifier=self.cluster.id,
             instance_class=db_config.instance_class,
             engine=self.cluster.engine,
@@ -130,7 +140,9 @@ class RDSInstance(pulumi.ComponentResource):
 
         self.connection_secret = aws.secretsmanager.Secret(
             f"{name}-connection",
-            name=f"{config.resource_prefix}/{db_config.name}/connection",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{s}/{db_config.name}/connection"
+            ),
             recovery_window_in_days=0,
             tags=config.tags(
                 Name=f"{config.resource_prefix}-{db_config.name}-connection"
@@ -202,18 +214,23 @@ class RDS(pulumi.ComponentResource):
         name: str,
         config: Config,
         vpc: VPC,
+        cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:RDS", name, None, opts)
 
         self.config = config
+        self._cell_name = pulumi.Output.from_input(cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
         # Shared subnet group for all databases
         self.subnet_group = aws.rds.SubnetGroup(
             f"{name}-subnet-group",
-            name=f"{config.resource_prefix}-db",
+            name=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-db-{s}"
+            ),
             subnet_ids=vpc.private_subnet_ids,
             tags=config.tags(Name=f"{config.resource_prefix}-db-subnet-group"),
             opts=child_opts,
@@ -253,6 +270,7 @@ class RDS(pulumi.ComponentResource):
             vpc=vpc,
             security_group_id=self.security_group.id,
             subnet_group_name=self.subnet_group.name,
+            resource_suffix=self._resource_suffix,
             kms_key_arn=kms_key_arn,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self.subnet_group, self.security_group]
@@ -265,6 +283,7 @@ class RDS(pulumi.ComponentResource):
             db_config=config.database.system_db,
             vpc=vpc,
             security_group_id=self.security_group.id,
+            resource_suffix=self._resource_suffix,
             subnet_group_name=self.subnet_group.name,
             kms_key_arn=kms_key_arn,
             opts=pulumi.ResourceOptions(

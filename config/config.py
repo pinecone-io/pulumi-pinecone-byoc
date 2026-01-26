@@ -3,17 +3,14 @@ Configuration for Pinecone BYOC AWS infrastructure.
 """
 
 from pydantic import BaseModel, Field
-import re
-
-
-def sanitize(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 class NodePoolTaint(BaseModel):
     key: str
     value: str
-    effect: str = "NO_SCHEDULE"  # AWS format: NO_SCHEDULE, PREFER_NO_SCHEDULE, NO_EXECUTE
+    effect: str = (
+        "NO_SCHEDULE"  # AWS format: NO_SCHEDULE, PREFER_NO_SCHEDULE, NO_EXECUTE
+    )
 
 
 class NodePoolConfig(BaseModel):
@@ -99,7 +96,6 @@ class Config(BaseModel):
     def tags(self, **extra: str) -> dict[str, str]:
         """Generate consistent resource tags."""
         base_tags = {
-            "pinecone:environment": self.environment,
             "pinecone:managed-by": "pulumi",
         }
         return {**base_tags, **extra}

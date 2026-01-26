@@ -49,6 +49,7 @@ AWS_LOAD_BALANCER_POLICY = {
                 "elasticloadbalancing:DescribeTargetGroupAttributes",
                 "elasticloadbalancing:DescribeTargetHealth",
                 "elasticloadbalancing:DescribeTags",
+                "elasticloadbalancing:DescribeTrustStores",
             ],
             "Resource": "*",
         },
@@ -213,6 +214,8 @@ AWS_LOAD_BALANCER_POLICY = {
                 "elasticloadbalancing:AddListenerCertificates",
                 "elasticloadbalancing:RemoveListenerCertificates",
                 "elasticloadbalancing:ModifyRule",
+                "elasticloadbalancing:SetRulePriorities",
+                "elasticloadbalancing:ModifyListenerAttributes",
             ],
             "Resource": "*",
         },
@@ -234,6 +237,8 @@ class K8sAddons(pulumi.ComponentResource):
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        # resource_suffix for unique AWS resource names (last 4 chars of cell_name)
+        self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self.gloo_namespace = self._create_gloo_namespace(
@@ -387,7 +392,9 @@ class K8sAddons(pulumi.ComponentResource):
     ) -> aws.iam.Role:
         role = aws.iam.Role(
             f"{name}-alb-controller-role",
-            name=f"{self.config.resource_prefix}-alb-controller",
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-alb-controller-{s}"
+            ),
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "kube-system", "aws-lb-controller-sa"
             ),
@@ -459,7 +466,9 @@ class K8sAddons(pulumi.ComponentResource):
     ) -> aws.iam.Role:
         role = aws.iam.Role(
             f"{name}-cluster-autoscaler-role",
-            name=f"{self.config.resource_prefix}-cluster-autoscaler",
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-cluster-autoscaler-{s}"
+            ),
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "kube-system", "cluster-autoscaler-sa"
             ),
@@ -559,7 +568,9 @@ class K8sAddons(pulumi.ComponentResource):
     ) -> aws.iam.Role:
         role = aws.iam.Role(
             f"{name}-external-dns-role",
-            name=f"{self.config.resource_prefix}-external-dns",
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-external-dns-{s}"
+            ),
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "gloo-system", "external-dns"
             ),
@@ -644,7 +655,9 @@ class K8sAddons(pulumi.ComponentResource):
 
         role = aws.iam.Role(
             f"{name}-ebs-csi-role",
-            name=f"{self.config.resource_prefix}-ebs-csi",
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-ebs-csi-{s}"
+            ),
             assume_role_policy=trust_policy,
             tags=self.config.tags(Name=f"{self.config.resource_prefix}-ebs-csi"),
             opts=opts,
@@ -713,10 +726,12 @@ class K8sAddons(pulumi.ComponentResource):
         """Create IAM role for Prometheus to assume for AMP remote write."""
         return aws.iam.Role(
             f"{name}-amp-ingest-role",
-            name="amp-iamproxy-ingest-role",
+            name=self._resource_suffix.apply(
+                lambda s: f"{self.config.resource_prefix}-amp-ingest-{s}"
+            ),
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "prometheus", "amp-iamproxy-ingest-service-account"
             ),
-            tags=self.config.tags(Name="amp-iamproxy-ingest-role"),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-amp-ingest"),
             opts=opts,
         )
