@@ -89,19 +89,10 @@ The exact command is output after `pulumi up` completes.
 Pinecone manages upgrades automatically in the background. If you need to trigger an upgrade manually:
 
 ```bash
-kubectl create job upgrade-$(date +%s) --from=cronjob/pinetools -n pc-control-plane \
-  --dry-run=client -o yaml | \
-  yq '.spec.template.spec.containers[0].env[0].value = "<new-version>"' | \
-  kubectl create -f -
+pulumi up -c pinecone-version=<new-version>
 ```
 
 Replace `<new-version>` with the target Pinecone version (e.g., `main-abc1234`).
-
-To watch the upgrade progress:
-
-```bash
-kubectl logs -f job/upgrade-<timestamp> -n pc-control-plane
-```
 
 ## Configuration
 
@@ -109,10 +100,13 @@ The setup wizard creates a Pulumi stack with these configurable options:
 
 | Option | Description | Default |
 |--------|-------------|---------|
+| `pinecone-version` | Pinecone release version (required) | — |
 | `region` | AWS region | `us-east-1` |
-| `availability_zones` | AZs for high availability | 2 zones |
+| `availability_zones` | AZs for high availability | `["us-east-1a", "us-east-1b"]` |
 | `vpc_cidr` | VPC IP range | `10.0.0.0/16` |
-| `deletion_protection` | Protect RDS/S3 from deletion | `true` |
+| `deletion_protection` | Protect RDS/S3 from accidental deletion | `true` |
+| `public_access_enabled` | Enable public endpoint (false = PrivateLink only) | `true` |
+| `tags` | Custom tags to apply to all resources | `{}` |
 
 Edit `Pulumi.<stack>.yaml` to modify these values.
 
@@ -130,6 +124,7 @@ cluster = PineconeAWSCluster(
     name="my-pinecone-cluster",
     args=PineconeAWSClusterArgs(
         pinecone_api_key=config.require_secret("pinecone_api_key"),
+        pinecone_version=config.require("pinecone-version"),
         region="us-west-2",
         availability_zones=["us-west-2a", "us-west-2b"],
         vpc_cidr="10.1.0.0/16",
@@ -194,7 +189,3 @@ Note: If `deletion_protection` is enabled (default), you'll need to disable it f
 
 - [Documentation](https://docs.pinecone.io/guides/production/bring-your-own-cloud)
 - [GitHub Issues](https://github.com/pinecone-io/pulumi-pinecone-byoc/issues)
-
-## License
-
-Apache 2.0
