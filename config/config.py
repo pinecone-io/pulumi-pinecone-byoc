@@ -89,13 +89,16 @@ class Config(BaseModel):
     # DNS
     parent_zone_name: str = "pinecone.io"
 
+    # Custom tags from user
+    custom_tags: dict[str, str] = Field(default_factory=dict)
+
     @property
     def resource_prefix(self) -> str:
         return "pc"
 
     def tags(self, **extra: str) -> dict[str, str]:
-        """Generate consistent resource tags."""
+        """Generate consistent resource tags, including user-provided custom tags."""
         base_tags = {
             "pinecone:managed-by": "pulumi",
         }
-        return {**base_tags, **extra}
+        return {**base_tags, **self.custom_tags, **extra}
