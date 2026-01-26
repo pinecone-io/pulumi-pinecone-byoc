@@ -3,11 +3,6 @@ Configuration for Pinecone BYOC AWS infrastructure.
 """
 
 from pydantic import BaseModel, Field
-import re
-
-
-def sanitize(name: str) -> str:
-    return re.sub(r"[^a-z0-9]", "", name.lower())
 
 
 class NodePoolTaint(BaseModel):

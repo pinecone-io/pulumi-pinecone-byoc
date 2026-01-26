@@ -9,7 +9,6 @@ import json
 import pulumi
 import pulumi_aws as aws
 
-from config import sanitize
 from .vpc import VPC
 from .eks import EKS
 from .s3 import S3Buckets
@@ -87,6 +86,18 @@ class PineconeAWSClusterArgs:
     tags: Optional[dict[str, str]] = None
 
 
+# cell_name derived from environment org_name and env_name - e.g. pinecone-byoc-0123
+def _cell_name(environment: Environment) -> pulumi.Output[str]:
+    def sanitize(name: str) -> str:
+        import re
+
+        return re.sub(r"[^a-z0-9]", "", name.lower())
+
+    return pulumi.Output.all(environment.org_name, environment.env_name).apply(
+        lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}"
+    )
+
+
 class PineconeAWSCluster(pulumi.ComponentResource):
     def __init__(
         self,
@@ -113,10 +124,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # cell_name derived from environment org_name and env_name - e.g. pinecone-byoc-0123
-        self._cell_name = pulumi.Output.all(
-            self._environment.org_name, self._environment.env_name
-        ).apply(lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}")
+        self._cell_name = _cell_name(self._environment)
 
         # resource_suffix for unique AWS resource names (last 4 chars of cell_name)
         self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])

@@ -33,6 +33,14 @@ exit 1
 """
 
 
+def _job_name(pinecone_version: str) -> str:
+    import re
+
+    return f"pinetools-install-{re.sub(r'[^a-z0-9\-]', '', pinecone_version.lower())}".strip(
+        "-"
+    )
+
+
 class Pinetools(pulumi.ComponentResource):
     """
     Deploys pinetools to pc-control-plane namespace.
@@ -199,7 +207,7 @@ class Pinetools(pulumi.ComponentResource):
         # - New version = new job name = old job deleted, new one created
         # - Failed job auto-deletes after 60s, so retry is just `pulumi up` again
         version_output = pulumi.Output.from_input(pinecone_version)
-        job_name = version_output.apply(lambda v: f"pinetools-install-{v[-7:]}")
+        job_name = version_output.apply(_job_name)
         install_job = k8s.batch.v1.Job(
             f"{name}-install-job",
             metadata=k8s.meta.v1.ObjectMetaArgs(name=job_name, namespace=namespace),
