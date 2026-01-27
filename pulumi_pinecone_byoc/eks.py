@@ -57,7 +57,7 @@ class EKS(pulumi.ComponentResource):
             private_subnet_ids=vpc.private_subnet_ids,
             version=config.kubernetes_version,
             skip_default_node_group=True,
-            instance_roles=[self._node_role],
+            authentication_mode=eks.AuthenticationMode.API,
             create_oidc_provider=True,
             endpoint_private_access=True,
             endpoint_public_access=True,
@@ -203,7 +203,9 @@ class EKS(pulumi.ComponentResource):
                 http_put_response_hop_limit=2,
                 http_tokens="optional",
             ),
-            tags=self.config.tags(Name=f"{self.config.resource_prefix}-{np_config.name}-lt"),
+            tags=self.config.tags(
+                Name=f"{self.config.resource_prefix}-{np_config.name}-lt"
+            ),
             opts=opts,
         )
 
