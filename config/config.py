@@ -69,7 +69,7 @@ class Config(BaseModel):
     """
 
     region: str
-    environment: str = "dev"
+    environment: str
     global_env: str = "prod"
     cloud: str = "aws"
 
