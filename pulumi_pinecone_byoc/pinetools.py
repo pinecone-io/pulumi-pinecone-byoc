@@ -131,10 +131,7 @@ class Pinetools(pulumi.ComponentResource):
             name="pinetools",
             image=pinetools_image,
             command=["/bin/sh", "-c"],
-            # restart cluster-autoscaler after install so it discovers all node groups with correct taints
-            args=[
-                "pinetools cluster install && kubectl rollout restart deployment -n kube-system -l app.kubernetes.io/name=cluster-autoscaler && pinetools cluster check"
-            ],
+            args=["pinetools cluster install && pinetools cluster check"],
             env=[
                 k8s.core.v1.EnvVarArgs(
                     name="PINECONE_IMAGE_VERSION",

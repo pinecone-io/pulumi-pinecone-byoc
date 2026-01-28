@@ -560,7 +560,6 @@ cluster = PineconeAWSCluster(
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
-        global_env=config.get("global-env") or "dev",
         tags=config.get_object("tags"),
     ),
 )
@@ -601,7 +600,21 @@ dependencies = ["pulumi-pinecone-byoc"]
             )
 
         if result.returncode == 0:
-            console.print("  [green]✓[/] Dependencies installed")
+            # get installed version
+            version_result = subprocess.run(
+                ["uv", "pip", "show", "pulumi-pinecone-byoc"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+            pkg_version = "unknown"
+            for line in version_result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    pkg_version = line.split(":", 1)[1].strip()
+                    break
+            console.print(
+                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+            )
         else:
             console.print(
                 f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}"
@@ -610,16 +623,15 @@ dependencies = ["pulumi-pinecone-byoc"]
             return False
 
         # create stack config
-        stack_name = "dev"
+        stack_name = "prod"
         deletion_protection_str = str(deletion_protection).lower()
         public_access_str = str(public_access).lower()
         config_content = f"""config:
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-96b2399
+  {project_name}:pinecone-version: main-1cb5d7b
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:global-env: {stack_name}
   {project_name}:availability-zones:
 """
         for az in azs:
