@@ -628,7 +628,7 @@ dependencies = ["pulumi-pinecone-byoc"]
         public_access_str = str(public_access).lower()
         config_content = f"""config:
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-b241442
+  {project_name}:pinecone-version: main-1cb5d7b
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
