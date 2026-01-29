@@ -6,8 +6,7 @@ Interactive setup that creates a complete Pulumi project for BYOC deployment.
 
 import os
 import sys
-import tty
-import termios
+import platform
 from dataclasses import dataclass
 from typing import Optional
 
@@ -17,6 +16,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 
+# Platform-specific imports
+IS_WINDOWS = platform.system() == "Windows"
+if not IS_WINDOWS:
+    import tty
+    import termios
+
 
 # pinecone blue
 BLUE = "#002BFF"
@@ -24,10 +29,10 @@ BLUE = "#002BFF"
 console = Console()
 
 
-def _read_input_with_placeholder(
+def _read_input_with_placeholder_unix(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder that disappears when typing."""
+    """Read input with a dimmed placeholder (Unix implementation)."""
     console.print(f"  {prompt}: ", end="")
 
     # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
@@ -128,6 +133,120 @@ def _read_input_with_placeholder(
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
         tty_file.close()
         console.print()
+
+
+def _read_input_with_placeholder_windows(
+    prompt: str, placeholder: str = "", password: bool = False
+) -> str:
+    """Read input with a dimmed placeholder (Windows implementation)."""
+    import msvcrt
+
+    console.print(f"  {prompt}: ", end="")
+
+    def show_placeholder():
+        if placeholder and not password:
+            sys.stdout.write(f"\033[2m{placeholder}\033[0m")  # dim
+            sys.stdout.write(f"\033[{len(placeholder)}D")  # move back
+            sys.stdout.flush()
+
+    def clear_placeholder():
+        if placeholder and not password:
+            sys.stdout.write(" " * len(placeholder))
+            sys.stdout.write(f"\033[{len(placeholder)}D")
+            sys.stdout.flush()
+
+    show_placeholder()
+
+    result = []
+    placeholder_visible = True
+
+    try:
+        while True:
+            if msvcrt.kbhit():
+                char_bytes = msvcrt.getch()
+
+                # tab or right arrow - complete with placeholder
+                if char_bytes in (b'\x00', b'\xe0'):
+                    special = msvcrt.getch()
+                    if char_bytes == b'\xe0' and special == b'M':  # right arrow
+                        if placeholder and not result:
+                            clear_placeholder()
+                            result = list(placeholder)
+                            sys.stdout.write(placeholder)
+                            sys.stdout.flush()
+                            placeholder_visible = False
+                    continue
+
+                try:
+                    char = char_bytes.decode("utf-8", errors="replace")
+                except:
+                    continue
+
+                # enter - accept
+                if char == "\r":
+                    if not result and placeholder:
+                        result = list(placeholder)
+                    break
+
+                # tab or right arrow - complete with placeholder
+                if char == "\t":
+                    if placeholder and not result:
+                        clear_placeholder()
+                        result = list(placeholder)
+                        sys.stdout.write(placeholder)
+                        sys.stdout.flush()
+                        placeholder_visible = False
+                    continue
+
+                # backspace
+                if char in ("\x08", "\x7f"):
+                    if result:
+                        result.pop()
+                        sys.stdout.write("\b \b")
+                        sys.stdout.flush()
+                        # if empty, show placeholder again
+                        if not result and placeholder and not password:
+                            show_placeholder()
+                            placeholder_visible = True
+                    continue
+
+                # ctrl+c
+                if char == "\x03":
+                    raise KeyboardInterrupt
+
+                # ctrl+d
+                if char == "\x04":
+                    if not result:
+                        raise EOFError
+                    continue
+
+                # ignore other control chars
+                if ord(char) < 32:
+                    continue
+
+                # clear placeholder on first real char
+                if placeholder_visible and placeholder and not password:
+                    clear_placeholder()
+                    placeholder_visible = False
+
+                result.append(char)
+                sys.stdout.write("•" if password else char)
+                sys.stdout.flush()
+
+        return "".join(result)
+
+    finally:
+        console.print()
+
+
+def _read_input_with_placeholder(
+    prompt: str, placeholder: str = "", password: bool = False
+) -> str:
+    """Read input with a dimmed placeholder that disappears when typing."""
+    if IS_WINDOWS:
+        return _read_input_with_placeholder_windows(prompt, placeholder, password)
+    else:
+        return _read_input_with_placeholder_unix(prompt, placeholder, password)
 
 
 @dataclass
