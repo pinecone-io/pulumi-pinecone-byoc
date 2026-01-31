@@ -279,53 +279,11 @@ def index_headers_api_key(api_key: str) -> dict:
     }
 
 
-def list_indexes(api_url: str, api_key: str) -> list[str]:
-    """list all index names in the project"""
-    resp = request(
-        "GET",
-        f"{api_url}/indexes",
-        headers=index_headers_api_key(api_key),
-    )
-    # response is {"indexes": [{"name": "...", ...}, ...]}
-    indexes = resp.get("indexes", []) if isinstance(resp, dict) else []
-    return [idx["name"] for idx in indexes]
-
-
-def delete_index(index_name: str, api_url: str, api_key: str):
-    """delete a single index"""
-    request(
-        "DELETE",
-        f"{api_url}/indexes/{index_name}",
-        headers=index_headers_api_key(api_key),
-    )
-
-
 def delete_api_key(
     project_id: str,
     api_url: str,
-    api_key: str,
     auth0: Auth0Config,
 ):
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    indexes = list_indexes(api_url, api_key)
-
-    # delete indexes concurrently
-    if indexes:
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {
-                executor.submit(delete_index, idx, api_url, api_key): idx
-                for idx in indexes
-            }
-            for future in as_completed(futures):
-                idx = futures[future]
-                try:
-                    future.result()
-                except Exception as e:
-                    # log but continue - index might already be deleted
-                    pulumi.log.warn(f"failed to delete index {idx}: {e}")
-
-    # now delete the project using jwt auth
     request(
         "DELETE",
         f"{management_plane_url(api_url)}/projects/{project_id}",

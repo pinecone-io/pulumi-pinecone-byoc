@@ -415,7 +415,6 @@ class ApiKeyProvider(ResourceProvider):
                 delete_api_key,
                 project_id=id,
                 api_url=api_url,
-                api_key=api_key,
                 auth0=auth0,
             )
         )
