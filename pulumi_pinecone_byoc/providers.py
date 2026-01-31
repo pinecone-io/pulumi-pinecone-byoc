@@ -399,10 +399,7 @@ class ApiKeyProvider(ResourceProvider):
         auth0_client_id = props.get("auth0_client_id")
         auth0_client_secret = props.get("auth0_client_secret")
         api_url = props.get("api_url")
-        api_key = props.get("value")
-        if not all(
-            [auth0_domain, auth0_client_id, auth0_client_secret, api_url, api_key]
-        ):
+        if not all([auth0_domain, auth0_client_id, auth0_client_secret, api_url]):
             return {}
 
         auth0 = Auth0Config(

@@ -270,15 +270,6 @@ def create_api_key(
     return api_key
 
 
-def index_headers_api_key(api_key: str) -> dict:
-    """headers for index operations using api key auth"""
-    return {
-        "Api-Key": api_key,
-        "Content-Type": "application/json",
-        "X-Pinecone-Api-Version": "2025-01",
-    }
-
-
 def delete_api_key(
     project_id: str,
     api_url: str,
