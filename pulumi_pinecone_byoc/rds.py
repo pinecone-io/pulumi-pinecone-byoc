@@ -105,11 +105,11 @@ class RDSInstance(pulumi.ComponentResource):
             "preferred_maintenance_window": "sun:04:00-sun:05:00",
             "deletion_protection": db_config.deletion_protection,
             "skip_final_snapshot": not db_config.deletion_protection,
+            "storage_encrypted": True,
             "tags": config.tags(Name=f"{config.resource_prefix}-{db_config.name}"),
         }
 
         if kms_key_arn:
-            cluster_args["storage_encrypted"] = True
             cluster_args["kms_key_id"] = kms_key_arn
 
         self.cluster = aws.rds.Cluster(
