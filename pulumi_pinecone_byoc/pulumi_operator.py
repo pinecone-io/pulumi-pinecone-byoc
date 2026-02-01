@@ -314,6 +314,8 @@ class PulumiOperator(pulumi.ComponentResource):
                                 "ec2:ModifyLaunchTemplate",
                                 "ec2:DeleteLaunchTemplate",
                                 "ec2:RunInstances",
+                                "ec2:CreateTags",
+                                "ec2:DeleteTags",
                                 # autoscaling tags
                                 "autoscaling:CreateOrUpdateTags",
                                 "autoscaling:DescribeTags",
