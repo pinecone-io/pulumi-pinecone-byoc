@@ -1,2 +1,4 @@
 __pycache__/
 pulumi_pinecone_byoc/_version.py
+pinecone-byoc/
+.idea/
