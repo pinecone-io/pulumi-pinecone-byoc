@@ -122,6 +122,7 @@ class NLB(pulumi.ComponentResource):
                 "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{subdomain}.pinecone.io",
                 "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
                 "alb.ingress.kubernetes.io/group.order": "1",
+                "alb.ingress.kubernetes.io/tags": ",".join([f"{k}={v}" for k, v in config.tags().items()]),
             }
 
         http2_annotations = pulumi.Output.all(
@@ -186,6 +187,7 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/certificate-arn": cert_arn,
                 "alb.ingress.kubernetes.io/group.order": "2",
                 "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
+                "alb.ingress.kubernetes.io/tags": ",".join([f"{k}={v}" for k, v in config.tags().items()]),
             }
 
         http1_annotations = pulumi.Output.all(

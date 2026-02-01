@@ -203,6 +203,16 @@ class EKS(pulumi.ComponentResource):
                 http_put_response_hop_limit=2,
                 http_tokens="optional",
             ),
+            tags_specification=[
+                aws.ec2.LaunchTemplateTagSpecificationArgs(
+                    resource_type="instance",
+                    tags=self.config.tags(),
+                ),
+                aws.ec2.LaunchTemplateTagSpecificationArgs(
+                    resource_type="volume",
+                    tags=self.config.tags(),
+                ),
+            ],
             tags=self.config.tags(
                 Name=f"{self.config.resource_prefix}-{np_config.name}-lt"
             ),
