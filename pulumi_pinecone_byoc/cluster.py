@@ -403,6 +403,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_storage_integration_role_arn": self._storage_integration_role.arn,
             "customer_tags": args.tags or {},
             "public_access_enabled": args.public_access_enabled,
+            "external_dns_role_arn": self._k8s_addons.external_dns_role.arn,
             # pulumi operator s3 backend config for Stack CRDs
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
@@ -490,6 +491,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "api_key_project_id": self._api_key.project_id,
                 "alb_controller_role_arn": self._k8s_addons.alb_controller_role.arn,
                 "cluster_autoscaler_role_arn": self._k8s_addons.cluster_autoscaler_role.arn,
+                "external_dns_role_arn": self._k8s_addons.external_dns_role.arn,
                 "subdomain": self._subdomain,
                 "sli_checkers_project_id": self._api_key.project_id,
                 "cpgw_api_key": self._k8s_secrets.cpgw_api_key,
