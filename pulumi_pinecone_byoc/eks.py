@@ -203,7 +203,7 @@ class EKS(pulumi.ComponentResource):
                 http_put_response_hop_limit=2,
                 http_tokens="optional",
             ),
-            tags_specification=[
+            tag_specifications=[
                 aws.ec2.LaunchTemplateTagSpecificationArgs(
                     resource_type="instance",
                     tags=self.config.tags(),
