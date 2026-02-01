@@ -108,6 +108,7 @@ class NLB(pulumi.ComponentResource):
         def build_http2_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
+                "cert-manager.io/issuer": "letsencrypt-prod",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
                 "alb.ingress.kubernetes.io/load-balancer-name": _alb_name(subdomain),
                 "alb.ingress.kubernetes.io/scheme": "internal",
@@ -161,6 +162,7 @@ class NLB(pulumi.ComponentResource):
                 tls=[
                     k8s.networking.v1.IngressTLSArgs(
                         hosts=dns.private_dns_domains,
+                        secret_name=pulumi.Output.from_input(dns.subdomain).apply(lambda s: f"{s.split('.')[0]}-tls"),
                     ),
                 ],
             ),
@@ -174,6 +176,7 @@ class NLB(pulumi.ComponentResource):
         def build_http1_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
+                "cert-manager.io/issuer": "letsencrypt-prod",
                 "alb.ingress.kubernetes.io/group.name": "private-pinecone",
                 "alb.ingress.kubernetes.io/load-balancer-name": _alb_name(subdomain),
                 "alb.ingress.kubernetes.io/scheme": "internal",
@@ -243,6 +246,7 @@ class NLB(pulumi.ComponentResource):
                 tls=[
                     k8s.networking.v1.IngressTLSArgs(
                         hosts=dns.private_dns_domains,
+                        secret_name=pulumi.Output.from_input(dns.subdomain).apply(lambda s: f"{s.split('.')[0]}-tls"),
                     ),
                 ],
             ),

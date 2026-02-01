@@ -566,14 +566,35 @@ class K8sAddons(pulumi.ComponentResource):
         oidc_url: pulumi.Output[str],
         opts: pulumi.ResourceOptions,
     ) -> aws.iam.Role:
+        trust_policy = pulumi.Output.all(oidc_arn, oidc_url).apply(
+            lambda args: json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {"Federated": args[0]},
+                            "Action": "sts:AssumeRoleWithWebIdentity",
+                            "Condition": {
+                                "StringEquals": {
+                                    f"{args[1].replace('https://', '')}:sub": [
+                                        "system:serviceaccount:gloo-system:external-dns",
+                                        "system:serviceaccount:gloo-system:certmanager-certgen",
+                                    ]
+                                }
+                            },
+                        }
+                    ],
+                }
+            )
+        )
+
         role = aws.iam.Role(
             f"{name}-external-dns-role",
             name=self._resource_suffix.apply(
                 lambda s: f"{self.config.resource_prefix}-external-dns-{s}"
             ),
-            assume_role_policy=self._create_irsa_trust_policy(
-                oidc_arn, oidc_url, "gloo-system", "external-dns"
-            ),
+            assume_role_policy=trust_policy,
             tags=self.config.tags(Name=f"{self.config.resource_prefix}-external-dns"),
             opts=opts,
         )
@@ -592,7 +613,9 @@ class K8sAddons(pulumi.ComponentResource):
                     "Effect": "Allow",
                     "Action": [
                         "route53:ListHostedZones",
+                        "route53:ListHostedZonesByName",
                         "route53:ListResourceRecordSets",
+                        "route53:GetChange",
                     ],
                     "Resource": "*",
                 },
