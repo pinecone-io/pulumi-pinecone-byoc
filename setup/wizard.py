@@ -166,9 +166,9 @@ def _read_input_with_placeholder_windows(
                 char_bytes = msvcrt.getch()
 
                 # tab or right arrow - complete with placeholder
-                if char_bytes in (b'\x00', b'\xe0'):
+                if char_bytes in (b"\x00", b"\xe0"):
                     special = msvcrt.getch()
-                    if char_bytes == b'\xe0' and special == b'M':  # right arrow
+                    if char_bytes == b"\xe0" and special == b"M":  # right arrow
                         if placeholder and not result:
                             clear_placeholder()
                             result = list(placeholder)
@@ -747,7 +747,7 @@ dependencies = ["pulumi-pinecone-byoc"]
         public_access_str = str(public_access).lower()
         config_content = f"""config:
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-8c39fad
+  {project_name}:pinecone-version: main-12a6942
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}

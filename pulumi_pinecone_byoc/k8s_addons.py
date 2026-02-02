@@ -553,6 +553,11 @@ class K8sAddons(pulumi.ComponentResource):
                         "scale-down-delay-after-delete": "0s",
                         "scale-down-unneeded-time": "30s",
                         "max-node-provision-time": "10m",
+                        "expander": "priority",
+                    },
+                    "expanderPriorities": {
+                        10: [".*default.*"],
+                        1: [".*"],
                     },
                 },
             ),
