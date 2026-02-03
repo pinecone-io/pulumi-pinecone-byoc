@@ -1,8 +1,10 @@
 # Pinecone BYOC
 
+[![PyPI version](https://img.shields.io/pypi/v/pulumi-pinecone-byoc)](https://pypi.org/project/pulumi-pinecone-byoc/)
+
 Deploy Pinecone in your own AWS account with full control over your infrastructure.
 
-[![asciicast](https://asciinema.org/a/w1mjmq1APHzbb6Ig.svg)](https://asciinema.org/a/w1mjmq1APHzbb6Ig)
+![Demo](./assets/demo.gif)
 
 ## Quick Start
 
@@ -121,18 +123,22 @@ from pulumi_pinecone_byoc import PineconeAWSCluster, PineconeAWSClusterArgs
 config = pulumi.Config()
 
 cluster = PineconeAWSCluster(
-    name="my-pinecone-cluster",
+    name="pinecone-aws-cluster",
     args=PineconeAWSClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone_api_key"),
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
         pinecone_version=config.require("pinecone-version"),
-        region="us-west-2",
-        availability_zones=["us-west-2a", "us-west-2b"],
-        vpc_cidr="10.1.0.0/16",
-        deletion_protection=True,
+        region=config.require("region"),
+        availability_zones=config.require_object("availability-zones"),
+        vpc_cidr=config.get("vpc-cidr"),
+        deletion_protection=config.get_bool("deletion-protection"),
+        public_access_enabled=config.get_bool("public-access-enabled"),
+        tags=config.get_object("tags"),
     ),
 )
 
-pulumi.export("cluster_endpoint", cluster.cluster_endpoint)
+# Export useful values
+pulumi.export("environment", cluster.environment_name)
+pulumi.export("cluster_name", cluster.cluster_name)
 ```
 
 Install from PyPI:
