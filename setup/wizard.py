@@ -942,23 +942,44 @@ class PreflightChecker:
             self._add_result("Elastic IPs", False, "Failed to check", str(e))
 
     def _check_nat_gateway_quota(self):
-        needed = len(self.azs)  # one per AZ
         quota = self._get_quota("vpc", "L-FE5A380F") or 5
         try:
             response = self.ec2.describe_nat_gateways(
                 Filters=[{"Name": "state", "Values": ["available", "pending"]}]
             )
-            current = len(response["NatGateways"])
-            available = int(quota) - current
 
-            self._add_result(
-                "NAT Gateways",
-                available >= needed,
-                f"{available} available, need {needed}",
-                "Request quota increase for 'NAT gateways per AZ'"
-                if available < needed
-                else None,
-            )
+            # count NAT gateways per AZ (quota is per-AZ, not per-account)
+            nat_gateways_by_az = {}
+            for nat_gw in response["NatGateways"]:
+                # get subnet AZ for this NAT gateway
+                subnet_id = nat_gw.get("SubnetId")
+                if subnet_id:
+                    subnet_response = self.ec2.describe_subnets(SubnetIds=[subnet_id])
+                    if subnet_response["Subnets"]:
+                        az = subnet_response["Subnets"][0]["AvailabilityZone"]
+                        nat_gateways_by_az[az] = nat_gateways_by_az.get(az, 0) + 1
+
+            # check each requested AZ has capacity
+            insufficient_azs = []
+            for az in self.azs:
+                current_in_az = nat_gateways_by_az.get(az, 0)
+                available_in_az = int(quota) - current_in_az
+                if available_in_az < 1:
+                    insufficient_azs.append(f"{az} ({current_in_az}/{int(quota)})")
+
+            if insufficient_azs:
+                self._add_result(
+                    "NAT Gateways",
+                    False,
+                    f"Insufficient capacity in: {', '.join(insufficient_azs)}",
+                    "Request quota increase for 'NAT gateways per AZ'"
+                )
+            else:
+                self._add_result(
+                    "NAT Gateways",
+                    True,
+                    f"All AZs have capacity [dim](quota: {int(quota)} per AZ)[/]",
+                )
         except Exception as e:
             self._add_result("NAT Gateways", False, "Failed to check", str(e))
 
