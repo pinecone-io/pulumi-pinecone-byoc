@@ -425,6 +425,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             domain=self._subdomain,
             region=args.region,
             public_access_enabled=args.public_access_enabled,
+            org_name=self._environment.org_name,
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._dns, self._s3, self._rds]
