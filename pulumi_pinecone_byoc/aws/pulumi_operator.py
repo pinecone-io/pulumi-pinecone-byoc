@@ -10,7 +10,7 @@ from typing import Optional
 import pulumi
 import pulumi_aws as aws
 
-from config import Config
+from config.aws import AWSConfig
 
 
 class PulumiOperator(pulumi.ComponentResource):
@@ -29,7 +29,7 @@ class PulumiOperator(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         oidc_provider_arn: pulumi.Input[str],
         oidc_provider_url: pulumi.Input[str],
         cell_name: pulumi.Input[str],

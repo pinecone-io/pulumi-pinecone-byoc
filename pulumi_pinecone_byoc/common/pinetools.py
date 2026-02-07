@@ -62,7 +62,7 @@ class Pinetools(pulumi.ComponentResource):
         name: str,
         k8s_provider: pulumi.ProviderResource,
         pinecone_version: pulumi.Input[str],
-        pinetools_image: str = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4/pinetools:latest",
+        pinetools_image: str,
         schedule: str = "0 * * * *",
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -227,3 +227,7 @@ class Pinetools(pulumi.ComponentResource):
                 "install_job_name": self.install_job_name,
             }
         )
+
+    @property
+    def pinetools_image(self) -> str:
+        return self._pinetools_image

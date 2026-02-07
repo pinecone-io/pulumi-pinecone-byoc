@@ -36,9 +36,12 @@ class ClusterUninstallerProvider(ResourceProvider):
         return CreateResult(id_="uninstaller-ready", outs=props)
 
     def diff(self, _id: str, old: dict[str, Any], new: dict[str, Any]) -> DiffResult:
-        # update state if kubeconfig changes, but never trigger replacement
+        # update state if kubeconfig or image changes, but never trigger replacement
         # this keeps state fresh without causing accidental uninstalls
-        return DiffResult(changes=old.get("kubeconfig") != new.get("kubeconfig"))
+        changed = old.get("kubeconfig") != new.get("kubeconfig") or old.get(
+            "pinetools_image"
+        ) != new.get("pinetools_image")
+        return DiffResult(changes=changed)
 
     def update(
         self, _id: str, _old: dict[str, Any], new: dict[str, Any]
@@ -49,12 +52,45 @@ class ClusterUninstallerProvider(ResourceProvider):
     def delete(self, _id: str, props: dict[str, Any]) -> None:
         from kubernetes import client, config
         from kubernetes.client.rest import ApiException
+        import yaml
 
-        kubeconfig_json = props.get("kubeconfig")
-        if not kubeconfig_json:
+        kubeconfig_str = props.get("kubeconfig")
+        if not kubeconfig_str:
             raise Exception("kubeconfig not provided to uninstaller")
 
-        kubeconfig = json.loads(kubeconfig_json)
+        pinetools_image = props.get("pinetools_image")
+        if not pinetools_image:
+            raise Exception("pinetools_image not provided to uninstaller")
+
+        try:
+            # try JSON first (AWS EKS format)
+            kubeconfig = json.loads(kubeconfig_str)
+        except (json.JSONDecodeError, ValueError):
+            # fall back to YAML (GCP GKE format)
+            try:
+                kubeconfig = yaml.safe_load(kubeconfig_str)
+            except yaml.YAMLError as e:
+                raise Exception(f"Failed to parse kubeconfig as JSON or YAML: {e}")
+
+        # GKE exec-based auth may not work in dynamic provider context;
+        # inject a fresh token via gcloud CLI if the kubeconfig uses exec auth
+        users = kubeconfig.get("users", [])
+        has_exec = users and "exec" in users[0].get("user", {})
+        pulumi.log.info(f"Uninstaller kubeconfig auth: exec={has_exec}")
+        if has_exec:
+            try:
+                import subprocess
+
+                token = subprocess.check_output(
+                    ["gcloud", "auth", "print-access-token"],
+                    text=True,
+                    timeout=10,
+                ).strip()
+                pulumi.log.info(f"Injected gcloud token: {token[:10]}...")
+                for user in users:
+                    user["user"] = {"token": token}
+            except Exception as e:
+                pulumi.log.warn(f"Failed to get gcloud token: {e}")
 
         config.load_kube_config_from_dict(kubeconfig)
 
@@ -72,7 +108,8 @@ class ClusterUninstallerProvider(ResourceProvider):
                 namespace=namespace,
             ),
             spec=client.V1JobSpec(
-                backoff_limit=0,
+                backoff_limit=1,
+                active_deadline_seconds=600,
                 ttl_seconds_after_finished=300,
                 template=client.V1PodTemplateSpec(
                     spec=client.V1PodSpec(
@@ -88,7 +125,7 @@ class ClusterUninstallerProvider(ResourceProvider):
                         containers=[
                             client.V1Container(
                                 name="pinetools",
-                                image="843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4/pinetools:latest",
+                                image=pinetools_image,
                                 command=["/bin/sh", "-c"],
                                 args=["pinetools cluster uninstall --force"],
                                 resources=client.V1ResourceRequirements(
@@ -203,10 +240,12 @@ class ClusterUninstaller(Resource):
         self,
         name: str,
         kubeconfig: pulumi.Input[str],
+        pinetools_image: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         props = {
             "kubeconfig": kubeconfig,
+            "pinetools_image": pinetools_image,
         }
         super().__init__(
             ClusterUninstallerProvider(),

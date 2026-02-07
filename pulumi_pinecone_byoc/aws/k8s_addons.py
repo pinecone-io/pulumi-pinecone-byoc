@@ -6,7 +6,7 @@ import pulumi_aws as aws
 import pulumi_kubernetes as k8s
 from pulumi_kubernetes.helm.v3 import Release, ReleaseArgs
 
-from config import Config
+from config.aws import AWSConfig
 from .eks import EKS
 
 AWS_LOAD_BALANCER_POLICY = {
@@ -227,7 +227,7 @@ class K8sAddons(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         eks: EKS,
         vpc_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],

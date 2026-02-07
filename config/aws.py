@@ -4,25 +4,7 @@ Configuration for Pinecone BYOC AWS infrastructure.
 
 from pydantic import BaseModel, Field
 
-
-class NodePoolTaint(BaseModel):
-    key: str
-    value: str
-    effect: str = (
-        "NO_SCHEDULE"  # AWS format: NO_SCHEDULE, PREFER_NO_SCHEDULE, NO_EXECUTE
-    )
-
-
-class NodePoolConfig(BaseModel):
-    name: str
-    instance_type: str = "r6in.large"
-    min_size: int = 1
-    max_size: int = 10
-    desired_size: int = 3
-    disk_size_gb: int = 100
-    disk_type: str = "gp3"
-    labels: dict[str, str] = Field(default_factory=dict)
-    taints: list[NodePoolTaint] = Field(default_factory=list)
+from .base import BaseConfig, NodePoolConfig, NodePoolTaint
 
 
 class DatabaseInstanceConfig(BaseModel):
@@ -61,40 +43,24 @@ class DatabaseConfig(BaseModel):
     )
 
 
-class Config(BaseModel):
+class Config(BaseConfig):
     """
-    Main configuration for BYOC infrastructure.
+    AWS-specific configuration for BYOC infrastructure.
 
-    All settings are loaded from Pulumi config with sensible defaults.
+    Extends BaseConfig with AWS-specific settings.
     """
 
-    region: str
-    environment: str
-    global_env: str = "prod"
     cloud: str = "aws"
 
     # Networking
-    availability_zones: list[str]
-    vpc_cidr: str = "10.0.0.0/16"
     public_subnet_mask: int = 20
     private_subnet_mask: int = 18
-
-    # Kubernetes
-    kubernetes_version: str = "1.33"
-    node_pools: list[NodePoolConfig] = Field(default_factory=list)
 
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
-    # DNS
-    parent_zone_name: str = "pinecone.io"
-
     # Custom tags from user
     custom_tags: dict[str, str] = Field(default_factory=dict)
-
-    @property
-    def resource_prefix(self) -> str:
-        return "pc"
 
     def tags(self, **extra: str) -> dict[str, str]:
         """Generate consistent resource tags, including user-provided custom tags."""

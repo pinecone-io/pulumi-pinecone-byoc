@@ -5,6 +5,10 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash
 #
+# With cloud pre-selected:
+#   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash -s -- --cloud aws
+#   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash -s -- --cloud gcp
+#
 set -e
 
 BLUE='\033[0;34m'
@@ -13,9 +17,28 @@ RED='\033[0;31m'
 DIM='\033[2m'
 RESET='\033[0m'
 
+CLOUD=""
+REPO_BASE="https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main"
+
+# parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cloud)
+            CLOUD="$2"
+            shift 2
+            ;;
+        *)
+            shift
+            ;;
+    esac
+done
+
 echo ""
 echo -e "${BLUE}Pinecone BYOC Setup${RESET}"
 echo ""
+
+# resolve SCRIPT_DIR before anything else (for local repo usage)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
 
 # check for required tools
 check_command() {
@@ -39,9 +62,16 @@ missing=0
 
 check_command "python3" "Python 3.12+" "https://www.python.org/downloads/" || missing=1
 check_command "uv" "uv" "https://docs.astral.sh/uv/getting-started/installation/" || missing=1
-check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" || missing=1
 check_command "pulumi" "Pulumi CLI" "https://www.pulumi.com/docs/install/" || missing=1
 check_command "kubectl" "kubectl" "https://kubernetes.io/docs/tasks/tools/" || missing=1
+
+# cloud-specific tool checks
+if [ "$CLOUD" = "aws" ] || [ -z "$CLOUD" ]; then
+    check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" || missing=1
+fi
+if [ "$CLOUD" = "gcp" ] || [ -z "$CLOUD" ]; then
+    check_command "gcloud" "Google Cloud SDK" "https://cloud.google.com/sdk/docs/install" || missing=1
+fi
 
 echo ""
 
@@ -60,16 +90,27 @@ if [ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1
     exit 1
 fi
 
-# check aws credentials
-echo "Checking AWS credentials..."
-if ! aws sts get-caller-identity &> /dev/null; then
-    echo -e "  ${RED}✗${RESET} AWS credentials not configured"
-    echo ""
-    echo -e "${DIM}Configure with: aws configure${RESET}"
-    echo -e "${DIM}Or set AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY${RESET}"
-    exit 1
+# cloud-specific credential checks
+if [ "$CLOUD" = "aws" ] || [ -z "$CLOUD" ]; then
+    if command -v aws &> /dev/null; then
+        echo "Checking AWS credentials..."
+        if aws sts get-caller-identity &> /dev/null; then
+            echo -e "  ${GREEN}✓${RESET} AWS credentials configured"
+        else
+            echo -e "  ${DIM}AWS credentials not configured (needed for AWS deployments)${RESET}"
+        fi
+    fi
 fi
-echo -e "  ${GREEN}✓${RESET} AWS credentials configured"
+if [ "$CLOUD" = "gcp" ] || [ -z "$CLOUD" ]; then
+    if command -v gcloud &> /dev/null; then
+        echo "Checking GCP credentials..."
+        if gcloud auth print-access-token &> /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${RESET} GCP credentials configured"
+        else
+            echo -e "  ${DIM}GCP credentials not configured (needed for GCP deployments)${RESET}"
+        fi
+    fi
+fi
 echo ""
 
 # get project directory (read from /dev/tty for curl pipe compatibility)
@@ -89,8 +130,16 @@ cd "$project_dir"
 echo ""
 echo "Downloading setup wizard..."
 
-# download wizard.py
-curl -fsSL "https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/setup/wizard.py" -o wizard.py
+# copy wizard files from local repo or curl from GitHub
+if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/setup/wizard.py" ]; then
+    cp "$SCRIPT_DIR/setup/wizard.py" wizard.py
+    cp "$SCRIPT_DIR/setup/aws_wizard.py" aws_wizard.py 2>/dev/null || true
+    cp "$SCRIPT_DIR/setup/gcp_wizard.py" gcp_wizard.py 2>/dev/null || true
+else
+    curl -fsSL "${REPO_BASE}/setup/wizard.py" -o wizard.py
+    curl -fsSL "${REPO_BASE}/setup/aws_wizard.py" -o aws_wizard.py
+    curl -fsSL "${REPO_BASE}/setup/gcp_wizard.py" -o gcp_wizard.py
+fi
 
 # create a temp pyproject.toml for the setup wizard dependencies
 # (wizard.py will overwrite this with the actual project pyproject.toml)
@@ -103,6 +152,7 @@ dependencies = [
     "boto3>=1.42.0",
     "pyyaml>=6.0",
     "rich>=14.0.0",
+    "google-auth>=2.0.0",
 ]
 EOF
 
@@ -111,7 +161,11 @@ echo "Running setup wizard..."
 echo ""
 
 # run the wizard (generates __main__.py and pyproject.toml for pulumi)
-uv run python wizard.py
+if [ -n "$CLOUD" ]; then
+    uv run python wizard.py --cloud "$CLOUD"
+else
+    uv run python wizard.py
+fi
 
 # cleanup wizard setup files (keep .venv, pyproject.toml, uv.lock created by wizard)
-rm -f wizard.py
+rm -f wizard.py aws_wizard.py gcp_wizard.py

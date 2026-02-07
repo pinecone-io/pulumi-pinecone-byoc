@@ -16,13 +16,14 @@ from .dns import DNS
 from .nlb import NLB
 from .rds import RDS, RDSInstance
 from .k8s_addons import K8sAddons
-from .k8s_secrets import K8sSecrets
-from .k8s_configmaps import K8sConfigMaps
-from .ecr_refresher import EcrCredentialRefresher
+from ..common.k8s_secrets import K8sSecrets
+from ..common.k8s_configmaps import K8sConfigMaps
+from ..common.cred_refresher import RegistryCredentialRefresher
 from .pulumi_operator import PulumiOperator
-from .pinetools import Pinetools
-from .uninstaller import ClusterUninstaller
-from .providers import (
+from ..common.pinetools import Pinetools
+from ..common.uninstaller import ClusterUninstaller
+from ..common.registry import AWS_REGISTRY
+from ..common.providers import (
     Environment,
     EnvironmentArgs,
     ServiceAccount,
@@ -395,7 +396,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_k8s_version": args.kubernetes_version,
             "aws_ec2_iam_role_arn": self._eks.node_role_arn,
             "aws_subnet_ids": self._vpc.private_subnet_ids,
-            "image_registry": "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4",
+            "image_registry": AWS_REGISTRY.base_url,
             "gcp_project": pulumi.Output.from_input(args.global_env).apply(
                 get_gcp_project
             ),
@@ -433,7 +434,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         # ecr credential refresher - distributes regcred to all pc-* namespaces
         # uses cpgw-credentials secret created by K8sSecrets
-        self._ecr_refresher = EcrCredentialRefresher(
+        self._ecr_refresher = RegistryCredentialRefresher(
             f"{config.resource_prefix}-ecr-refresher",
             k8s_provider=self._eks.provider,
             cpgw_url=args.api_url,
@@ -446,6 +447,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
             pinecone_version=args.pinecone_version,
+            pinetools_image=AWS_REGISTRY.pinetools_image,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._k8s_configmaps]
             ),
@@ -509,7 +511,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeAWSClusterArgs):
-        from config import Config, NodePoolConfig, NodePoolTaint, DatabaseConfig
+        from config.aws import AWSConfig, NodePoolConfig, NodePoolTaint, DatabaseConfig
 
         node_pools = []
         if args.node_pools:
@@ -541,7 +543,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 ),
             ]
 
-        return Config(
+        return AWSConfig(
             region=args.region,
             environment="prod",
             global_env=args.global_env,
@@ -568,7 +570,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._vpc.public_subnet_ids
 
     @property
-    def cluster_name(self) -> pulumi.Output[str]:
+    def name(self) -> pulumi.Output[str]:
         return self._eks.cluster_name
 
     @property

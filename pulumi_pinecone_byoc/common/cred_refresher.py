@@ -1,8 +1,10 @@
 """
-ECR credential refresher cronjob - fetches tokens from cpgw and distributes
-regcred secrets to all pc-* namespaces plus prometheus/metering.
+Generic container registry credential refresher cronjob.
 
-Auth is handled by the CPGW API key middleware layer.
+Fetches tokens from cpgw and distributes regcred secrets to all pc-* namespaces
+plus prometheus/metering/tooling/gloo-system/kube-system.
+
+Supports both ECR and GCR via registry parameter.
 """
 
 from typing import Optional
@@ -11,26 +13,40 @@ import pulumi
 import pulumi_kubernetes as k8s
 
 
-# namespaces that need ecr but don't match pc-* pattern
 EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system"
 
-REFRESHER_SCRIPT = r"""
+REGISTRY_CONFIG = {
+    "ecr": {
+        "username": "AWS",
+        "password_extraction": 'echo "$TOKEN_B64" | base64 -d | cut -d: -f2',
+    },
+    "gcr": {
+        "username": "oauth2accesstoken",
+        "password_extraction": 'echo "$TOKEN_B64" | sed "s/^Bearer //"',
+    },
+}
+
+
+def _build_refresher_script(registry: str) -> str:
+    cfg = REGISTRY_CONFIG[registry]
+    username = cfg["username"]
+    password_extraction = cfg["password_extraction"]
+    return rf"""
 set -e
 
-echo "=== ECR Credential Refresher ==="
+echo "=== Registry Credential Refresher ({registry}) ==="
 echo "Time: $(date -Iseconds)"
 
-# 1. Get ECR token from cpgw (auth via api-key header)
-echo "Fetching ECR token from cpgw..."
+# 1. Get token from cpgw
+echo "Fetching {registry} token from cpgw..."
 RESPONSE=$(wget -qO- --header="Content-Type: application/json" \
-  --header="api-key: ${CPGW_API_KEY}" \
-  --post-data="" \
-  "${CPGW_URL}/internal/cpgw/infra/ecr-token")
+  --header="api-key: ${{CPGW_API_KEY}}" \
+  "${{CPGW_URL}}/internal/cpgw/infra/cr-token?registry={registry}")
 
 # parse json without jq - extract values between quotes after key
-extract_json() {
+extract_json() {{
   echo "$1" | grep -o "\"$2\":\"[^\"]*\"" | cut -d'"' -f4
-}
+}}
 
 TOKEN_B64=$(extract_json "$RESPONSE" "token")
 REGISTRY=$(extract_json "$RESPONSE" "registry_endpoint")
@@ -38,22 +54,22 @@ EXPIRES=$(extract_json "$RESPONSE" "expires_at")
 [ -z "$EXPIRES" ] && EXPIRES="unknown"
 
 if [ -z "$TOKEN_B64" ]; then
-  echo "ERROR: Failed to get ECR token"
+  echo "ERROR: Failed to get token"
   echo "Response: $RESPONSE"
   exit 1
 fi
 
-# token is base64(AWS:password), decode and extract password
-PASSWORD=$(echo "$TOKEN_B64" | base64 -d | cut -d: -f2)
+# Extract password from token
+PASSWORD=$({password_extraction})
 
 echo "Got token for registry: $REGISTRY (expires: $EXPIRES)"
 
 # 2. Discover all pc-* namespaces
 echo "Discovering namespaces..."
-PC_NAMESPACES=$(kubectl get namespaces -o jsonpath='{.items[*].metadata.name}' | tr ' ' '\n' | grep '^pc-' || true)
+PC_NAMESPACES=$(kubectl get namespaces -o jsonpath='{{.items[*].metadata.name}}' | tr ' ' '\n' | grep '^pc-' || true)
 
 # Combine with extra namespaces (space-separated)
-ALL_NAMESPACES=$(echo -e "${PC_NAMESPACES}\n$(echo $EXTRA_NAMESPACES | tr ' ' '\n')" | sort -u | grep -v '^$')
+ALL_NAMESPACES=$(echo -e "${{PC_NAMESPACES}}\n$(echo $EXTRA_NAMESPACES | tr ' ' '\n')" | sort -u | grep -v '^$')
 
 echo "Target namespaces:"
 echo "$ALL_NAMESPACES" | sed 's/^/  - /'
@@ -78,7 +94,7 @@ for NS in $ALL_NAMESPACES; do
   if kubectl create secret docker-registry regcred \
     --namespace="$NS" \
     --docker-server="$REGISTRY" \
-    --docker-username=AWS \
+    --docker-username={username} \
     --docker-password="$PASSWORD" &>/dev/null; then
     echo "  [$NS] Success"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
@@ -102,25 +118,26 @@ echo "All namespaces updated successfully!"
 """
 
 
-class EcrCredentialRefresher(pulumi.ComponentResource):
+class RegistryCredentialRefresher(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
         k8s_provider: pulumi.ProviderResource,
         cpgw_url: pulumi.Input[str],
-        schedule: str = "* * * * *",  # every minute during bootstrap, change to "0 */6 * * *" after stable
+        registry: str = "ecr",
+        schedule: str = "* * * * *",
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
-        super().__init__("pinecone:byoc:EcrCredentialRefresher", name, None, opts)
+        super().__init__(
+            f"pinecone:common:RegistryCredentialRefresher-{registry}", name, None, opts
+        )
 
         namespace = "external-secrets"
-
-        # uses the cpgw-credentials secret created by K8sSecrets
 
         cluster_role = k8s.rbac.v1.ClusterRole(
             f"{name}-cluster-role",
             metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-credential-refresher",
+                name=f"{registry}-credential-refresher",
             ),
             rules=[
                 k8s.rbac.v1.PolicyRuleArgs(
@@ -137,32 +154,30 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider),
         )
 
-        # ServiceAccount
         service_account = k8s.core.v1.ServiceAccount(
             f"{name}-service-account",
             metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-credential-refresher",
+                name=f"{registry}-credential-refresher",
                 namespace=namespace,
             ),
             opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider),
         )
 
-        # ClusterRoleBinding
         cluster_role_binding = k8s.rbac.v1.ClusterRoleBinding(
             f"{name}-cluster-role-binding",
             metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-credential-refresher",
+                name=f"{registry}-credential-refresher",
             ),
             subjects=[
                 k8s.rbac.v1.SubjectArgs(
                     kind="ServiceAccount",
-                    name="ecr-credential-refresher",
+                    name=f"{registry}-credential-refresher",
                     namespace=namespace,
                 ),
             ],
             role_ref=k8s.rbac.v1.RoleRefArgs(
                 kind="ClusterRole",
-                name="ecr-credential-refresher",
+                name=f"{registry}-credential-refresher",
                 api_group="rbac.authorization.k8s.io",
             ),
             opts=pulumi.ResourceOptions(
@@ -173,7 +188,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
         config_map = k8s.core.v1.ConfigMap(
             f"{name}-config",
             metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-refresher-config",
+                name=f"{registry}-refresher-config",
                 namespace=namespace,
             ),
             data={
@@ -185,7 +200,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
         cronjob = k8s.batch.v1.CronJob(
             f"{name}-cronjob",
             metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="ecr-credential-refresher",
+                name=f"{registry}-credential-refresher",
                 namespace=namespace,
             ),
             spec=k8s.batch.v1.CronJobSpecArgs(
@@ -199,11 +214,11 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                         ttl_seconds_after_finished=300,  # cleanup after 5 minutes
                         template=k8s.core.v1.PodTemplateSpecArgs(
                             spec=k8s.core.v1.PodSpecArgs(
-                                service_account_name="ecr-credential-refresher",
+                                service_account_name=f"{registry}-credential-refresher",
                                 restart_policy="OnFailure",
                                 containers=[
                                     k8s.core.v1.ContainerArgs(
-                                        name="ecr-credential-refresher",
+                                        name=f"{registry}-credential-refresher",
                                         image="alpine/k8s:1.31.3",
                                         env=[
                                             k8s.core.v1.EnvVarArgs(
@@ -219,7 +234,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                                                 name="CPGW_URL",
                                                 value_from=k8s.core.v1.EnvVarSourceArgs(
                                                     config_map_key_ref=k8s.core.v1.ConfigMapKeySelectorArgs(
-                                                        name="ecr-refresher-config",
+                                                        name=f"{registry}-refresher-config",
                                                         key="cpgw-url",
                                                     ),
                                                 ),
@@ -230,7 +245,7 @@ class EcrCredentialRefresher(pulumi.ComponentResource):
                                             ),
                                         ],
                                         command=["/bin/bash", "-c"],
-                                        args=[REFRESHER_SCRIPT],
+                                        args=[_build_refresher_script(registry)],
                                     ),
                                 ],
                             ),
