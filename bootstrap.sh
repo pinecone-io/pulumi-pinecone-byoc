@@ -130,15 +130,11 @@ cd "$project_dir"
 echo ""
 echo "Downloading setup wizard..."
 
-# copy wizard files from local repo or curl from GitHub
+# copy wizard file from local repo or curl from GitHub
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/setup/wizard.py" ]; then
     cp "$SCRIPT_DIR/setup/wizard.py" wizard.py
-    cp "$SCRIPT_DIR/setup/aws_wizard.py" aws_wizard.py 2>/dev/null || true
-    cp "$SCRIPT_DIR/setup/gcp_wizard.py" gcp_wizard.py 2>/dev/null || true
 else
     curl -fsSL "${REPO_BASE}/setup/wizard.py" -o wizard.py
-    curl -fsSL "${REPO_BASE}/setup/aws_wizard.py" -o aws_wizard.py
-    curl -fsSL "${REPO_BASE}/setup/gcp_wizard.py" -o gcp_wizard.py
 fi
 
 # create a temp pyproject.toml for the setup wizard dependencies
@@ -167,5 +163,5 @@ else
     uv run python wizard.py
 fi
 
-# cleanup wizard setup files (keep .venv, pyproject.toml, uv.lock created by wizard)
-rm -f wizard.py aws_wizard.py gcp_wizard.py
+# cleanup wizard setup file (keep .venv, pyproject.toml, uv.lock created by wizard)
+rm -f wizard.py
