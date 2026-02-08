@@ -223,34 +223,25 @@ class InternalLoadBalancer(pulumi.ComponentResource):
 
         def get_lb_ip_and_link(_ingress_status, cell_name_str: str, retries: int = 30):
             def _get_lb(retries=retries):
-                for _ in range(retries):
+                for attempt in range(retries):
                     try:
-                        lb = gcp.compute.get_forwarding_rules_output(
+                        rules = gcp.compute.get_forwarding_rules(
                             config.project, config.region
-                        ).apply(
-                            lambda lbs: next(
-                                (
-                                    lb
-                                    for lb in lbs.rules
-                                    if lb.subnetwork.endswith(cell_name_str)
-                                ),
-                                None,
-                            )
+                        )
+                        lb = next(
+                            (r for r in rules.rules if r.subnetwork.endswith(cell_name_str)),
+                            None,
                         )
                         if lb is None:
-                            pulumi.log.info("no matching LB found, retrying...")
+                            pulumi.log.info(f"No matching LB found (attempt {attempt + 1}/{retries}), retrying...")
                             time.sleep(10)
                             continue
-                        return lb.apply(
-                            lambda lb: (lb.ip_address, lb.self_link)
-                            if lb
-                            else (None, None)
-                        )
+                        return (lb.ip_address, lb.self_link)
                     except Exception as e:
-                        pulumi.log.info(f"waiting for internal lb...{e}")
+                        pulumi.log.info(f"Waiting for internal lb (attempt {attempt + 1}/{retries})... {e}")
                         time.sleep(10)
                 else:
-                    raise Exception("failed to get internal lb")
+                    raise Exception("Failed to get internal LB after retries")
 
             return _get_lb()
 
