@@ -23,7 +23,6 @@ class K8sConfigMaps(pulumi.ComponentResource):
         domain: pulumi.Input[str],
         region: pulumi.Input[str],
         public_access_enabled: pulumi.Input[bool],
-        org_name: pulumi.Input[str],
         pulumi_outputs: dict[str, pulumi.Input],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -60,7 +59,6 @@ class K8sConfigMaps(pulumi.ComponentResource):
                 "public_access_enabled": pulumi.Output.from_input(public_access_enabled).apply(
                     lambda v: str(v)
                 ),
-                "org_name": org_name,
             },
             opts=pulumi.ResourceOptions(
                 parent=self,

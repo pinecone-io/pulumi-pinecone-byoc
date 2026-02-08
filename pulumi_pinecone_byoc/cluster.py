@@ -413,6 +413,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
+            "org_name": self._environment.org_name,
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -425,7 +426,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             domain=self._subdomain,
             region=args.region,
             public_access_enabled=args.public_access_enabled,
-            org_name=self._environment.org_name,
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._dns, self._s3, self._rds]
