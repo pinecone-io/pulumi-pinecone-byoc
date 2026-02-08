@@ -161,8 +161,8 @@ cluster = PineconeAWSCluster(
         region=config.require("region"),
         availability_zones=config.require_object("availability_zones"),
         vpc_cidr=config.get("vpc_cidr") or "10.0.0.0/16",
-        deletion_protection=config.get_bool("deletion_protection") or True,
-        public_access_enabled=config.get_bool("public_access_enabled") or True,
+        deletion_protection=config.get_bool("deletion_protection") if config.get_bool("deletion_protection") is not None else True,
+        public_access_enabled=config.get_bool("public_access_enabled") if config.get_bool("public_access_enabled") is not None else True,
         tags=config.get_object("tags") or {},
     ),
 )
