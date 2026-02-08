@@ -27,6 +27,8 @@ from .providers import (
 )
 from .k8s_configmaps import K8sConfigMaps
 from .k8s_secrets import K8sSecrets
+from .naming import cell_name, DNS_CNAMES
+from .cred_refresher import RegistryCredentialRefresher
 from .pinetools import Pinetools
 from .uninstaller import ClusterUninstaller
 from .registry import ContainerRegistry, AWS_REGISTRY, GCP_REGISTRY
@@ -55,6 +57,9 @@ __all__ = [
     "DatadogApiKeyProvider",
     "K8sConfigMaps",
     "K8sSecrets",
+    "cell_name",
+    "DNS_CNAMES",
+    "RegistryCredentialRefresher",
     "Pinetools",
     "ClusterUninstaller",
     "ContainerRegistry",

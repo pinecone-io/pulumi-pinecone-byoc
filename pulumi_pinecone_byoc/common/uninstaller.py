@@ -19,28 +19,28 @@ class ClusterUninstallerProvider(ResourceProvider):
     def create(self, props: dict[str, Any]) -> CreateResult:
         return CreateResult(id_="uninstaller-ready", outs=props)
 
-    def diff(self, _id: str, old: dict[str, Any], new: dict[str, Any]) -> DiffResult:
+    def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # update state if kubeconfig or image changes, never trigger replacement
-        changed = old.get("kubeconfig") != new.get("kubeconfig") or old.get(
+        changed = _olds.get("kubeconfig") != _news.get("kubeconfig") or _olds.get(
             "pinetools_image"
-        ) != new.get("pinetools_image")
+        ) != _news.get("pinetools_image")
         return DiffResult(changes=changed)
 
     def update(
-        self, _id: str, _old: dict[str, Any], new: dict[str, Any]
+        self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]
     ) -> UpdateResult:
-        return UpdateResult(outs=new)
+        return UpdateResult(outs=_news)
 
-    def delete(self, _id: str, props: dict[str, Any]) -> None:
+    def delete(self, _id: str, _props: dict[str, Any]) -> None:
         from kubernetes import client, config
         from kubernetes.client.rest import ApiException
         import yaml
 
-        kubeconfig_str = props.get("kubeconfig")
+        kubeconfig_str = _props.get("kubeconfig")
         if not kubeconfig_str:
             raise Exception("kubeconfig not provided to uninstaller")
 
-        pinetools_image = props.get("pinetools_image")
+        pinetools_image = _props.get("pinetools_image")
         if not pinetools_image:
             raise Exception("pinetools_image not provided to uninstaller")
 

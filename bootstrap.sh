@@ -139,16 +139,25 @@ fi
 
 # create a temp pyproject.toml for the setup wizard dependencies
 # (wizard.py will overwrite this with the actual project pyproject.toml)
-cat > pyproject.toml << 'EOF'
+# only install cloud-specific SDK when cloud is pre-selected
+if [ "$CLOUD" = "aws" ]; then
+    CLOUD_DEPS='    "boto3>=1.42.0",'
+elif [ "$CLOUD" = "gcp" ]; then
+    CLOUD_DEPS='    "google-auth>=2.0.0",'
+else
+    CLOUD_DEPS='    "boto3>=1.42.0",
+    "google-auth>=2.0.0",'
+fi
+
+cat > pyproject.toml << EOF
 [project]
 name = "pinecone-byoc-setup"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "boto3>=1.42.0",
     "pyyaml>=6.0",
     "rich>=14.0.0",
-    "google-auth>=2.0.0",
+$CLOUD_DEPS
 ]
 EOF
 

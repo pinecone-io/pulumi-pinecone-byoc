@@ -1,4 +1,4 @@
-"""Shared naming conventions for BYOC clusters."""
+"""Shared naming conventions and constants for BYOC clusters."""
 
 import re
 
@@ -7,6 +7,9 @@ import pulumi
 from .providers import Environment
 
 ORG_NAME_MAX_LENGTH = 16
+
+# CNAME records created in both DNS and NLB components across all clouds
+DNS_CNAMES = ["*.svc", "metrics", "prometheus"]
 
 
 def cell_name(environment: Environment) -> pulumi.Output[str]:

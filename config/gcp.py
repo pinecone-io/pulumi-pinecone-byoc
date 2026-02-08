@@ -10,7 +10,6 @@ class AlloyDBInstanceConfig(BaseModel):
     db_name: str
     username: str
     cpu_count: int = 2
-    deletion_policy: str = "DEFAULT"
 
 
 class AlloyDBConfig(BaseModel):
@@ -78,10 +77,3 @@ class GCPConfig(BaseConfig):
         }
         return {**base_labels, **self.custom_tags, **extra}
 
-    @property
-    def gcp_project(self) -> str:
-        return self.project
-
-    @property
-    def custom_labels(self) -> dict[str, str]:
-        return self.custom_tags

@@ -7,6 +7,7 @@ import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
 from config.gcp import GCPConfig
+from ..common.naming import DNS_CNAMES
 
 
 class InternalLoadBalancer(pulumi.ComponentResource):
@@ -219,36 +220,32 @@ class InternalLoadBalancer(pulumi.ComponentResource):
         )
 
         def get_lb_ip_and_link(_ingress_status, cell_name_str: str, retries: int = 30):
-            def _get_lb(retries=retries):
-                for attempt in range(retries):
-                    try:
-                        rules = gcp.compute.get_forwarding_rules(
-                            config.project, config.region
-                        )
-                        lb = next(
-                            (
-                                r
-                                for r in rules.rules
-                                if r.subnetwork and r.subnetwork.endswith(cell_name_str)
-                            ),
-                            None,
-                        )
-                        if lb is None:
-                            pulumi.log.info(
-                                f"no matching LB found (attempt {attempt + 1}/{retries}), retrying..."
-                            )
-                            time.sleep(10)
-                            continue
-                        return (lb.ip_address, lb.self_link)
-                    except Exception as e:
+            for attempt in range(retries):
+                try:
+                    rules = gcp.compute.get_forwarding_rules(
+                        config.project, config.region
+                    )
+                    lb = next(
+                        (
+                            r
+                            for r in rules.rules
+                            if r.subnetwork and r.subnetwork.endswith(cell_name_str)
+                        ),
+                        None,
+                    )
+                    if lb is None:
                         pulumi.log.info(
-                            f"waiting for internal lb (attempt {attempt + 1}/{retries})... {e}"
+                            f"no matching LB found (attempt {attempt + 1}/{retries}), retrying..."
                         )
                         time.sleep(10)
-                else:
-                    raise Exception("failed to get internal LB after retries")
-
-            return _get_lb()
+                        continue
+                    return (lb.ip_address, lb.self_link)
+                except Exception as e:
+                    pulumi.log.info(
+                        f"waiting for internal lb (attempt {attempt + 1}/{retries})... {e}"
+                    )
+                    time.sleep(10)
+            raise Exception("failed to get internal LB after retries")
 
         # wait for Ingress status to be ready, then query the LB
         lb_info = pulumi.Output.all(ingress.status, self._cell_name).apply(
@@ -287,11 +284,9 @@ class InternalLoadBalancer(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[ingress]),
         )
 
-        cnames = ["*.svc", "metrics", "prometheus"]
-
         public_cname_records = []
         if public_access_enabled:
-            for cname in cnames:
+            for cname in DNS_CNAMES:
                 public_cname = gcp.dns.RecordSet(
                     f"{name}-{cname.replace('*.', 'wildcard-').replace('.', '-')}-public-cname",
                     managed_zone=dns_zone_name,
@@ -304,7 +299,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
                 public_cname_records.append(public_cname)
 
         private_cname_records = []
-        for cname in cnames:
+        for cname in DNS_CNAMES:
             private_cname = gcp.dns.RecordSet(
                 f"{name}-{cname.replace('*.', 'wildcard-').replace('.', '-')}-private-cname",
                 managed_zone=dns_zone_name,

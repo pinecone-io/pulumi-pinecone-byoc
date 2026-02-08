@@ -51,33 +51,33 @@ class NodePool:
 class PineconeGCPClusterArgs:
     # required
     pinecone_api_key: pulumi.Input[str]
-    pinecone_version: pulumi.Input[str]
+    pinecone_version: str
 
     # gcp specific
-    project: pulumi.Input[str]
-    region: pulumi.Input[str] = "us-central1"
-    availability_zones: pulumi.Input[list[str]] = field(
+    project: str
+    region: str = "us-central1"
+    availability_zones: list[str] = field(
         default_factory=lambda: ["us-central1-a", "us-central1-b"]
     )
 
     # networking
-    vpc_cidr: pulumi.Input[str] = "10.112.0.0/12"
+    vpc_cidr: str = "10.112.0.0/12"
 
     # kubernetes
-    kubernetes_version: pulumi.Input[str] = "1.33"
+    kubernetes_version: str = "1.33"
     node_pools: Optional[list[NodePool]] = None
 
     # dns
-    parent_dns_zone_name: pulumi.Input[str] = "byoc.pinecone.io"
+    parent_dns_zone_name: str = "byoc.pinecone.io"
 
     # features
     public_access_enabled: bool = True
     deletion_protection: bool = True
 
     # pinecone specific
-    api_url: pulumi.Input[str] = "https://api.pinecone.io"
-    global_env: pulumi.Input[str] = "prod"
-    auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
+    api_url: str = "https://api.pinecone.io"
+    global_env: str = "prod"
+    auth0_domain: str = "https://login.pinecone.io"
 
     # cross-cloud: AWS account for AMP federation
     amp_aws_account_id: str = "713131977538"
@@ -177,7 +177,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-gke",
             config,
             self._vpc.network_id,
-            self._vpc.subnet_id,
+            self._vpc.main_subnet_id,
             self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
@@ -214,9 +214,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
         self._k8s_addons = K8sAddons(
             f"{config.resource_prefix}-k8s-addons",
-            config,
             self._gke,
-            self._cell_name,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke]),
         )
 
@@ -224,7 +222,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-nlb",
             config,
             self._gke.k8s_provider,
-            self._vpc.private_subnet_id,
+            self._vpc.psc_subnet_id,
             self._dns.dns_zone.name,
             self._dns.subdomain,
             self._cell_name,
@@ -382,6 +380,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeGCPClusterArgs):
+        # lazy import to avoid circular dependency: config imports are deferred
         from config.gcp import GCPConfig, AlloyDBConfig, AlloyDBInstanceConfig
         from config.base import NodePoolConfig
 
@@ -415,22 +414,22 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
         environment = (
             args.pinecone_version.split("-")[0]
-            if isinstance(args.pinecone_version, str) and "-" in args.pinecone_version
+            if "-" in args.pinecone_version
             else args.pinecone_version
         )
 
-        config_dict = {
-            "project": args.project,
-            "environment": environment,
-            "global_env": args.global_env,
-            "cloud": "gcp",
-            "region": args.region,
-            "availability_zones": args.availability_zones,
-            "vpc_cidr": args.vpc_cidr,
-            "kubernetes_version": args.kubernetes_version,
-            "parent_zone_name": args.parent_dns_zone_name,
-            "node_pools": node_pools,
-            "database": AlloyDBConfig(
+        config = GCPConfig(
+            project=args.project,
+            environment=environment,
+            global_env=args.global_env,
+            cloud="gcp",
+            region=args.region,
+            availability_zones=args.availability_zones,
+            vpc_cidr=args.vpc_cidr,
+            kubernetes_version=args.kubernetes_version,
+            parent_zone_name=args.parent_dns_zone_name,
+            node_pools=node_pools,
+            database=AlloyDBConfig(
                 control_db=AlloyDBInstanceConfig(
                     name="control-db",
                     cpu_count=control_db_cpu,
@@ -445,19 +444,15 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 ),
                 deletion_protection=args.deletion_protection,
             ),
-            "custom_tags": args.labels or {},
-        }
+            custom_tags=args.labels or {},
+        )
 
         if args.writer_k8s_service_accounts is not None:
-            config_dict["writer_k8s_service_accounts"] = (
-                args.writer_k8s_service_accounts
-            )
+            config.writer_k8s_service_accounts = args.writer_k8s_service_accounts
         if args.reader_k8s_service_accounts is not None:
-            config_dict["reader_k8s_service_accounts"] = (
-                args.reader_k8s_service_accounts
-            )
+            config.reader_k8s_service_accounts = args.reader_k8s_service_accounts
 
-        return GCPConfig(**config_dict)
+        return config
 
     @property
     def environment(self) -> Environment:

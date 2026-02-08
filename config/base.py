@@ -10,12 +10,14 @@ class NodePoolTaint(BaseModel):
 
 
 class NodePoolConfig(BaseModel):
+    """Shared node pool config. AWS reads instance_type/desired_size/disk_type; GCP reads machine_type."""
+
     name: str
-    # aws
+    # aws-only (ignored by GCP)
     instance_type: str = "r6in.large"
     desired_size: int = 3
     disk_type: str = "gp3"
-    # gcp
+    # gcp-only (ignored by AWS)
     machine_type: str = "n2-standard-4"
     # common
     min_size: int = 1

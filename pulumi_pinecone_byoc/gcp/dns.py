@@ -4,6 +4,7 @@ from typing import Optional
 
 import pulumi
 import pulumi_gcp as gcp
+from ..common.naming import DNS_CNAMES
 from ..common.providers import DnsDelegation, DnsDelegationArgs
 
 
@@ -13,8 +14,8 @@ class DNS(pulumi.ComponentResource):
         self,
         name: str,
         subdomain: pulumi.Input[str],
-        parent_zone_name: str,
-        api_url: str,
+        parent_zone_name: pulumi.Input[str],
+        api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
@@ -52,9 +53,8 @@ class DNS(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[dns_zone]),
         )
 
-        cnames = ["*.svc", "metrics", "prometheus"]
         cname_records = []
-        for cname in cnames:
+        for cname in DNS_CNAMES:
             cname_record = gcp.dns.RecordSet(
                 f"{name}-{cname.replace('*.', 'wildcard-').replace('.', '-')}-cname",
                 managed_zone=dns_zone.name,
@@ -105,5 +105,5 @@ class DNS(pulumi.ComponentResource):
         return self._subdomain
 
     @property
-    def nameservers(self) -> pulumi.Output[list[str]]:
+    def nameservers(self) -> pulumi.Output:
         return self._dns_zone.name_servers

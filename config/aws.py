@@ -4,7 +4,7 @@ Configuration for Pinecone BYOC AWS infrastructure.
 
 from pydantic import BaseModel, Field
 
-from .base import BaseConfig, NodePoolConfig, NodePoolTaint
+from .base import BaseConfig
 
 
 class DatabaseInstanceConfig(BaseModel):
@@ -43,7 +43,7 @@ class DatabaseConfig(BaseModel):
     )
 
 
-class Config(BaseConfig):
+class AWSConfig(BaseConfig):
     """
     AWS-specific configuration for BYOC infrastructure.
 

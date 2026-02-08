@@ -3,6 +3,7 @@ from typing import Optional
 import pulumi
 import pulumi_aws as aws
 
+from ..common.naming import DNS_CNAMES
 from ..common.providers import DnsDelegation, DnsDelegationArgs
 
 
@@ -11,8 +12,8 @@ class DNS(pulumi.ComponentResource):
         self,
         name: str,
         subdomain: pulumi.Input[str],
-        parent_zone_name: str,
-        api_url: str,
+        parent_zone_name: pulumi.Input[str],
+        api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
@@ -48,12 +49,7 @@ class DNS(pulumi.ComponentResource):
 
         # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB
-        cnames = [
-            "*.svc",
-            "metrics",
-            "prometheus",
-        ]
-        for cname in cnames:
+        for cname in DNS_CNAMES:
             # use default arg to capture cname value at loop time (avoid closure issue)
             aws.route53.Record(
                 f"{name}-{cname.replace('*', 'wildcard').replace('.', '-')}-cname",
@@ -112,7 +108,7 @@ class DNS(pulumi.ComponentResource):
 
         # private endpoint certificate - for PrivateLink access
         # these domains use .private suffix pattern
-        private_cnames = [f"{c}.private" for c in cnames]
+        private_cnames = [f"{c}.private" for c in DNS_CNAMES]
         self._private_dns_domains = [
             fqdn.apply(lambda f, c=c: f"{c}.{f}") for c in private_cnames
         ]
@@ -184,7 +180,7 @@ class DNS(pulumi.ComponentResource):
         return self._fqdn
 
     @property
-    def name_servers(self) -> pulumi.Output[list]:
+    def name_servers(self) -> pulumi.Output:
         return self.zone.name_servers
 
     @property

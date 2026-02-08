@@ -7,7 +7,6 @@ import platform
 from dataclasses import dataclass
 from typing import Optional
 
-import boto3
 import yaml
 from rich.console import Console
 from rich.panel import Panel
@@ -41,8 +40,12 @@ def _read_input_with_placeholder_unix(
     # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
     # use binary mode with no buffering to avoid input lag
     tty_file = open("/dev/tty", "rb", buffering=0)
-    fd = tty_file.fileno()
-    old_settings = termios.tcgetattr(fd)
+    try:
+        fd = tty_file.fileno()
+        old_settings = termios.tcgetattr(fd)
+    except Exception:
+        tty_file.close()
+        raise
 
     def show_placeholder():
         if placeholder and not password:
@@ -141,6 +144,8 @@ def _read_input_with_placeholder_unix(
 def _read_input_with_placeholder_windows(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
+    if sys.platform != "win32":
+        return placeholder or ""
     import msvcrt
 
     console.print(f"  {prompt}: ", end="")
@@ -181,7 +186,7 @@ def _read_input_with_placeholder_windows(
 
                 try:
                     char = char_bytes.decode("utf-8", errors="replace")
-                except:
+                except Exception:
                     continue
 
                 # enter - accept
@@ -251,6 +256,232 @@ def _read_input_with_placeholder(
 
 
 # ---------------------------------------------------------------------------
+# Base Setup Wizard (shared between AWS and GCP)
+# ---------------------------------------------------------------------------
+
+
+class BaseSetupWizard:
+    TOTAL_STEPS = 13
+    CLOUD_NAME: str = ""
+    HEADER_TITLE: str = "Pinecone BYOC Setup Wizard"
+    HEADER_SUBTITLE: str = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC."
+    )
+    DEFAULT_CIDR: str = "10.0.0.0/16"
+    DELETION_PROTECTION_DESC: str = ""
+    PRIVATE_ACCESS_DESC: str = ""
+    METADATA_NAME: str = "tags"
+
+    def __init__(self):
+        self.results: list[PreflightResult] = []
+        self._current_step = 0
+
+    def _step(self, title: str) -> str:
+        self._current_step += 1
+        return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
+
+    def _prompt(
+        self, message: str, default: Optional[str] = None, password: bool = False
+    ) -> str:
+        return _read_input_with_placeholder(message, default or "", password)
+
+    def _print_header(self):
+        console.print()
+        console.print(
+            Panel.fit(
+                f"[bold {BLUE}]{self.HEADER_TITLE}[/]",
+                border_style=BLUE,
+                padding=(0, 2),
+            )
+        )
+        console.print()
+        console.print(f"  {self.HEADER_SUBTITLE}", style="dim")
+        console.print()
+
+    def _get_api_key(self) -> Optional[str]:
+        console.print()
+        console.print(f"  {self._step('Pinecone API Key')}")
+        console.print("  [dim]Find your key at app.pinecone.io[/]")
+        console.print()
+
+        env_key = os.environ.get("PINECONE_API_KEY")
+        if env_key:
+            use_env = self._prompt(
+                "Found PINECONE_API_KEY in environment. Use it?", "y"
+            )
+            if use_env.lower() == "y":
+                return env_key
+
+        api_key = self._prompt("Enter your Pinecone API key", password=True)
+        if not api_key:
+            console.print("\n  [red]✗[/] API key is required")
+            return None
+
+        return api_key
+
+    def _validate_api_key(self, api_key: str) -> bool:
+        console.print()
+        console.print(f"  {self._step('Validating API Key')}")
+        console.print()
+
+        import urllib.error
+        import urllib.request
+
+        with Status("  [dim]Checking API key...[/]", console=console, spinner="dots"):
+            try:
+                req = urllib.request.Request(
+                    "https://api.pinecone.io/indexes",
+                    headers={"Api-Key": api_key},
+                )
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    response.read()
+
+                console.print("  [green]✓[/] API key is valid")
+                return True
+            except urllib.error.HTTPError as e:
+                if e.code == 401:
+                    console.print("  [red]✗[/] Invalid API key")
+                else:
+                    console.print(f"  [red]✗[/] API error: {e.code}")
+                return False
+            except Exception as e:
+                console.print(f"  [red]✗[/] Failed to validate API key: {e}")
+                return False
+
+    def _get_cidr(self) -> str:
+        console.print()
+        console.print(f"  {self._step('VPC CIDR Block')}")
+        console.print(
+            "  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]"
+        )
+        console.print()
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR)
+
+    def _get_deletion_protection(self) -> bool:
+        console.print()
+        console.print(f"  {self._step('Deletion Protection')}")
+        console.print(f"  [dim]{self.DELETION_PROTECTION_DESC}[/]")
+        console.print()
+        response = self._prompt("Enable deletion protection? (Y/n)", "Y")
+        return response.lower() in ("y", "yes", "")
+
+    def _get_public_access(self) -> bool:
+        console.print()
+        console.print(f"  {self._step('Network Access')}")
+        console.print("  [dim]Public access allows connections from the internet[/]")
+        console.print(f"  [dim]{self.PRIVATE_ACCESS_DESC}[/]")
+        console.print()
+        response = self._prompt("Enable public access? (Y/n)", "Y")
+        return response.lower() in ("y", "yes", "")
+
+    def _get_custom_metadata(self) -> dict[str, str]:
+        name = self.METADATA_NAME
+        console.print()
+        console.print(f"  {self._step(f'Resource {name.title()}')}")
+        console.print(
+            f"  [dim]Add custom {name} to all {self.CLOUD_NAME} resources (for cost tracking, etc.)[/]"
+        )
+        console.print(
+            "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
+        )
+        console.print()
+
+        input_val = self._prompt(f"Enter {name} (or press Enter to skip)", "")
+        if not input_val:
+            return {}
+
+        metadata = {}
+        for pair in input_val.split(","):
+            pair = pair.strip()
+            if "=" in pair:
+                key, value = pair.split("=", 1)
+                metadata[key.strip()] = value.strip()
+
+        if metadata:
+            console.print(f"  [dim]{name.title()} to apply: {metadata}[/]")
+
+        return metadata
+
+    def _get_project_name(self) -> str:
+        console.print()
+        console.print(f"  {self._step('Project Name')}")
+        console.print(
+            "  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]"
+        )
+        console.print()
+        return self._prompt("Enter project name", "pinecone-byoc")
+
+    def _setup_pulumi_backend(self) -> bool:
+        console.print()
+        console.print(f"  {self._step('Pulumi Backend')}")
+        console.print("  [dim]Where to store infrastructure state[/]")
+        console.print()
+
+        backend = self._prompt("Backend (local/cloud)", "local").lower()
+        use_local = backend != "cloud"
+
+        if use_local:
+            console.print()
+            console.print(
+                "  [dim]Enter a passphrase to encrypt secrets (remember this!)[/]"
+            )
+            passphrase = self._prompt("Passphrase", password=True)
+            if not passphrase:
+                console.print("  [red]✗[/] Passphrase is required for local backend")
+                return False
+
+            os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
+
+            result = subprocess.run(
+                ["pulumi", "login", "--local"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                console.print("  [green]✓[/] Using local backend (~/.pulumi)")
+            else:
+                console.print(
+                    f"  [red]✗[/] Failed to set up local backend: {result.stderr.strip()}"
+                )
+                return False
+        else:
+            # check if already logged in to cloud
+            result = subprocess.run(
+                ["pulumi", "whoami"],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode != 0:
+                console.print("  [yellow]![/] Not logged in to Pulumi Cloud")
+                console.print("  [dim]Run:[/] pulumi login")
+                return False
+            console.print(f"  [green]✓[/] Using Pulumi Cloud ({result.stdout.strip()})")
+
+        return True
+
+    def _check_pulumi_installed(self) -> bool:
+        import shutil
+
+        return shutil.which("pulumi") is not None
+
+    def _print_success(self, output_dir: str):
+        console.print()
+        console.print(
+            Panel.fit(
+                "[bold green]Setup Complete![/]",
+                border_style="green",
+                padding=(0, 2),
+            )
+        )
+        console.print()
+        dir_name = os.path.basename(os.path.abspath(output_dir))
+        console.print("  [dim]To deploy, run:[/]")
+        console.print(f"    [bold {BLUE}]cd {dir_name}[/]")
+        console.print(f"    [bold {BLUE}]pulumi up[/]")
+        console.print()
+
+
+# ---------------------------------------------------------------------------
 # AWS Setup Wizard
 # ---------------------------------------------------------------------------
 
@@ -289,7 +520,7 @@ class AWSPreflightChecker:
 
             # print the result that was just added
             r = self.results[-1]
-            status = "\u2713" if r.passed else "\u2717"
+            status = "✓" if r.passed else "✗"
             color = "green" if r.passed else "red"
             console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
             if r.details and not r.passed:
@@ -417,6 +648,8 @@ class AWSPreflightChecker:
             self._add_result("Internet Gateways", False, "Failed to check", str(e))
 
     def _check_nlb_quota(self):
+        import boto3
+
         quota = self._get_quota("elasticloadbalancing", "L-53DA6B97") or 50
         try:
             elb = boto3.client("elbv2", region_name=self.region)
@@ -549,16 +782,18 @@ class AWSPreflightChecker:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
 
 
-class AWSSetupWizard:
-    TOTAL_STEPS = 13
-
-    def __init__(self):
-        self.results: list[PreflightResult] = []
-        self._current_step = 0
-
-    def _step(self, title: str) -> str:
-        self._current_step += 1
-        return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
+class AWSSetupWizard(BaseSetupWizard):
+    HEADER_TITLE = "Pinecone BYOC Setup Wizard"
+    HEADER_SUBTITLE = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC."
+    )
+    DEFAULT_CIDR = "10.0.0.0/16"
+    DELETION_PROTECTION_DESC = (
+        "Protect RDS databases and S3 buckets from accidental deletion"
+    )
+    PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
+    METADATA_NAME = "tags"
+    CLOUD_NAME = "AWS"
 
     def run(self, output_dir: str = ".") -> bool:
         self._print_header()
@@ -578,7 +813,7 @@ class AWSSetupWizard:
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
-        tags = self._get_tags()
+        tags = self._get_custom_metadata()
 
         if not self._run_preflight_checks(region, azs, cidr):
             return False
@@ -600,77 +835,6 @@ class AWSSetupWizard:
             tags,
         )
 
-    def _print_header(self):
-        console.print()
-        console.print(
-            Panel.fit(
-                f"[bold {BLUE}]Pinecone BYOC Setup Wizard[/]",
-                border_style=BLUE,
-                padding=(0, 2),
-            )
-        )
-        console.print()
-        console.print(
-            "  This wizard will set up everything you need to deploy Pinecone BYOC.",
-            style="dim",
-        )
-        console.print()
-
-    def _prompt(
-        self, message: str, default: Optional[str] = None, password: bool = False
-    ) -> str:
-        return _read_input_with_placeholder(message, default or "", password)
-
-    def _get_api_key(self) -> Optional[str]:
-        console.print()
-        console.print(f"  {self._step('Pinecone API Key')}")
-        console.print("  [dim]Find your key at app.pinecone.io[/]")
-        console.print()
-
-        env_key = os.environ.get("PINECONE_API_KEY")
-        if env_key:
-            use_env = self._prompt(
-                "Found PINECONE_API_KEY in environment. Use it?", "y"
-            )
-            if use_env.lower() == "y":
-                return env_key
-
-        api_key = self._prompt("Enter your Pinecone API key", password=True)
-        if not api_key:
-            console.print("\n  [red]✗[/] API key is required")
-            return None
-
-        return api_key
-
-    def _validate_api_key(self, api_key: str) -> bool:
-        console.print()
-        console.print(f"  {self._step('Validating API Key')}")
-        console.print()
-
-        import urllib.error
-        import urllib.request
-
-        with Status("  [dim]Checking API key...[/]", console=console, spinner="dots"):
-            try:
-                req = urllib.request.Request(
-                    "https://api.pinecone.io/indexes",
-                    headers={"Api-Key": api_key},
-                )
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    response.read()
-
-                console.print("  [green]✓[/] API key is valid")
-                return True
-            except urllib.error.HTTPError as e:
-                if e.code == 401:
-                    console.print("  [red]✗[/] Invalid API key")
-                else:
-                    console.print(f"  [red]✗[/] API error: {e.code}")
-                return False
-            except Exception as e:
-                console.print(f"  [red]✗[/] Failed to validate API key: {e}")
-                return False
-
     def _validate_aws_creds(self) -> bool:
         console.print()
         console.print(f"  {self._step('AWS Credentials')}")
@@ -680,6 +844,8 @@ class AWSSetupWizard:
             "  [dim]Validating AWS credentials...[/]", console=console, spinner="dots"
         ):
             try:
+                import boto3
+
                 sts = boto3.client("sts")
                 identity = sts.get_caller_identity()
                 account_id = identity["Account"]
@@ -709,6 +875,8 @@ class AWSSetupWizard:
         return self._prompt("Enter AWS region", "us-east-1")
 
     def _fetch_azs(self, region: str) -> list[str]:
+        import boto3
+
         try:
             ec2 = boto3.client("ec2", region_name=region)
             response = ec2.describe_availability_zones(
@@ -736,61 +904,6 @@ class AWSSetupWizard:
         azs = [az.strip() for az in azs_input.split(",")]
         return azs
 
-    def _get_cidr(self) -> str:
-        console.print()
-        console.print(f"  {self._step('VPC CIDR Block')}")
-        console.print(
-            "  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]"
-        )
-        console.print()
-        return self._prompt("Enter CIDR block", "10.0.0.0/16")
-
-    def _get_deletion_protection(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Deletion Protection')}")
-        console.print(
-            "  [dim]Protect RDS databases and S3 buckets from accidental deletion[/]"
-        )
-        console.print()
-        response = self._prompt("Enable deletion protection? (Y/n)", "Y")
-        return response.lower() in ("y", "yes", "")
-
-    def _get_public_access(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Network Access')}")
-        console.print("  [dim]Public access allows connections from the internet[/]")
-        console.print("  [dim]Private access requires AWS PrivateLink (more secure)[/]")
-        console.print()
-        response = self._prompt("Enable public access? (Y/n)", "Y")
-        return response.lower() in ("y", "yes", "")
-
-    def _get_tags(self) -> dict[str, str]:
-        console.print()
-        console.print(f"  {self._step('Resource Tags')}")
-        console.print(
-            "  [dim]Add custom tags to all AWS resources (for cost tracking, etc.)[/]"
-        )
-        console.print(
-            "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
-        )
-        console.print()
-
-        tags_input = self._prompt("Enter tags (or press Enter to skip)", "")
-        if not tags_input:
-            return {}
-
-        tags = {}
-        for pair in tags_input.split(","):
-            pair = pair.strip()
-            if "=" in pair:
-                key, value = pair.split("=", 1)
-                tags[key.strip()] = value.strip()
-
-        if tags:
-            console.print(f"  [dim]Tags to apply: {tags}[/]")
-
-        return tags
-
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
@@ -805,68 +918,6 @@ class AWSSetupWizard:
             return False
 
         return True
-
-    def _get_project_name(self) -> str:
-        console.print()
-        console.print(f"  {self._step('Project Name')}")
-        console.print(
-            "  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]"
-        )
-        console.print()
-        return self._prompt("Enter project name", "pinecone-byoc")
-
-    def _setup_pulumi_backend(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Pulumi Backend')}")
-        console.print("  [dim]Where to store infrastructure state[/]")
-        console.print()
-
-        backend = self._prompt("Backend (local/cloud)", "local").lower()
-        use_local = backend != "cloud"
-
-        if use_local:
-            console.print()
-            console.print(
-                "  [dim]Enter a passphrase to encrypt secrets (remember this!)[/]"
-            )
-            passphrase = self._prompt("Passphrase", password=True)
-            if not passphrase:
-                console.print("  [red]✗[/] Passphrase is required for local backend")
-                return False
-
-            os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
-
-            result = subprocess.run(
-                ["pulumi", "login", "--local"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                console.print("  [green]✓[/] Using local backend (~/.pulumi)")
-            else:
-                console.print(
-                    f"  [red]✗[/] Failed to set up local backend: {result.stderr.strip()}"
-                )
-                return False
-        else:
-            # check if already logged in to cloud
-            result = subprocess.run(
-                ["pulumi", "whoami"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                console.print("  [yellow]![/] Not logged in to Pulumi Cloud")
-                console.print("  [dim]Run:[/] pulumi login")
-                return False
-            console.print(f"  [green]✓[/] Using Pulumi Cloud ({result.stdout.strip()})")
-
-        return True
-
-    def _check_pulumi_installed(self) -> bool:
-        import shutil
-
-        return shutil.which("pulumi") is not None
 
     def _generate_project(
         self,
@@ -1065,22 +1116,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
 
         console.print("  [green]✓[/] API key stored securely")
 
-        # print success
-        console.print()
-        console.print(
-            Panel.fit(
-                "[bold green]Setup Complete![/]",
-                border_style="green",
-                padding=(0, 2),
-            )
-        )
-        console.print()
-        dir_name = os.path.basename(os.path.abspath(output_dir))
-        console.print("  [dim]To deploy, run:[/]")
-        console.print(f"    [bold {BLUE}]cd {dir_name}[/]")
-        console.print(f"    [bold {BLUE}]pulumi up[/]")
-        console.print()
-
+        self._print_success(output_dir)
         return True
 
 
@@ -1116,7 +1152,7 @@ class GCPPreflightChecker:
 
             # print the result that was just added
             r = self.results[-1]
-            status = "\u2713" if r.passed else "\u2717"
+            status = "✓" if r.passed else "✗"
             color = "green" if r.passed else "red"
             console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
             if r.details and not r.passed:
@@ -1407,16 +1443,20 @@ class GCPPreflightChecker:
             self._add_result("VPC CIDR", False, f"Failed to check: {e}")
 
 
-class GCPSetupWizard:
-    TOTAL_STEPS = 13
-
-    def __init__(self):
-        self.results: list[PreflightResult] = []
-        self._current_step = 0
-
-    def _step(self, title: str) -> str:
-        self._current_step += 1
-        return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] \u00b7 {title}"
+class GCPSetupWizard(BaseSetupWizard):
+    HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
+    HEADER_SUBTITLE = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
+    )
+    DEFAULT_CIDR = "10.112.0.0/12"
+    DELETION_PROTECTION_DESC = (
+        "Protect AlloyDB databases and GCS buckets from accidental deletion"
+    )
+    PRIVATE_ACCESS_DESC = (
+        "Private access requires Private Service Connect (more secure)"
+    )
+    METADATA_NAME = "labels"
+    CLOUD_NAME = "GCP"
 
     def run(self, output_dir: str = ".") -> bool:
         self._print_header()
@@ -1438,7 +1478,7 @@ class GCPSetupWizard:
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
-        labels = self._get_labels()
+        labels = self._get_custom_metadata()
 
         if not self._run_preflight_checks(project_id, region, zones, cidr):
             return False
@@ -1461,77 +1501,6 @@ class GCPSetupWizard:
             labels,
         )
 
-    def _print_header(self):
-        console.print()
-        console.print(
-            Panel.fit(
-                f"[bold {BLUE}]Pinecone BYOC Setup Wizard - GCP[/]",
-                border_style=BLUE,
-                padding=(0, 2),
-            )
-        )
-        console.print()
-        console.print(
-            "  This wizard will set up everything you need to deploy Pinecone BYOC on GCP.",
-            style="dim",
-        )
-        console.print()
-
-    def _prompt(
-        self, message: str, default: Optional[str] = None, password: bool = False
-    ) -> str:
-        return _read_input_with_placeholder(message, default or "", password)
-
-    def _get_api_key(self) -> Optional[str]:
-        console.print()
-        console.print(f"  {self._step('Pinecone API Key')}")
-        console.print("  [dim]Find your key at app.pinecone.io[/]")
-        console.print()
-
-        env_key = os.environ.get("PINECONE_API_KEY")
-        if env_key:
-            use_env = self._prompt(
-                "Found PINECONE_API_KEY in environment. Use it?", "y"
-            )
-            if use_env.lower() == "y":
-                return env_key
-
-        api_key = self._prompt("Enter your Pinecone API key", password=True)
-        if not api_key:
-            console.print("\n  [red]\u2717[/] API key is required")
-            return None
-
-        return api_key
-
-    def _validate_api_key(self, api_key: str) -> bool:
-        console.print()
-        console.print(f"  {self._step('Validating API Key')}")
-        console.print()
-
-        import urllib.error
-        import urllib.request
-
-        with Status("  [dim]Checking API key...[/]", console=console, spinner="dots"):
-            try:
-                req = urllib.request.Request(
-                    "https://api.pinecone.io/indexes",
-                    headers={"Api-Key": api_key},
-                )
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    response.read()
-
-                console.print("  [green]\u2713[/] API key is valid")
-                return True
-            except urllib.error.HTTPError as e:
-                if e.code == 401:
-                    console.print("  [red]\u2717[/] Invalid API key")
-                else:
-                    console.print(f"  [red]\u2717[/] API error: {e.code}")
-                return False
-            except Exception as e:
-                console.print(f"  [red]\u2717[/] Failed to validate API key: {e}")
-                return False
-
     def _validate_gcp_creds(self) -> Optional[str]:
         console.print()
         console.print(f"  {self._step('GCP Credentials')}")
@@ -1547,7 +1516,7 @@ class GCPSetupWizard:
                     credentials, project_id = default()
                     if credentials and project_id:
                         console.print(
-                            f"  [green]\u2713[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
                         )
                         return project_id
                 except ImportError:
@@ -1561,26 +1530,24 @@ class GCPSetupWizard:
                 if result.returncode == 0 and result.stdout.strip():
                     project_id = result.stdout.strip()
                     console.print(
-                        f"  [green]\u2713[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                        f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
                     )
                     return project_id
                 else:
                     raise Exception("Could not determine GCP project")
 
             except Exception as e:
-                console.print(f"  [red]\u2717[/] GCP credentials invalid: {e}")
+                console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
                 console.print()
                 console.print(
                     "  [dim]Make sure you have valid GCP credentials configured.[/]"
                 )
                 console.print("  [dim]You can set them via:[/]")
+                console.print("    [dim]· gcloud auth application-default login[/]")
                 console.print(
-                    "    [dim]\u00b7 gcloud auth application-default login[/]"
+                    "    [dim]· GOOGLE_APPLICATION_CREDENTIALS environment variable[/]"
                 )
-                console.print(
-                    "    [dim]\u00b7 GOOGLE_APPLICATION_CREDENTIALS environment variable[/]"
-                )
-                console.print("    [dim]\u00b7 gcloud config set project PROJECT_ID[/]")
+                console.print("    [dim]· gcloud config set project PROJECT_ID[/]")
                 return None
 
     def _get_project_id(self, detected_project: str) -> str:
@@ -1611,63 +1578,6 @@ class GCPSetupWizard:
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
 
-    def _get_cidr(self) -> str:
-        console.print()
-        console.print(f"  {self._step('VPC CIDR Block')}")
-        console.print(
-            "  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]"
-        )
-        console.print()
-        return self._prompt("Enter CIDR block", "10.112.0.0/12")
-
-    def _get_deletion_protection(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Deletion Protection')}")
-        console.print(
-            "  [dim]Protect AlloyDB databases and GCS buckets from accidental deletion[/]"
-        )
-        console.print()
-        response = self._prompt("Enable deletion protection? (Y/n)", "Y")
-        return response.lower() in ("y", "yes", "")
-
-    def _get_public_access(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Network Access')}")
-        console.print("  [dim]Public access allows connections from the internet[/]")
-        console.print(
-            "  [dim]Private access requires Private Service Connect (more secure)[/]"
-        )
-        console.print()
-        response = self._prompt("Enable public access? (Y/n)", "Y")
-        return response.lower() in ("y", "yes", "")
-
-    def _get_labels(self) -> dict[str, str]:
-        console.print()
-        console.print(f"  {self._step('Resource Labels')}")
-        console.print(
-            "  [dim]Add custom labels to all GCP resources (for cost tracking, etc.)[/]"
-        )
-        console.print(
-            "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
-        )
-        console.print()
-
-        labels_input = self._prompt("Enter labels (or press Enter to skip)", "")
-        if not labels_input:
-            return {}
-
-        labels = {}
-        for pair in labels_input.split(","):
-            pair = pair.strip()
-            if "=" in pair:
-                key, value = pair.split("=", 1)
-                labels[key.strip()] = value.strip()
-
-        if labels:
-            console.print(f"  [dim]Labels to apply: {labels}[/]")
-
-        return labels
-
     def _run_preflight_checks(
         self, project_id: str, region: str, zones: list[str], cidr: str
     ) -> bool:
@@ -1685,71 +1595,6 @@ class GCPSetupWizard:
 
         return True
 
-    def _get_project_name(self) -> str:
-        console.print()
-        console.print(f"  {self._step('Project Name')}")
-        console.print(
-            "  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]"
-        )
-        console.print()
-        return self._prompt("Enter project name", "pinecone-byoc")
-
-    def _setup_pulumi_backend(self) -> bool:
-        console.print()
-        console.print(f"  {self._step('Pulumi Backend')}")
-        console.print("  [dim]Where to store infrastructure state[/]")
-        console.print()
-
-        backend = self._prompt("Backend (local/cloud)", "local").lower()
-        use_local = backend != "cloud"
-
-        if use_local:
-            console.print()
-            console.print(
-                "  [dim]Enter a passphrase to encrypt secrets (remember this!)[/]"
-            )
-            passphrase = self._prompt("Passphrase", password=True)
-            if not passphrase:
-                console.print(
-                    "  [red]\u2717[/] Passphrase is required for local backend"
-                )
-                return False
-
-            os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
-
-            result = subprocess.run(
-                ["pulumi", "login", "--local"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode == 0:
-                console.print("  [green]\u2713[/] Using local backend (~/.pulumi)")
-            else:
-                console.print(
-                    f"  [red]\u2717[/] Failed to set up local backend: {result.stderr.strip()}"
-                )
-                return False
-        else:
-            result = subprocess.run(
-                ["pulumi", "whoami"],
-                capture_output=True,
-                text=True,
-            )
-            if result.returncode != 0:
-                console.print("  [yellow]![/] Not logged in to Pulumi Cloud")
-                console.print("  [dim]Run:[/] pulumi login")
-                return False
-            console.print(
-                f"  [green]\u2713[/] Using Pulumi Cloud ({result.stdout.strip()})"
-            )
-
-        return True
-
-    def _check_pulumi_installed(self) -> bool:
-        import shutil
-
-        return shutil.which("pulumi") is not None
-
     def _generate_project(
         self,
         output_dir: str,
@@ -1766,7 +1611,7 @@ class GCPSetupWizard:
         console.print()
 
         if not self._check_pulumi_installed():
-            console.print("  [red]\u2717[/] Pulumi CLI not found")
+            console.print("  [red]✗[/] Pulumi CLI not found")
             console.print(
                 "  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/"
             )
@@ -1785,7 +1630,7 @@ class GCPSetupWizard:
         pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
         with open(pulumi_yaml_path, "w") as f:
             yaml.dump(pulumi_yaml, f, default_flow_style=False)
-        console.print("  [green]\u2713[/] Created Pulumi.yaml")
+        console.print("  [green]✓[/] Created Pulumi.yaml")
 
         # create __main__.py
         main_py = '''"""Pinecone BYOC deployment on GCP."""
@@ -1821,19 +1666,19 @@ pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
         main_py_path = os.path.join(output_dir, "__main__.py")
         with open(main_py_path, "w") as f:
             f.write(main_py)
-        console.print("  [green]\u2713[/] Created __main__.py")
+        console.print("  [green]✓[/] Created __main__.py")
 
         # create pyproject.toml for uv toolchain to install dependencies
         pyproject_content = """[project]
 name = "pinecone-byoc"
 version = "0.1.0"
 requires-python = ">=3.12"
-dependencies = ["pulumi-pinecone-byoc"]
+dependencies = ["pulumi-pinecone-byoc[gcp]"]
 """
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
-        console.print("  [green]\u2713[/] Created pyproject.toml")
+        console.print("  [green]✓[/] Created pyproject.toml")
 
         # install dependencies with uv
         with Status(
@@ -1860,11 +1705,11 @@ dependencies = ["pulumi-pinecone-byoc"]
                     pkg_version = line.split(":", 1)[1].strip()
                     break
             console.print(
-                f"  [green]\u2713[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
             )
         else:
             console.print(
-                f"  [red]\u2717[/] Failed to install dependencies: {result.stderr.strip()}"
+                f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}"
             )
             console.print("  [dim]Run manually:[/] uv sync")
             return False
@@ -1894,7 +1739,7 @@ dependencies = ["pulumi-pinecone-byoc"]
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
             f.write(config_content)
-        console.print(f"  [green]\u2713[/] Created Pulumi.{stack_name}.yaml")
+        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
 
         # init stack
         with Status("  [dim]Initializing stack...[/]", console=console, spinner="dots"):
@@ -1913,9 +1758,9 @@ dependencies = ["pulumi-pinecone-byoc"]
             )
 
         if result.returncode == 0:
-            console.print(f"  [green]\u2713[/] Stack {stack_name} ready")
+            console.print(f"  [green]✓[/] Stack {stack_name} ready")
         else:
-            console.print(f"  [yellow]\u26a0[/] Stack init: {result.stderr.strip()}")
+            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
 
         # set api key as secret
         with Status(
@@ -1940,31 +1785,16 @@ dependencies = ["pulumi-pinecone-byoc"]
 
         if result.returncode != 0:
             console.print(
-                f"  [red]\u2717[/] Failed to store API key: {result.stderr.strip()}"
+                f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}"
             )
             console.print(
                 "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
             )
             return False
 
-        console.print("  [green]\u2713[/] API key stored securely")
+        console.print("  [green]✓[/] API key stored securely")
 
-        # print success
-        console.print()
-        console.print(
-            Panel.fit(
-                "[bold green]Setup Complete![/]",
-                border_style="green",
-                padding=(0, 2),
-            )
-        )
-        console.print()
-        dir_name = os.path.basename(os.path.abspath(output_dir))
-        console.print("  [dim]To deploy, run:[/]")
-        console.print(f"    [bold {BLUE}]cd {dir_name}[/]")
-        console.print(f"    [bold {BLUE}]pulumi up[/]")
-        console.print()
-
+        self._print_success(output_dir)
         return True
 
 
@@ -1997,12 +1827,12 @@ def select_cloud() -> str:
     elif cloud == "2":
         return "gcp"
     else:
-        console.print(f"  [red]\u2717[/] Invalid choice: {cloud}")
+        console.print(f"  [red]✗[/] Invalid choice: {cloud}")
         console.print("  [dim]Please choose 1 (AWS) or 2 (GCP)[/]")
         sys.exit(1)
 
 
-def run_setup(output_dir: str = ".", cloud: str = None) -> bool:
+def run_setup(output_dir: str = ".", cloud: Optional[str] = None) -> bool:
     try:
         if not cloud:
             cloud = select_cloud()
@@ -2014,7 +1844,7 @@ def run_setup(output_dir: str = ".", cloud: str = None) -> bool:
             wizard = GCPSetupWizard()
             return wizard.run(output_dir)
         else:
-            console.print(f"  [red]\u2717[/] Unknown cloud provider: {cloud}")
+            console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
             console.print("  [dim]Valid options: aws, gcp[/]")
             return False
 
@@ -2024,7 +1854,7 @@ def run_setup(output_dir: str = ".", cloud: str = None) -> bool:
         return False
     except Exception as e:
         console.print()
-        console.print(f"  [red]\u2717[/] Setup failed: {e}")
+        console.print(f"  [red]✗[/] Setup failed: {e}")
         return False
 
 

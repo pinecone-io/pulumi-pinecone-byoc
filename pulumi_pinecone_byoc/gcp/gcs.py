@@ -82,7 +82,7 @@ class GCSBuckets(pulumi.ComponentResource):
         bucket = gcp.storage.Bucket(
             name,
             name=full_bucket_name,
-            project=self.config.gcp_project,
+            project=self.config.project,
             location=self.config.region,
             force_destroy=self._force_destroy,
             uniform_bucket_level_access=True,

@@ -21,6 +21,7 @@ from .pulumi_operator import PulumiOperator
 from ..common.pinetools import Pinetools
 from ..common.uninstaller import ClusterUninstaller
 from ..common.registry import AWS_REGISTRY
+from ..common.naming import cell_name as _cell_name
 from ..common.providers import (
     Environment,
     EnvironmentArgs,
@@ -53,39 +54,36 @@ class NodePool:
 class PineconeAWSClusterArgs:
     # required
     pinecone_api_key: pulumi.Input[str]
-    pinecone_version: pulumi.Input[str]
+    pinecone_version: str
 
     # aws specific
-    region: pulumi.Input[str] = "us-east-1"
-    availability_zones: pulumi.Input[list[str]] = field(
+    region: str = "us-east-1"
+    availability_zones: list[str] = field(
         default_factory=lambda: ["us-east-1a", "us-east-1b"]
     )
 
     # networking
-    vpc_cidr: pulumi.Input[str] = "10.0.0.0/16"
+    vpc_cidr: str = "10.0.0.0/16"
 
     # kubernetes
-    kubernetes_version: pulumi.Input[str] = "1.33"
+    kubernetes_version: str = "1.33"
     node_pools: Optional[list[NodePool]] = None
 
     # dns
-    parent_dns_zone_name: pulumi.Input[str] = "byoc.pinecone.io"
+    parent_dns_zone_name: str = "byoc.pinecone.io"
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
     deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
 
     # pinecone specific
-    api_url: pulumi.Input[str] = "https://api.pinecone.io"
-    global_env: pulumi.Input[str] = "prod"
-    auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
-    gcp_project: pulumi.Input[str] = "production-pinecone"
+    api_url: str = "https://api.pinecone.io"
+    global_env: str = "prod"
+    auth0_domain: str = "https://login.pinecone.io"
+    gcp_project: str = "production-pinecone"
 
     # tags
     tags: Optional[dict[str, str]] = None
-
-
-from ..common.naming import cell_name as _cell_name
 
 
 class PineconeAWSCluster(pulumi.ComponentResource):
@@ -471,7 +469,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeAWSClusterArgs):
-        from config.aws import AWSConfig, NodePoolConfig, NodePoolTaint, DatabaseConfig
+        # lazy import to avoid circular dependency: config imports are deferred
+        from config.aws import AWSConfig, DatabaseConfig
+        from config.base import NodePoolConfig, NodePoolTaint
 
         node_pools = []
         if args.node_pools:
@@ -598,12 +598,12 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._dns.name_servers
 
     @property
-    def nlb_dns_name(self) -> Optional[pulumi.Output[str]]:
-        return self._nlb.nlb_dns_name if self._nlb else None
+    def nlb_dns_name(self) -> pulumi.Output[str]:
+        return self._nlb.nlb_dns_name
 
     @property
-    def nlb_target_group_arn(self) -> Optional[pulumi.Output[str]]:
-        return self._nlb.target_group_arn if self._nlb else None
+    def nlb_target_group_arn(self) -> pulumi.Output[str]:
+        return self._nlb.target_group_arn
 
     @property
     def environment(self) -> Environment:

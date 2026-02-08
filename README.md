@@ -173,9 +173,30 @@ pulumi.export("cluster_name", cluster.cell_name)
 pulumi.export("kubeconfig", cluster.eks.kubeconfig)
 ```
 
+```python
+import pulumi
+from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
+
+config = pulumi.Config()
+
+cluster = PineconeGCPCluster(
+    "pinecone-gcp-cluster",
+    PineconeGCPClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone_api_key"),
+        pinecone_version=config.require("pinecone_version"),
+        project=config.require("gcp_project"),
+        region=config.require("region"),
+        availability_zones=config.require_object("availability_zones"),
+        vpc_cidr=config.get("vpc_cidr") or "10.112.0.0/12",
+        deletion_protection=config.get_bool("deletion_protection") if config.get_bool("deletion_protection") is not None else True,
+        public_access_enabled=config.get_bool("public_access_enabled") if config.get_bool("public_access_enabled") is not None else True,
+        labels=config.get_object("labels") or {},
+    ),
+)
+
 # Export useful values
 pulumi.export("environment", cluster.environment.env_name)
-pulumi.export("cluster_name", cluster.cell_name)
+pulumi.export("cluster_name", cluster.name)
 pulumi.export("kubeconfig", cluster.gke.kubeconfig)
 ```
 
@@ -220,10 +241,15 @@ pulumi up       # Retry deployment
 
 ### Cluster access issues
 
-Ensure your AWS credentials match the account where the cluster is deployed:
+Ensure your cloud credentials match the account where the cluster is deployed:
 
 ```bash
+# AWS
 aws sts get-caller-identity
+
+# GCP
+gcloud auth list
+gcloud config get-value project
 ```
 
 ## Cleanup

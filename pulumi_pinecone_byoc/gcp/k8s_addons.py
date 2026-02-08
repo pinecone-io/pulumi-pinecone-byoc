@@ -5,7 +5,6 @@ from typing import Optional
 import pulumi
 import pulumi_kubernetes as k8s
 
-from config.gcp import GCPConfig
 from .gke import GKE
 
 
@@ -13,9 +12,7 @@ class K8sAddons(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: GCPConfig,
         gke: GKE,
-        cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:K8sAddons", name, None, opts)

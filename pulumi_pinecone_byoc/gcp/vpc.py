@@ -26,7 +26,7 @@ class VPC(pulumi.ComponentResource):
         self.network = gcp.compute.Network(
             f"{name}-network",
             name=self._cell_name.apply(lambda cn: f"network-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             auto_create_subnetworks=False,
             opts=child_opts,
         )
@@ -34,7 +34,7 @@ class VPC(pulumi.ComponentResource):
         self.main_subnet = gcp.compute.Subnetwork(
             f"{name}-subnet",
             name=self._cell_name.apply(lambda cn: f"subnet-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             region=config.region,
             network=self.network.id,
             ip_cidr_range=config.vpc_cidr,
@@ -55,7 +55,7 @@ class VPC(pulumi.ComponentResource):
         self.psc_subnet = gcp.compute.Subnetwork(
             f"{name}-private-subnet",
             name=self._cell_name.apply(lambda cn: f"private-subnet-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             region=config.region,
             network=self.network.id,
             ip_cidr_range=config.psc_cidr,
@@ -66,7 +66,7 @@ class VPC(pulumi.ComponentResource):
         self.proxy_subnet = gcp.compute.Subnetwork(
             f"{name}-private-proxy-network",
             name=self._cell_name.apply(lambda cn: f"private-proxy-network-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             region=config.region,
             network=self.network.id,
             ip_cidr_range=config.proxy_cidr,
@@ -78,7 +78,7 @@ class VPC(pulumi.ComponentResource):
         self.private_ip_range = gcp.compute.GlobalAddress(
             f"{name}-private-ip-range",
             name=self._cell_name.apply(lambda cn: f"private-ip-range-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             network=self.network.id,
             purpose="VPC_PEERING",
             address_type="INTERNAL",
@@ -99,7 +99,7 @@ class VPC(pulumi.ComponentResource):
         self.router = gcp.compute.Router(
             f"{name}-router",
             name=self._cell_name.apply(lambda cn: f"router-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             region=config.region,
             network=self.network.id,
             opts=child_opts,
@@ -108,7 +108,7 @@ class VPC(pulumi.ComponentResource):
         self.nat = gcp.compute.RouterNat(
             f"{name}-nat",
             name=self._cell_name.apply(lambda cn: f"nat-{cn}"),
-            project=config.gcp_project,
+            project=config.project,
             region=config.region,
             router=self.router.name,
             nat_ip_allocate_option="AUTO_ONLY",
@@ -140,20 +140,12 @@ class VPC(pulumi.ComponentResource):
         return self.main_subnet.id
 
     @property
-    def subnet_id(self) -> pulumi.Output[str]:
-        return self.main_subnet.id
-
-    @property
     def main_subnet_name(self) -> pulumi.Output[str]:
         return self.main_subnet.name
 
     @property
     def private_ip_range_name(self) -> pulumi.Output[str]:
         return self.private_ip_range.name
-
-    @property
-    def private_subnet_id(self) -> pulumi.Output[str]:
-        return self.psc_subnet.id
 
     @property
     def psc_subnet_id(self) -> pulumi.Output[str]:

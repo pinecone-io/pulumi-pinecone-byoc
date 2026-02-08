@@ -6,6 +6,7 @@ import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
 from config.gcp import GCPConfig
+from config.base import NodePoolConfig
 
 
 class ServiceAccounts:
@@ -111,6 +112,7 @@ class GKE(pulumi.ComponentResource):
                     enabled=False
                 )
             ),
+            # intentionally tied to database deletion_protection - protects both cluster and DB together
             deletion_protection=config.database.deletion_protection,
             resource_labels=config.labels(),
             opts=pulumi.ResourceOptions(parent=self),
@@ -368,7 +370,7 @@ users:
         self,
         name: str,
         config: GCPConfig,
-        np_config,
+        np_config: NodePoolConfig,
         cluster_id: pulumi.Output[str],
         nodepool_sa_email: pulumi.Output[str],
     ) -> gcp.container.NodePool:

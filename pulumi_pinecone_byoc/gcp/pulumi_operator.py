@@ -24,6 +24,7 @@ class PulumiOperator(pulumi.ComponentResource):
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
+        self._operator_namespace = operator_namespace
         child_opts = pulumi.ResourceOptions(parent=self)
         self._state_bucket = self._create_state_bucket(name, child_opts)
         self._kms_key = self._create_kms_key(name, child_opts)
@@ -52,7 +53,7 @@ class PulumiOperator(pulumi.ComponentResource):
         bucket = gcp.storage.Bucket(
             f"{name}-state-bucket",
             name=bucket_name,
-            project=self.config.gcp_project,
+            project=self.config.project,
             location=self.config.region,
             force_destroy=True,
             uniform_bucket_level_access=True,
@@ -90,7 +91,7 @@ class PulumiOperator(pulumi.ComponentResource):
         key_ring = gcp.kms.KeyRing(
             f"{name}-pulumi-secrets-keyring",
             name=self._cell_name.apply(lambda cn: f"pulumi-secrets-{cn}"),
-            project=self.config.gcp_project,
+            project=self.config.project,
             location=self.config.region,
             opts=opts,
         )
@@ -143,4 +144,4 @@ class PulumiOperator(pulumi.ComponentResource):
 
     @property
     def namespace(self) -> str:
-        return "pulumi-kubernetes-operator"
+        return self._operator_namespace
