@@ -16,6 +16,7 @@ from ..common.k8s_secrets import K8sSecrets
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.cred_refresher import RegistryCredentialRefresher
 from .pulumi_operator import PulumiOperator
+from ..common.naming import cell_name as _cell_name
 from ..common.pinetools import Pinetools
 from ..common.uninstaller import ClusterUninstaller
 from ..common.registry import GCP_REGISTRY
@@ -42,8 +43,6 @@ class NodePool:
     min_size: int = 1
     max_size: int = 10
     disk_size_gb: int = 100
-    ssd_count: int = 0
-    is_nvme: bool = False
     labels: dict = field(default_factory=dict)
     taints: list = field(default_factory=list)
 
@@ -80,26 +79,15 @@ class PineconeGCPClusterArgs:
     global_env: pulumi.Input[str] = "prod"
     auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
 
+    # cross-cloud: AWS account for AMP federation
+    amp_aws_account_id: str = "713131977538"
+
     # tags/labels
     labels: Optional[dict[str, str]] = None
 
     # workload identity - K8s service accounts that need GCS access
     writer_k8s_service_accounts: Optional[list[str]] = None
     reader_k8s_service_accounts: Optional[list[str]] = None
-
-
-ORG_NAME_MAX_LENGTH = 16
-
-
-def _cell_name(environment: Environment) -> pulumi.Output[str]:
-    def sanitize(name: str) -> str:
-        import re
-
-        return re.sub(r"[^a-z0-9]", "", name.lower())[:ORG_NAME_MAX_LENGTH]
-
-    return pulumi.Output.all(environment.org_name, environment.env_name).apply(
-        lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}"
-    )
 
 
 class PineconeGCPCluster(pulumi.ComponentResource):
@@ -276,16 +264,10 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke]),
         )
 
-        # GCP Workload Identity Federation role ARN (varies by environment)
-        gcp_federation_role_arn = (
-            f"arn:aws:iam::{'713131977538' if 'prod' in config.global_env else '115740606080'}"
-            f":role/pinecone-gcp-byoc-amp-federation"
-        )
-
         self._amp_access = AmpAccess(
             f"{config.resource_prefix}-amp-access",
             AmpAccessArgs(
-                workload_role_arn=gcp_federation_role_arn,
+                workload_role_arn=f"arn:aws:iam::{args.amp_aws_account_id}:role/pinecone-gcp-byoc-amp-federation",
                 api_url=args.api_url,
                 cpgw_api_key=self._cpgw_api_key.key,
             ),
@@ -306,16 +288,12 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "sli_checkers_project_id": self._api_key.project_id,
             "customer_tags": args.labels or {},
             "public_access_enabled": args.public_access_enabled,
-            # pulumi operator gcs backend config for Stack CRDs
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
-            # AMP remote write config (same workspace for all clouds)
             "aws_amp_region": self._amp_access.amp_region,
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
-            # Cloud-specific auth for AMP
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
-            "aws_amp_ingest_role_arn": "",  # GCP uses federation, not ingest role
-            # GCP-specific Workload Identity Federation config
+            "aws_amp_ingest_role_arn": "",
             "gcp_prometheus_sa_email": self._gke.service_accounts.prometheus_sa.email,
             "gcp_amp_aws_account_id": self._amp_access.pinecone_role_arn.apply(
                 lambda arn: arn.split(":")[4]
@@ -404,33 +382,26 @@ class PineconeGCPCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeGCPClusterArgs):
-        """Build GCPConfig from cluster args - follows AWS pattern."""
-        from config.gcp import (
-            GCPConfig,
-            GCPNodePoolConfig,
-            GCPDatabaseConfig,
-            GCPDatabaseInstanceConfig,
-        )
+        from config.gcp import GCPConfig, AlloyDBConfig, AlloyDBInstanceConfig
+        from config.base import NodePoolConfig
 
         node_pools = []
         if args.node_pools:
             for np in args.node_pools:
                 node_pools.append(
-                    GCPNodePoolConfig(
+                    NodePoolConfig(
                         name=np.name,
                         machine_type=np.machine_type,
                         min_size=np.min_size,
                         max_size=np.max_size,
                         disk_size_gb=np.disk_size_gb,
-                        ssd_count=np.ssd_count,
-                        is_nvme=np.is_nvme,
                         labels=np.labels,
                         taints=np.taints,
                     )
                 )
         else:
             node_pools = [
-                GCPNodePoolConfig(
+                NodePoolConfig(
                     name="default",
                     machine_type="n2-standard-4",
                     min_size=1,
@@ -459,14 +430,14 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "kubernetes_version": args.kubernetes_version,
             "parent_zone_name": args.parent_dns_zone_name,
             "node_pools": node_pools,
-            "database": GCPDatabaseConfig(
-                control_db=GCPDatabaseInstanceConfig(
+            "database": AlloyDBConfig(
+                control_db=AlloyDBInstanceConfig(
                     name="control-db",
                     cpu_count=control_db_cpu,
                     username="controldb",
                     db_name="controldb",
                 ),
-                system_db=GCPDatabaseInstanceConfig(
+                system_db=AlloyDBInstanceConfig(
                     name="system-db",
                     cpu_count=system_db_cpu,
                     username="systemdb",

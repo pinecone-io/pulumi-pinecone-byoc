@@ -1,12 +1,4 @@
-"""
-Cluster uninstaller - runs pinetools uninstall before infrastructure teardown.
-
-Creates a dynamic resource that:
-- Does nothing on create
-- On delete: runs a K8s Job with `pinetools cluster uninstall --force`
-- Waits for job completion; fails destroy if job fails
-- Must depend on all K8s resources so it's destroyed FIRST
-"""
+"""Cluster uninstaller - runs pinetools uninstall before infrastructure teardown."""
 
 import json
 import time
@@ -24,20 +16,11 @@ from pulumi.dynamic import (
 
 
 class ClusterUninstallerProvider(ResourceProvider):
-    """
-    Dynamic provider that runs uninstall job on delete.
-
-    The delete method creates a K8s Job and waits for it to complete.
-    If the job fails, an exception is raised which fails the destroy.
-    """
-
     def create(self, props: dict[str, Any]) -> CreateResult:
-        # no-op on create - just mark as "ready for uninstall"
         return CreateResult(id_="uninstaller-ready", outs=props)
 
     def diff(self, _id: str, old: dict[str, Any], new: dict[str, Any]) -> DiffResult:
-        # update state if kubeconfig or image changes, but never trigger replacement
-        # this keeps state fresh without causing accidental uninstalls
+        # update state if kubeconfig or image changes, never trigger replacement
         changed = old.get("kubeconfig") != new.get("kubeconfig") or old.get(
             "pinetools_image"
         ) != new.get("pinetools_image")
@@ -46,7 +29,6 @@ class ClusterUninstallerProvider(ResourceProvider):
     def update(
         self, _id: str, _old: dict[str, Any], new: dict[str, Any]
     ) -> UpdateResult:
-        # no-op - just pass through new props, no actual update needed
         return UpdateResult(outs=new)
 
     def delete(self, _id: str, props: dict[str, Any]) -> None:
@@ -63,20 +45,16 @@ class ClusterUninstallerProvider(ResourceProvider):
             raise Exception("pinetools_image not provided to uninstaller")
 
         try:
-            # try JSON first (AWS EKS format)
             kubeconfig = json.loads(kubeconfig_str)
         except (json.JSONDecodeError, ValueError):
-            # fall back to YAML (GCP GKE format)
             try:
                 kubeconfig = yaml.safe_load(kubeconfig_str)
             except yaml.YAMLError as e:
                 raise Exception(f"Failed to parse kubeconfig as JSON or YAML: {e}")
 
-        # GKE exec-based auth may not work in dynamic provider context;
-        # inject a fresh token via gcloud CLI if the kubeconfig uses exec auth
+        # gke exec-based auth needs a fresh gcloud token in dynamic provider context
         users = kubeconfig.get("users", [])
         has_exec = users and "exec" in users[0].get("user", {})
-        pulumi.log.info(f"Uninstaller kubeconfig auth: exec={has_exec}")
         if has_exec:
             try:
                 import subprocess
@@ -151,14 +129,13 @@ class ClusterUninstallerProvider(ResourceProvider):
         try:
             batch_v1.create_namespaced_job(namespace=namespace, body=job)
         except ApiException as e:
-            if e.status == 409:  # already exists
+            if e.status == 409:
                 pulumi.log.warn(
                     f"Uninstall job {job_name} already exists, waiting for it"
                 )
             else:
                 raise Exception(f"Failed to create uninstall job: {e}")
 
-        # wait for job to complete (timeout after 30 minutes)
         timeout_seconds = 1800
         poll_interval = 10
         elapsed = 0
@@ -175,7 +152,6 @@ class ClusterUninstallerProvider(ResourceProvider):
                     return
 
                 if job_status.status.failed and job_status.status.failed > 0:
-                    # get pod logs for debugging
                     pods = core_v1.list_namespaced_pod(
                         namespace=namespace,
                         label_selector=f"job-name={job_name}",
@@ -218,21 +194,7 @@ class ClusterUninstallerProvider(ResourceProvider):
 
 
 class ClusterUninstaller(Resource):
-    """
-    Resource that runs cluster uninstall on destroy.
-
-    IMPORTANT: This resource must depend on ALL K8s resources
-    so that it is destroyed FIRST during `pulumi destroy`.
-
-    Example:
-        uninstaller = ClusterUninstaller(
-            "uninstaller",
-            kubeconfig=eks.kubeconfig,
-            opts=pulumi.ResourceOptions(
-                depends_on=[pinetools, k8s_addons, k8s_secrets, ...],
-            ),
-        )
-    """
+    """Runs cluster uninstall on destroy. Must depend on all K8s resources."""
 
     kubeconfig: pulumi.Output[str]
 

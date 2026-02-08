@@ -9,7 +9,6 @@ from config.gcp import GCPConfig
 
 
 class ServiceAccounts:
-    """GCP service accounts for Workload Identity."""
 
     def __init__(
         self,
@@ -29,7 +28,6 @@ class ServiceAccounts:
 
 
 class GKEResult:
-    """Result object containing GKE cluster resources."""
 
     def __init__(
         self,
@@ -47,7 +45,6 @@ class GKEResult:
 
 
 class GKE(pulumi.ComponentResource):
-    """GKE cluster with Workload Identity and node pools."""
 
     def __init__(
         self,
@@ -115,7 +112,7 @@ class GKE(pulumi.ComponentResource):
                 )
             ),
             deletion_protection=config.database.deletion_protection,
-            resource_labels=config.tags(),
+            resource_labels=config.labels(),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
@@ -221,7 +218,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        # allows cert-manager K8s SA to impersonate DNS GCP SA for DNS-01 ACME challenges
+        # cert-manager K8s SA -> DNS GCP SA for ACME challenges
         gcp.serviceaccount.IAMBinding(
             f"{name}-dns-sa-workload-identity",
             service_account_id=dns_sa.name,
@@ -234,7 +231,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[dns_sa]),
         )
 
-        # allows pulumi-operator K8s SA to impersonate Pulumi GCP SA for GCS state access
+        # pulumi-operator K8s SA -> Pulumi GCP SA for GCS state access
         gcp.serviceaccount.IAMBinding(
             f"{name}-pulumi-sa-workload-identity",
             service_account_id=pulumi_sa.name,
@@ -255,7 +252,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        # allows multiple K8s service accounts to impersonate write GCP SA for GCS/AlloyDB access
+        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access
         gcp.serviceaccount.IAMBinding(
             f"{name}-writer-sa-workload-identity",
             service_account_id=writer_sa.name,
@@ -269,7 +266,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[writer_sa]),
         )
 
-        # allows K8s service accounts to impersonate read GCP SA for GCS read-only access
+        # reader K8s SAs -> read GCP SA for GCS read-only access
         gcp.serviceaccount.IAMBinding(
             f"{name}-reader-sa-workload-identity",
             service_account_id=reader_sa.name,
@@ -283,7 +280,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[reader_sa]),
         )
 
-        # allows prometheus K8s SA to impersonate prometheus GCP SA for AWS STS token exchange
+        # prometheus K8s SA -> prometheus GCP SA for AWS STS token exchange
         gcp.serviceaccount.IAMBinding(
             f"{name}-prometheus-sa-workload-identity",
             service_account_id=prometheus_sa.name,
@@ -377,9 +374,8 @@ users:
     ) -> gcp.container.NodePool:
         base_labels = dict(np_config.labels) if np_config.labels else {}
         base_labels["nodepool_name"] = np_config.name
-        base_labels.update(config.tags())
+        base_labels.update(config.labels())
 
-        # labels must be strings, so we need to use apply
         labels = self._cell_name.apply(
             lambda cn: {"pinecone.io/cell": cn, **base_labels}
         )
@@ -392,28 +388,6 @@ users:
             )
             for taint in (np_config.taints or [])
         ]
-
-        nvme_storage_config = None
-        ephemeral_storage_config = None
-        if np_config.ssd_count:
-            if np_config.is_nvme:
-                nvme_storage_config = (
-                    gcp.container.NodePoolNodeConfigLocalNvmeSsdBlockConfigArgs(
-                        local_ssd_count=np_config.ssd_count
-                    )
-                )
-            else:
-                ephemeral_storage_config = (
-                    gcp.container.NodePoolNodeConfigEphemeralStorageConfigArgs(
-                        local_ssd_count=np_config.ssd_count
-                    )
-                )
-        else:
-            nvme_storage_config = (
-                gcp.container.NodePoolNodeConfigLocalNvmeSsdBlockConfigArgs(
-                    local_ssd_count=0
-                )
-            )
 
         autoscaling = gcp.container.NodePoolAutoscalingArgs(
             min_node_count=np_config.min_size,
@@ -431,10 +405,8 @@ users:
                 machine_type=np_config.machine_type,
                 min_cpu_platform="Intel Ice Lake",
                 labels=labels,
-                resource_labels=config.tags(),
+                resource_labels=config.labels(),
                 taints=taints or None,
-                ephemeral_storage_config=ephemeral_storage_config,
-                local_nvme_ssd_block_config=nvme_storage_config,
                 oauth_scopes=["https://www.googleapis.com/auth/cloud-platform"],
                 service_account=nodepool_sa_email,
             ),

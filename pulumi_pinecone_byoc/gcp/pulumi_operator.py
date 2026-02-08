@@ -1,9 +1,4 @@
-"""
-Pulumi Kubernetes Operator setup for GCP.
-
-Creates GCS backend, Cloud KMS key for secrets, and IAM bindings for the
-GKE pulumi service account.
-"""
+"""Pulumi Kubernetes Operator setup for GCP."""
 
 from typing import Optional
 
@@ -15,18 +10,6 @@ from config.gcp import GCPConfig
 
 
 class PulumiOperator(pulumi.ComponentResource):
-    """
-    Sets up pulumi-k8s-operator to use GCS backend instead of Pulumi Cloud.
-
-    Creates:
-    - GCS bucket for Pulumi state storage
-    - Cloud KMS key for encrypting Pulumi secrets
-    - IAM bindings for the GKE pulumi service account (bucket + KMS)
-
-    Note: The GCP service account is created by GKE (passed via pulumi_sa_email),
-    NOT created here.
-    """
-
     def __init__(
         self,
         name: str,
@@ -64,7 +47,6 @@ class PulumiOperator(pulumi.ComponentResource):
     def _create_state_bucket(
         self, name: str, opts: pulumi.ResourceOptions
     ) -> gcp.storage.Bucket:
-        """Create GCS bucket for Pulumi state storage."""
         bucket_name = self._cell_name.apply(lambda cn: f"pc-pulumi-state-{cn}")
 
         bucket = gcp.storage.Bucket(
@@ -105,7 +87,6 @@ class PulumiOperator(pulumi.ComponentResource):
     def _create_kms_key(
         self, name: str, opts: pulumi.ResourceOptions
     ) -> gcp.kms.CryptoKey:
-        """Create Cloud KMS key for encrypting Pulumi secrets."""
         key_ring = gcp.kms.KeyRing(
             f"{name}-pulumi-secrets-keyring",
             name=self._cell_name.apply(lambda cn: f"pulumi-secrets-{cn}"),
@@ -120,6 +101,7 @@ class PulumiOperator(pulumi.ComponentResource):
             key_ring=key_ring.id,
             rotation_period="7776000s",  # 90 days
             purpose="ENCRYPT_DECRYPT",
+            labels=self.config.labels(),
             opts=opts,
         )
 
@@ -131,7 +113,6 @@ class PulumiOperator(pulumi.ComponentResource):
         pulumi_sa_email: pulumi.Output[str],
         opts: pulumi.ResourceOptions,
     ):
-        """Create IAM bindings for the GKE pulumi service account."""
         gcp.storage.BucketIAMMember(
             f"{name}-state-bucket-access",
             bucket=self._state_bucket.name,
@@ -150,12 +131,10 @@ class PulumiOperator(pulumi.ComponentResource):
 
     @property
     def backend_url(self) -> pulumi.Output[str]:
-        """GCS backend URL for Stack CRD spec.backend field."""
         return self._backend_url
 
     @property
     def secrets_provider(self) -> pulumi.Output[str]:
-        """Cloud KMS secrets provider URL for Stack CRD spec.secretsProvider field."""
         return self._secrets_provider
 
     @property

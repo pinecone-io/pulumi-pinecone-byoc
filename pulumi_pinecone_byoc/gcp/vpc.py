@@ -1,8 +1,4 @@
-"""
-VPC component for Pinecone BYOC GCP infrastructure.
-
-Creates a production-ready VPC with subnets, Cloud NAT, and private service ranges.
-"""
+"""VPC component for GCP infrastructure."""
 
 from typing import Optional
 
@@ -13,14 +9,6 @@ from config.gcp import GCPConfig
 
 
 class VPC(pulumi.ComponentResource):
-    """
-    Creates a VPC with:
-    - Main subnet for GKE nodes (one per region, all AZs)
-    - Private Service Connect subnet for Service Attachment
-    - Regional Managed Proxy subnet for internal load balancers
-    - Cloud Router + Cloud NAT for outbound internet
-    - Private IP range for AlloyDB (Private Service Access)
-    """
 
     def __init__(
         self,

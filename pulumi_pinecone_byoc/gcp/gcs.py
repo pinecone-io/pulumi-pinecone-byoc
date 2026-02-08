@@ -1,8 +1,4 @@
-"""
-GCS component for Pinecone BYOC GCP infrastructure.
-
-Creates GCS buckets for vector data storage, WAL, and operational data.
-"""
+"""GCS buckets for GCP infrastructure."""
 
 from typing import Optional
 
@@ -13,15 +9,6 @@ from config.gcp import GCPConfig
 
 
 class GCSBuckets(pulumi.ComponentResource):
-    """
-    Creates GCS buckets with:
-    - Data bucket for vector storage
-    - WAL bucket for write-ahead logs
-    - Index backups bucket
-    - Janitor bucket for cleanup operations
-    - Internal bucket for operational data
-    - Lifecycle rules for multipart upload cleanup
-    """
 
     def __init__(
         self,
@@ -90,7 +77,6 @@ class GCSBuckets(pulumi.ComponentResource):
         enable_versioning: bool,
         opts: Optional[pulumi.ResourceOptions] = None,
     ) -> gcp.storage.Bucket:
-        """Create a GCS bucket with standard configuration."""
         full_bucket_name = self._cell_name.apply(lambda cn: f"pc-{bucket_type}-{cn}")
 
         bucket = gcp.storage.Bucket(

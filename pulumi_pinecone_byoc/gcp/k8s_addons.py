@@ -1,15 +1,4 @@
-"""
-K8s addons for Pinecone BYOC GCP infrastructure.
-
-GKE handles most addons natively:
-- Cluster autoscaler: built-in to GKE
-- CSI driver: built-in GCE persistent disk
-- No ALB controller needed (GCE ingress controller is built-in)
-- No external-dns needed
-
-Only creates:
-- gloo-system namespace
-"""
+"""K8s addons for GCP infrastructure."""
 
 from typing import Optional
 

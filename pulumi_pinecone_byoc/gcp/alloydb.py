@@ -9,7 +9,7 @@ from config.gcp import GCPConfig
 
 
 class _AlloyDBClusterCompat:
-    """Compatibility shim that mimics RDS cluster interface for K8sSecrets."""
+    """Mimics RDS cluster interface for K8sSecrets compatibility."""
 
     def __init__(self, instance: gcp.alloydb.Instance):
         self._instance = instance
@@ -28,7 +28,7 @@ class _AlloyDBClusterCompat:
 
 
 class _AlloyDBConfigCompat:
-    """Compatibility shim that mimics RDS db_config interface for K8sSecrets."""
+    """Mimics RDS db_config interface for K8sSecrets compatibility."""
 
     def __init__(self, username: str, db_name: str):
         self.username = username
@@ -36,7 +36,6 @@ class _AlloyDBConfigCompat:
 
 
 class AlloyDBInstance:
-    """AlloyDB instance wrapper similar to RDSInstance."""
 
     def __init__(
         self,
@@ -73,7 +72,6 @@ class AlloyDBInstance:
 
 
 class AlloyDB(pulumi.ComponentResource):
-    """AlloyDB clusters for control and system databases."""
 
     def __init__(
         self,
@@ -148,7 +146,7 @@ class AlloyDB(pulumi.ComponentResource):
             deletion_policy="FORCE"
             if not config.database.deletion_protection
             else "DEFAULT",
-            labels=config.tags(),
+            labels=config.labels(),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[private_connection]),
         )
 
@@ -166,7 +164,7 @@ class AlloyDB(pulumi.ComponentResource):
             availability_type="REGIONAL"
             if config.database.deletion_protection
             else "ZONAL",
-            labels=config.tags(),
+            labels=config.labels(),
             database_flags={
                 "max_connections": str(
                     self._calculate_max_connections(db_config.cpu_count)

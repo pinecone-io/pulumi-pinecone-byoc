@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 
-PINETOOLS_TAG = "smbyoc-4"
+PINETOOLS_TAG = "latest"
 
 RegistryType = Literal["ecr", "gcr"]
 

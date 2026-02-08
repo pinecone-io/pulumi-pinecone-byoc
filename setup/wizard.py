@@ -1,8 +1,4 @@
-"""
-Pinecone BYOC Setup Wizard.
-
-Interactive setup that creates a complete Pulumi project for BYOC deployment.
-"""
+"""Pinecone BYOC setup wizard."""
 
 import os
 import subprocess
@@ -17,7 +13,6 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 
-# Platform-specific imports
 IS_WINDOWS = platform.system() == "Windows"
 if not IS_WINDOWS:
     import tty
@@ -32,8 +27,6 @@ console = Console()
 
 @dataclass
 class PreflightResult:
-    """Result of a single preflight check."""
-
     name: str
     passed: bool
     message: str
@@ -43,7 +36,6 @@ class PreflightResult:
 def _read_input_with_placeholder_unix(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder (Unix implementation)."""
     console.print(f"  {prompt}: ", end="")
 
     # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
@@ -149,7 +141,6 @@ def _read_input_with_placeholder_unix(
 def _read_input_with_placeholder_windows(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder (Windows implementation)."""
     import msvcrt
 
     console.print(f"  {prompt}: ", end="")
@@ -253,7 +244,6 @@ def _read_input_with_placeholder_windows(
 def _read_input_with_placeholder(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder that disappears when typing."""
     if IS_WINDOWS:
         return _read_input_with_placeholder_windows(prompt, placeholder, password)
     else:
@@ -266,8 +256,6 @@ def _read_input_with_placeholder(
 
 
 class AWSPreflightChecker:
-    """Runs preflight checks for AWS environment."""
-
     def __init__(self, region: str, azs: list[str], cidr: str):
         import boto3
 
@@ -281,7 +269,6 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        """Run all preflight checks."""
         checks = [
             ("VPC Quota", self._check_vpc_quota),
             ("Elastic IPs", self._check_eip_quota),
@@ -430,8 +417,6 @@ class AWSPreflightChecker:
             self._add_result("Internet Gateways", False, "Failed to check", str(e))
 
     def _check_nlb_quota(self):
-        import boto3
-
         quota = self._get_quota("elasticloadbalancing", "L-53DA6B97") or 50
         try:
             elb = boto3.client("elbv2", region_name=self.region)
@@ -565,8 +550,6 @@ class AWSPreflightChecker:
 
 
 class AWSSetupWizard:
-    """Interactive setup wizard for Pinecone BYOC AWS deployment."""
-
     TOTAL_STEPS = 13
 
     def __init__(self):
@@ -574,57 +557,37 @@ class AWSSetupWizard:
         self._current_step = 0
 
     def _step(self, title: str) -> str:
-        """Return formatted step header and increment counter."""
         self._current_step += 1
         return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
 
     def run(self, output_dir: str = ".") -> bool:
-        """Run the interactive setup wizard."""
         self._print_header()
 
-        # get pinecone api key
         api_key = self._get_api_key()
         if not api_key:
             return False
 
-        # validate api key
         if not self._validate_api_key(api_key):
             return False
 
-        # validate aws credentials (early - we need them for everything else)
         if not self._validate_aws_creds():
             return False
 
-        # get region
         region = self._get_region()
-
-        # get availability zones
         azs = self._get_azs(region)
-
-        # get vpc cidr
         cidr = self._get_cidr()
-
-        # get deletion protection preference
         deletion_protection = self._get_deletion_protection()
-
-        # get public access preference
         public_access = self._get_public_access()
-
-        # get custom tags
         tags = self._get_tags()
 
-        # run preflight checks
         if not self._run_preflight_checks(region, azs, cidr):
             return False
 
-        # get project name
         project_name = self._get_project_name()
 
-        # set up pulumi backend
         if not self._setup_pulumi_backend():
             return False
 
-        # generate everything
         return self._generate_project(
             output_dir,
             project_name,
@@ -656,11 +619,9 @@ class AWSSetupWizard:
     def _prompt(
         self, message: str, default: Optional[str] = None, password: bool = False
     ) -> str:
-        """Prompt for input with optional default shown as placeholder."""
         return _read_input_with_placeholder(message, default or "", password)
 
     def _get_api_key(self) -> Optional[str]:
-        """Get Pinecone API key from user."""
         console.print()
         console.print(f"  {self._step('Pinecone API Key')}")
         console.print("  [dim]Find your key at app.pinecone.io[/]")
@@ -682,7 +643,6 @@ class AWSSetupWizard:
         return api_key
 
     def _validate_api_key(self, api_key: str) -> bool:
-        """Validate the Pinecone API key by calling the API."""
         console.print()
         console.print(f"  {self._step('Validating API Key')}")
         console.print()
@@ -712,7 +672,6 @@ class AWSSetupWizard:
                 return False
 
     def _validate_aws_creds(self) -> bool:
-        """Validate AWS credentials early - we need them for everything else."""
         console.print()
         console.print(f"  {self._step('AWS Credentials')}")
         console.print()
@@ -744,14 +703,12 @@ class AWSSetupWizard:
         return True
 
     def _get_region(self) -> str:
-        """Get AWS region from user."""
         console.print()
         console.print(f"  {self._step('AWS Region')}")
         console.print()
         return self._prompt("Enter AWS region", "us-east-1")
 
     def _fetch_azs(self, region: str) -> list[str]:
-        """Fetch available AZs from AWS for the given region."""
         try:
             ec2 = boto3.client("ec2", region_name=region)
             response = ec2.describe_availability_zones(
@@ -763,7 +720,6 @@ class AWSSetupWizard:
             return [f"{region}a", f"{region}b", f"{region}c"]
 
     def _get_azs(self, region: str) -> list[str]:
-        """Get availability zones from user."""
         console.print()
         console.print(f"  {self._step('Availability Zones')}")
         console.print()
@@ -781,7 +737,6 @@ class AWSSetupWizard:
         return azs
 
     def _get_cidr(self) -> str:
-        """Get VPC CIDR from user."""
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(
@@ -791,7 +746,6 @@ class AWSSetupWizard:
         return self._prompt("Enter CIDR block", "10.0.0.0/16")
 
     def _get_deletion_protection(self) -> bool:
-        """Get deletion protection preference from user."""
         console.print()
         console.print(f"  {self._step('Deletion Protection')}")
         console.print(
@@ -802,7 +756,6 @@ class AWSSetupWizard:
         return response.lower() in ("y", "yes", "")
 
     def _get_public_access(self) -> bool:
-        """Get public access preference from user."""
         console.print()
         console.print(f"  {self._step('Network Access')}")
         console.print("  [dim]Public access allows connections from the internet[/]")
@@ -812,7 +765,6 @@ class AWSSetupWizard:
         return response.lower() in ("y", "yes", "")
 
     def _get_tags(self) -> dict[str, str]:
-        """Get custom tags from user."""
         console.print()
         console.print(f"  {self._step('Resource Tags')}")
         console.print(
@@ -840,7 +792,6 @@ class AWSSetupWizard:
         return tags
 
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
-        """Run preflight checks for AWS environment."""
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
@@ -856,7 +807,6 @@ class AWSSetupWizard:
         return True
 
     def _get_project_name(self) -> str:
-        """Get project name from user."""
         console.print()
         console.print(f"  {self._step('Project Name')}")
         console.print(
@@ -866,9 +816,6 @@ class AWSSetupWizard:
         return self._prompt("Enter project name", "pinecone-byoc")
 
     def _setup_pulumi_backend(self) -> bool:
-        """Set up Pulumi backend (local or cloud)."""
-        import subprocess
-
         console.print()
         console.print(f"  {self._step('Pulumi Backend')}")
         console.print("  [dim]Where to store infrastructure state[/]")
@@ -887,10 +834,8 @@ class AWSSetupWizard:
                 console.print("  [red]✗[/] Passphrase is required for local backend")
                 return False
 
-            # set env var for subsequent pulumi commands
             os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
 
-            # login to local backend
             result = subprocess.run(
                 ["pulumi", "login", "--local"],
                 capture_output=True,
@@ -919,7 +864,6 @@ class AWSSetupWizard:
         return True
 
     def _check_pulumi_installed(self) -> bool:
-        """Check if pulumi CLI is installed."""
         import shutil
 
         return shutil.which("pulumi") is not None
@@ -936,7 +880,6 @@ class AWSSetupWizard:
         public_access: bool,
         tags: dict[str, str],
     ):
-        """Generate complete Pulumi project."""
         console.print()
 
         console.print(f"  {self._step('Creating Project')}")
@@ -949,9 +892,6 @@ class AWSSetupWizard:
             )
             return False
 
-        import subprocess
-
-        # create Pulumi.yaml
         pulumi_yaml = {
             "name": project_name,
             "runtime": {
@@ -1150,8 +1090,6 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
 
 
 class GCPPreflightChecker:
-    """Runs preflight checks for GCP environment."""
-
     def __init__(self, project_id: str, region: str, zones: list[str], cidr: str):
         self.project_id = project_id
         self.region = region
@@ -1160,7 +1098,6 @@ class GCPPreflightChecker:
         self.results: list[PreflightResult] = []
 
     def run_checks(self) -> bool:
-        """Run all preflight checks."""
         checks = [
             ("GCP APIs", self._check_apis_enabled),
             ("VPC Networks", self._check_vpc_quota),
@@ -1195,7 +1132,6 @@ class GCPPreflightChecker:
         self.results.append(result)
 
     def _gcloud_json(self, args: list[str]):
-        """Run gcloud command and return parsed JSON. Raises RuntimeError on failure."""
         import json
 
         result = subprocess.run(
@@ -1210,7 +1146,6 @@ class GCPPreflightChecker:
         return json.loads(result.stdout)
 
     def _check_apis_enabled(self):
-        """Check if required GCP APIs are enabled."""
         required_apis = [
             "alloydb.googleapis.com",
             "autoscaling.googleapis.com",
@@ -1273,11 +1208,9 @@ class GCPPreflightChecker:
             self._add_result("GCP APIs", False, f"Failed to check: {e}")
 
     def _check_vpc_quota(self):
-        """Check VPC network quota."""
         try:
             networks = self._gcloud_json(["compute", "networks", "list"])
             current = len(networks) if isinstance(networks, list) else 0
-            # Default VPC quota is 15
             quota = 15
             available = quota - current
             self._add_result(
@@ -1290,7 +1223,6 @@ class GCPPreflightChecker:
             self._add_result("VPC Networks", False, f"Failed to check: {e}")
 
     def _check_external_ip_quota(self):
-        """Check external/static IP quota."""
         needed = 1  # one for external ingress
         try:
             addresses = self._gcloud_json(
@@ -1311,11 +1243,9 @@ class GCPPreflightChecker:
             self._add_result("External IPs", False, f"Failed to check: {e}")
 
     def _check_gke_quota(self):
-        """Check GKE cluster count against quota."""
         try:
             data = self._gcloud_json(["container", "clusters", "list"])
             current = len(data) if isinstance(data, list) else 0
-            # Default GKE quota is 50 clusters per zone per project
             quota = 50
             available = quota - current
             self._add_result(
@@ -1327,7 +1257,6 @@ class GCPPreflightChecker:
             self._add_result("GKE Clusters", False, f"Failed to check: {e}")
 
     def _check_machine_types(self):
-        """Check if required machine types are available in selected zones."""
         machine_types = ["n2-standard-4", "n2-standard-2", "n2-highmem-2"]
         unavailable = []
 
@@ -1372,7 +1301,6 @@ class GCPPreflightChecker:
             self._add_result("Machine Types", False, f"Failed to check: {e}")
 
     def _check_zones(self):
-        """Check if zones are valid for the region."""
         try:
             result = subprocess.run(
                 [
@@ -1414,7 +1342,6 @@ class GCPPreflightChecker:
             self._add_result("Availability Zones", False, f"Failed to check: {e}")
 
     def _check_cidr_conflicts(self):
-        """Check if CIDR is valid and doesn't conflict with existing VPCs."""
         import ipaddress
 
         try:
@@ -1438,7 +1365,7 @@ class GCPPreflightChecker:
                 for sub in net.get("subnetworks", []):
                     # subnetwork URLs contain the CIDR in a separate call, skip deep check
                     pass
-            # Also check subnets directly in the region
+            # check subnets directly in the region
             result = subprocess.run(
                 [
                     "gcloud",
@@ -1481,8 +1408,6 @@ class GCPPreflightChecker:
 
 
 class GCPSetupWizard:
-    """Interactive setup wizard for Pinecone BYOC deployment on GCP."""
-
     TOTAL_STEPS = 13
 
     def __init__(self):
@@ -1490,61 +1415,39 @@ class GCPSetupWizard:
         self._current_step = 0
 
     def _step(self, title: str) -> str:
-        """Return formatted step header and increment counter."""
         self._current_step += 1
         return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] \u00b7 {title}"
 
     def run(self, output_dir: str = ".") -> bool:
-        """Run the interactive setup wizard."""
         self._print_header()
 
-        # get pinecone api key
         api_key = self._get_api_key()
         if not api_key:
             return False
 
-        # validate api key
         if not self._validate_api_key(api_key):
             return False
 
-        # validate gcp credentials (early - we need them for everything else)
         project_id = self._validate_gcp_creds()
         if not project_id:
             return False
 
-        # get project id (allow override of detected one)
         project_id = self._get_project_id(project_id)
-
-        # get region
         region = self._get_region()
-
-        # get availability zones
         zones = self._get_zones(region)
-
-        # get vpc cidr
         cidr = self._get_cidr()
-
-        # get deletion protection preference
         deletion_protection = self._get_deletion_protection()
-
-        # get public access preference
         public_access = self._get_public_access()
-
-        # get custom labels
         labels = self._get_labels()
 
-        # run preflight checks
         if not self._run_preflight_checks(project_id, region, zones, cidr):
             return False
 
-        # get project name
         project_name = self._get_project_name()
 
-        # set up pulumi backend
         if not self._setup_pulumi_backend():
             return False
 
-        # generate everything
         return self._generate_project(
             output_dir,
             project_name,
@@ -1577,11 +1480,9 @@ class GCPSetupWizard:
     def _prompt(
         self, message: str, default: Optional[str] = None, password: bool = False
     ) -> str:
-        """Prompt for input with optional default shown as placeholder."""
         return _read_input_with_placeholder(message, default or "", password)
 
     def _get_api_key(self) -> Optional[str]:
-        """Get Pinecone API key from user."""
         console.print()
         console.print(f"  {self._step('Pinecone API Key')}")
         console.print("  [dim]Find your key at app.pinecone.io[/]")
@@ -1603,7 +1504,6 @@ class GCPSetupWizard:
         return api_key
 
     def _validate_api_key(self, api_key: str) -> bool:
-        """Validate the Pinecone API key by calling the API."""
         console.print()
         console.print(f"  {self._step('Validating API Key')}")
         console.print()
@@ -1633,7 +1533,6 @@ class GCPSetupWizard:
                 return False
 
     def _validate_gcp_creds(self) -> Optional[str]:
-        """Validate GCP credentials early - we need them for everything else."""
         console.print()
         console.print(f"  {self._step('GCP Credentials')}")
         console.print()
@@ -1642,7 +1541,6 @@ class GCPSetupWizard:
             "  [dim]Validating GCP credentials...[/]", console=console, spinner="dots"
         ):
             try:
-                # Try to use google.auth to get default credentials
                 try:
                     from google.auth import default
 
@@ -1655,7 +1553,6 @@ class GCPSetupWizard:
                 except ImportError:
                     pass
 
-                # Fall back to gcloud CLI
                 result = subprocess.run(
                     ["gcloud", "config", "get-value", "project"],
                     capture_output=True,
@@ -1687,26 +1584,22 @@ class GCPSetupWizard:
                 return None
 
     def _get_project_id(self, detected_project: str) -> str:
-        """Get GCP project ID from user."""
         console.print()
         console.print(f"  {self._step('GCP Project ID')}")
         console.print()
         return self._prompt("Enter GCP project ID", detected_project)
 
     def _get_region(self) -> str:
-        """Get GCP region from user."""
         console.print()
         console.print(f"  {self._step('GCP Region')}")
         console.print()
         return self._prompt("Enter GCP region", "us-central1")
 
     def _get_zones(self, region: str) -> list[str]:
-        """Get availability zones from user."""
         console.print()
         console.print(f"  {self._step('GCP Zones')}")
         console.print()
 
-        # Default zones for the region (2 zones like AWS)
         default_zones = [f"{region}-a", f"{region}-b"]
         console.print(
             f"  [dim]Default zones for {region}:[/] {', '.join(default_zones)}"
@@ -1719,7 +1612,6 @@ class GCPSetupWizard:
         return zones
 
     def _get_cidr(self) -> str:
-        """Get VPC CIDR from user."""
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(
@@ -1729,7 +1621,6 @@ class GCPSetupWizard:
         return self._prompt("Enter CIDR block", "10.112.0.0/12")
 
     def _get_deletion_protection(self) -> bool:
-        """Get deletion protection preference from user."""
         console.print()
         console.print(f"  {self._step('Deletion Protection')}")
         console.print(
@@ -1740,7 +1631,6 @@ class GCPSetupWizard:
         return response.lower() in ("y", "yes", "")
 
     def _get_public_access(self) -> bool:
-        """Get public access preference from user."""
         console.print()
         console.print(f"  {self._step('Network Access')}")
         console.print("  [dim]Public access allows connections from the internet[/]")
@@ -1752,7 +1642,6 @@ class GCPSetupWizard:
         return response.lower() in ("y", "yes", "")
 
     def _get_labels(self) -> dict[str, str]:
-        """Get custom labels from user."""
         console.print()
         console.print(f"  {self._step('Resource Labels')}")
         console.print(
@@ -1782,7 +1671,6 @@ class GCPSetupWizard:
     def _run_preflight_checks(
         self, project_id: str, region: str, zones: list[str], cidr: str
     ) -> bool:
-        """Run preflight checks for GCP environment."""
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
@@ -1798,7 +1686,6 @@ class GCPSetupWizard:
         return True
 
     def _get_project_name(self) -> str:
-        """Get project name from user."""
         console.print()
         console.print(f"  {self._step('Project Name')}")
         console.print(
@@ -1808,7 +1695,6 @@ class GCPSetupWizard:
         return self._prompt("Enter project name", "pinecone-byoc")
 
     def _setup_pulumi_backend(self) -> bool:
-        """Set up Pulumi backend (local or cloud)."""
         console.print()
         console.print(f"  {self._step('Pulumi Backend')}")
         console.print("  [dim]Where to store infrastructure state[/]")
@@ -1829,10 +1715,8 @@ class GCPSetupWizard:
                 )
                 return False
 
-            # set env var for subsequent pulumi commands
             os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
 
-            # login to local backend
             result = subprocess.run(
                 ["pulumi", "login", "--local"],
                 capture_output=True,
@@ -1846,7 +1730,6 @@ class GCPSetupWizard:
                 )
                 return False
         else:
-            # check if already logged in to cloud
             result = subprocess.run(
                 ["pulumi", "whoami"],
                 capture_output=True,
@@ -1863,7 +1746,6 @@ class GCPSetupWizard:
         return True
 
     def _check_pulumi_installed(self) -> bool:
-        """Check if pulumi CLI is installed."""
         import shutil
 
         return shutil.which("pulumi") is not None
@@ -1881,7 +1763,6 @@ class GCPSetupWizard:
         public_access: bool,
         labels: dict[str, str],
     ):
-        """Generate complete Pulumi project."""
         console.print()
 
         if not self._check_pulumi_installed():
@@ -2087,13 +1968,7 @@ dependencies = ["pulumi-pinecone-byoc"]
         return True
 
 
-# ---------------------------------------------------------------------------
-# Cloud Selection & Entry Point
-# ---------------------------------------------------------------------------
-
-
 def select_cloud() -> str:
-    """Prompt user to select cloud provider."""
     console.print()
     console.print(
         Panel.fit(
@@ -2128,13 +2003,10 @@ def select_cloud() -> str:
 
 
 def run_setup(output_dir: str = ".", cloud: str = None) -> bool:
-    """Run the interactive setup wizard."""
     try:
-        # Select cloud if not specified
         if not cloud:
             cloud = select_cloud()
 
-        # Dispatch to cloud-specific wizard
         if cloud == "aws":
             wizard = AWSSetupWizard()
             return wizard.run(output_dir)

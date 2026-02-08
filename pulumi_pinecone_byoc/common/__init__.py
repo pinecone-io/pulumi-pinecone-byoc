@@ -32,7 +32,6 @@ from .uninstaller import ClusterUninstaller
 from .registry import ContainerRegistry, AWS_REGISTRY, GCP_REGISTRY
 
 __all__ = [
-    # API functions
     "create_environment",
     "create_service_account",
     "create_api_key",
@@ -40,7 +39,6 @@ __all__ = [
     "create_dns_delegation",
     "create_amp_access",
     "create_datadog_api_key",
-    # Dynamic providers
     "Environment",
     "EnvironmentProvider",
     "ServiceAccount",
@@ -55,7 +53,6 @@ __all__ = [
     "AmpAccessProvider",
     "DatadogApiKey",
     "DatadogApiKeyProvider",
-    # K8s components
     "K8sConfigMaps",
     "K8sSecrets",
     "Pinetools",

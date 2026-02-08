@@ -1,15 +1,4 @@
-"""
-Pinetools setup for cluster management.
-
-Creates:
-- CronJob for periodic cluster maintenance (suspended by default)
-- One-time installation Job
-
-Job naming includes version suffix, so:
-- Same version = same job name = Pulumi skips (no change)
-- New version = new job name = old job deleted, new one created
-- Failed jobs auto-cleanup after 60s, then retry with `pulumi up`
-"""
+"""Pinetools setup for cluster management."""
 
 from typing import Optional
 
@@ -17,7 +6,6 @@ import pulumi
 import pulumi_kubernetes as k8s
 
 
-# script to wait for regcred secret before running pinetools
 WAIT_FOR_REGCRED_SCRIPT = """
 echo "Waiting for regcred secret in pc-control-plane namespace..."
 for i in $(seq 1 60); do
@@ -42,20 +30,6 @@ def _job_name(pinecone_version: str) -> str:
 
 
 class Pinetools(pulumi.ComponentResource):
-    """
-    Deploys pinetools to pc-control-plane namespace.
-
-    Creates:
-    - ServiceAccount with imagePullSecrets for ECR
-    - ClusterRoleBinding for cluster-admin access
-    - CronJob for periodic maintenance (suspended)
-    - Job for cluster installation
-
-    The installation Job name includes the pinecone_version suffix, so:
-    - Same version = same job name = Pulumi sees no change (skips)
-    - New version = new job name = old job replaced
-    - Job has TTL of 60s after completion for automatic cleanup
-    """
 
     def __init__(
         self,
@@ -70,7 +44,6 @@ class Pinetools(pulumi.ComponentResource):
 
         namespace = "pc-control-plane"
         self._pinetools_image = pinetools_image
-        self._pinecone_version = pinecone_version
 
         ns = k8s.core.v1.Namespace(
             f"{name}-namespace",
@@ -118,7 +91,6 @@ class Pinetools(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        # shared config for cronjob and install job
         tolerations = [
             k8s.core.v1.TolerationArgs(
                 key="node.kubernetes.io/disk-pressure",
@@ -198,11 +170,7 @@ class Pinetools(pulumi.ComponentResource):
             ),
         )
 
-        # one-time installation job
-        # Job name includes version suffix so:
-        # - Same version = same job name = Pulumi sees no change = skips
-        # - New version = new job name = old job deleted, new one created
-        # - Failed job auto-deletes after 60s, so retry is just `pulumi up` again
+        # job name includes version suffix: same version = skip, new version = replace
         version_output = pulumi.Output.from_input(pinecone_version)
         job_name = version_output.apply(_job_name)
         install_job = k8s.batch.v1.Job(

@@ -1,11 +1,4 @@
-"""
-Generic container registry credential refresher cronjob.
-
-Fetches tokens from cpgw and distributes regcred secrets to all pc-* namespaces
-plus prometheus/metering/tooling/gloo-system/kube-system.
-
-Supports both ECR and GCR via registry parameter.
-"""
+"""Registry credential refresher cronjob. Supports ECR and GCR."""
 
 from typing import Optional
 
@@ -211,7 +204,7 @@ class RegistryCredentialRefresher(pulumi.ComponentResource):
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(
                     spec=k8s.batch.v1.JobSpecArgs(
                         backoff_limit=1,
-                        ttl_seconds_after_finished=300,  # cleanup after 5 minutes
+                        ttl_seconds_after_finished=300,
                         template=k8s.core.v1.PodTemplateSpecArgs(
                             spec=k8s.core.v1.PodSpecArgs(
                                 service_account_name=f"{registry}-credential-refresher",

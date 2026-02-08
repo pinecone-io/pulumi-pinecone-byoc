@@ -1,4 +1,4 @@
-"""Internal Load Balancer with Private Service Connect."""
+"""Internal load balancer with Private Service Connect."""
 
 from typing import Optional
 import time
@@ -10,8 +10,6 @@ from config.gcp import GCPConfig
 
 
 class InternalLoadBalancer(pulumi.ComponentResource):
-    """Internal LB with Service Attachment for Private Service Connect."""
-
     def __init__(
         self,
         name: str,
@@ -28,11 +26,10 @@ class InternalLoadBalancer(pulumi.ComponentResource):
 
         self._cell_name = pulumi.Output.from_input(cell_name)
 
-        # match AWS convention: {subdomain_first_part}-tls
         tls_secret_name = subdomain.apply(lambda s: f"{s.split('.')[0]}-tls")
 
         # placeholder TLS secret for ingress-gce: it won't configure the LB without this existing.
-        # cert-manager overwrites it with the real cert later; ignore_changes prevents Pulumi from reverting
+        # cert-manager overwrites it with the real cert later, ignore_changes prevents Pulumi from reverting
         placeholder_tls_secret = k8s.core.v1.Secret(
             f"{name}-placeholder-tls",
             metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -229,19 +226,27 @@ class InternalLoadBalancer(pulumi.ComponentResource):
                             config.project, config.region
                         )
                         lb = next(
-                            (r for r in rules.rules if r.subnetwork.endswith(cell_name_str)),
+                            (
+                                r
+                                for r in rules.rules
+                                if r.subnetwork.endswith(cell_name_str)
+                            ),
                             None,
                         )
                         if lb is None:
-                            pulumi.log.info(f"No matching LB found (attempt {attempt + 1}/{retries}), retrying...")
+                            pulumi.log.info(
+                                f"no matching LB found (attempt {attempt + 1}/{retries}), retrying..."
+                            )
                             time.sleep(10)
                             continue
                         return (lb.ip_address, lb.self_link)
                     except Exception as e:
-                        pulumi.log.info(f"Waiting for internal lb (attempt {attempt + 1}/{retries})... {e}")
+                        pulumi.log.info(
+                            f"waiting for internal lb (attempt {attempt + 1}/{retries})... {e}"
+                        )
                         time.sleep(10)
                 else:
-                    raise Exception("Failed to get internal LB after retries")
+                    raise Exception("failed to get internal LB after retries")
 
             return _get_lb()
 

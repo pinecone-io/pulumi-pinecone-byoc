@@ -8,7 +8,6 @@ from ..common.providers import DnsDelegation, DnsDelegationArgs
 
 
 class DNS(pulumi.ComponentResource):
-    """Cloud DNS zone and records."""
 
     def __init__(
         self,
