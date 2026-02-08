@@ -87,7 +87,7 @@ class ClusterUninstallerProvider(ResourceProvider):
             ),
             spec=client.V1JobSpec(
                 backoff_limit=1,
-                active_deadline_seconds=600,
+                active_deadline_seconds=1800,
                 ttl_seconds_after_finished=300,
                 template=client.V1PodTemplateSpec(
                     spec=client.V1PodSpec(

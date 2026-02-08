@@ -30,7 +30,6 @@ def _job_name(pinecone_version: str) -> str:
 
 
 class Pinetools(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
@@ -147,8 +146,9 @@ class Pinetools(pulumi.ComponentResource):
             init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
         ) -> k8s.batch.v1.JobSpecArgs:
             return k8s.batch.v1.JobSpecArgs(
-                backoff_limit=0,
-                ttl_seconds_after_finished=60,
+                backoff_limit=1,
+                active_deadline_seconds=1800,
+                ttl_seconds_after_finished=300,
                 template=k8s.core.v1.PodTemplateSpecArgs(
                     spec=make_pod_spec(init_containers),
                 ),

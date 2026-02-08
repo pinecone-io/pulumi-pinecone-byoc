@@ -229,7 +229,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
                             (
                                 r
                                 for r in rules.rules
-                                if r.subnetwork.endswith(cell_name_str)
+                                if r.subnetwork and r.subnetwork.endswith(cell_name_str)
                             ),
                             None,
                         )
