@@ -11,7 +11,7 @@ import pulumi
 import pulumi_aws as aws
 import pulumi_random as random
 
-from config import Config, DatabaseInstanceConfig
+from config.aws import AWSConfig, DatabaseConfig, DatabaseInstanceConfig
 from .vpc import VPC
 
 
@@ -25,7 +25,7 @@ class RDSInstance(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         db_config: DatabaseInstanceConfig,
         vpc: VPC,
         security_group_id: pulumi.Output[str],
@@ -212,7 +212,7 @@ class RDS(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,

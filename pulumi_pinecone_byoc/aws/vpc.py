@@ -9,7 +9,7 @@ from typing import Optional
 import pulumi
 import pulumi_aws as aws
 
-from config import Config
+from config.aws import AWSConfig
 
 
 class VPC(pulumi.ComponentResource):
@@ -24,7 +24,7 @@ class VPC(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:VPC", name, None, opts)

@@ -9,7 +9,7 @@ from typing import Optional
 import pulumi
 import pulumi_aws as aws
 
-from config import Config
+from config.aws import AWSConfig
 
 # https://docs.aws.amazon.com/AmazonS3/latest/userguide/bucketnamingrules.html
 AWS_S3_BUCKET_NAME_LIMIT = 63
@@ -29,7 +29,7 @@ class S3Buckets(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,
         force_destroy: bool = False,

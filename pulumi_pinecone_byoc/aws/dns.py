@@ -3,7 +3,7 @@ from typing import Optional
 import pulumi
 import pulumi_aws as aws
 
-from .providers import DnsDelegation, DnsDelegationArgs
+from ..common.providers import DnsDelegation, DnsDelegationArgs
 
 
 class DNS(pulumi.ComponentResource):

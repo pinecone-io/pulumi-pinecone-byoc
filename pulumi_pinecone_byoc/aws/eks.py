@@ -12,7 +12,7 @@ import pulumi_aws as aws
 import pulumi_eks as eks
 import pulumi_kubernetes as k8s
 
-from config import Config
+from config.aws import AWSConfig
 from .vpc import VPC
 
 # https://docs.aws.amazon.com/eks/latest/userguide/clusters.html
@@ -31,7 +31,7 @@ class EKS(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
         opts: Optional[pulumi.ResourceOptions] = None,

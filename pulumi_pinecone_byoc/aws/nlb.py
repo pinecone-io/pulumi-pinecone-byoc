@@ -12,7 +12,7 @@ import pulumi
 import pulumi_aws as aws
 import pulumi_kubernetes as k8s
 
-from config import Config
+from config.aws import AWSConfig
 from .vpc import VPC
 from .dns import DNS
 
@@ -36,7 +36,7 @@ class NLB(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         vpc: VPC,
         dns: DNS,
         k8s_provider: pulumi.ProviderResource,
