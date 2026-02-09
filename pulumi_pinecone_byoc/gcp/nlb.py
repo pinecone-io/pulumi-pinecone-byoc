@@ -257,9 +257,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
 
         service_attachment = gcp.compute.ServiceAttachment(
             f"{name}-service-attachment",
-            name=f"pinecone-psc-{config.environment}"
-            if config.environment == "prod"
-            else f"pinecone-psc-{config.environment}-{config.region}",
+            name=self._cell_name.apply(lambda cn: f"{config.resource_prefix}-psc-{cn}"),
             region=config.region,
             description="Pinecone service attachment",
             connection_preference="ACCEPT_AUTOMATIC",

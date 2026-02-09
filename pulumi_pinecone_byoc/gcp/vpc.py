@@ -1,6 +1,7 @@
 """VPC component for GCP infrastructure."""
 
 from typing import Optional
+import ipaddress
 
 import pulumi
 import pulumi_gcp as gcp
@@ -21,6 +22,18 @@ class VPC(pulumi.ComponentResource):
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
         child_opts = pulumi.ResourceOptions(parent=self)
+
+        # validate VPC CIDR doesn't overlap with hardcoded subnets
+        vpc_net = ipaddress.ip_network(config.vpc_cidr)
+        psc_net = ipaddress.ip_network("10.100.1.0/24")
+        proxy_net = ipaddress.ip_network("10.100.2.0/24")
+
+        if vpc_net.overlaps(psc_net) or vpc_net.overlaps(proxy_net):
+            raise ValueError(
+                f"VPC CIDR {config.vpc_cidr} overlaps with reserved ranges: "
+                "10.100.1.0/24 (Private Service Connect), 10.100.2.0/24 (Regional Managed Proxy). "
+                "Please choose a VPC CIDR that doesn't overlap with 10.100.0.0/16."
+            )
 
         self.network = gcp.compute.Network(
             f"{name}-network",

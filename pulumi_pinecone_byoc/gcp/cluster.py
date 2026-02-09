@@ -412,15 +412,8 @@ class PineconeGCPCluster(pulumi.ComponentResource):
         control_db_cpu = 2
         system_db_cpu = 2
 
-        environment = (
-            args.pinecone_version.split("-")[0]
-            if "-" in args.pinecone_version
-            else args.pinecone_version
-        )
-
         config = GCPConfig(
             project=args.project,
-            environment=environment,
             global_env=args.global_env,
             cloud="gcp",
             region=args.region,

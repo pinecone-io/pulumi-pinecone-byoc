@@ -13,13 +13,13 @@ class NodePoolConfig(BaseModel):
     """Shared node pool config. AWS reads instance_type/desired_size/disk_type; GCP reads machine_type."""
 
     name: str
-    # aws-only (ignored by GCP)
+    # AWS-only (ignored by GCP)
     instance_type: str = "r6in.large"
     desired_size: int = 3
     disk_type: str = "gp3"
-    # gcp-only (ignored by AWS)
+    # GCP-only (ignored by AWS)
     machine_type: str = "n2-standard-4"
-    # common
+    # Common
     min_size: int = 1
     max_size: int = 10
     disk_size_gb: int = 100
@@ -29,7 +29,6 @@ class NodePoolConfig(BaseModel):
 
 class BaseConfig(BaseModel):
     region: str
-    environment: str
     global_env: str = "prod"
     cloud: str = "aws"
 

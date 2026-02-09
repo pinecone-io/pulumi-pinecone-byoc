@@ -80,6 +80,7 @@ class PineconeAWSClusterArgs:
     api_url: str = "https://api.pinecone.io"
     global_env: str = "prod"
     auth0_domain: str = "https://login.pinecone.io"
+    # gcp_project is needed by some helmfiles even for AWS clusters (cross-cloud monitoring/metrics)
     gcp_project: str = "production-pinecone"
 
     # tags
@@ -505,7 +506,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         return AWSConfig(
             region=args.region,
-            environment="prod",
             global_env=args.global_env,
             cloud="aws",
             availability_zones=args.availability_zones,

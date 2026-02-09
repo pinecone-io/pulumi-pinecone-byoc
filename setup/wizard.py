@@ -1043,7 +1043,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         public_access_str = str(public_access).lower()
         config_content = f"""config:
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-434e1c9
+  {project_name}:pinecone-version: main-a46d09c
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
@@ -1397,10 +1397,6 @@ class GCPPreflightChecker:
                 networks = []
 
             conflicts = []
-            for net in networks:
-                for sub in net.get("subnetworks", []):
-                    # subnetwork URLs contain the CIDR in a separate call, skip deep check
-                    pass
             # check subnets directly in the region
             result = subprocess.run(
                 [
@@ -1721,7 +1717,7 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         config_content = f"""config:
   gcp:project: {project_id}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-434e1c9
+  {project_name}:pinecone-version: main-a46d09c
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
