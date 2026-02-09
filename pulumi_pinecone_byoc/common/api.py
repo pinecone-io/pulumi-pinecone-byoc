@@ -168,7 +168,7 @@ def create_environment(
     )
 
     try:
-        environment = CreateEnvironmentResponse.model_validate_json(json.dumps(resp))
+        environment = CreateEnvironmentResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -202,9 +202,7 @@ def create_service_account(
             },
         )
 
-        service_account = CreateServiceAccountResponse.model_validate_json(
-            json.dumps(resp)
-        )
+        service_account = CreateServiceAccountResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiInternalError(f"invalid response: {e}")
 
@@ -243,7 +241,7 @@ def create_api_key(
     )
 
     try:
-        project = CreateProjectResponse.model_validate_json(json.dumps(resp))
+        project = CreateProjectResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiInternalError(f"invalid response: {e}")
 
@@ -255,7 +253,7 @@ def create_api_key(
             headers=management_plane_headers(get_access_token(api_url, auth0)),
             body={"name": key_name, "roles": ["ProjectEditor"]},
         )
-        api_key = CreateApiKeyResponse.model_validate_json(json.dumps(resp))
+        api_key = CreateApiKeyResponse.model_validate(resp)
     except Exception as e:
         try:
             request(
@@ -304,7 +302,7 @@ def create_cpgw_api_key(
     )
 
     try:
-        result = CreateCpgwApiKeyResponse.model_validate_json(json.dumps(resp))
+        result = CreateCpgwApiKeyResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -352,7 +350,7 @@ def create_dns_delegation(
     )
 
     try:
-        result = CreateDnsDelegationResponse.model_validate_json(json.dumps(resp))
+        result = CreateDnsDelegationResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -377,7 +375,7 @@ def delete_dns_delegation(
     )
 
     try:
-        result = DeleteDnsDelegationResponse.model_validate_json(json.dumps(resp))
+        result = DeleteDnsDelegationResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -410,7 +408,7 @@ def create_amp_access(
     )
 
     try:
-        return CreateAmpAccessResponse.model_validate_json(json.dumps(resp))
+        return CreateAmpAccessResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -426,7 +424,7 @@ def delete_amp_access(
     )
 
     try:
-        return DeleteAmpAccessResponse.model_validate_json(json.dumps(resp))
+        return DeleteAmpAccessResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -452,7 +450,7 @@ def create_datadog_api_key(
     )
 
     try:
-        result = CreateDatadogApiKeyResponse.model_validate_json(json.dumps(resp))
+        result = CreateDatadogApiKeyResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 
@@ -475,7 +473,7 @@ def delete_datadog_api_key(
     )
 
     try:
-        result = DeleteDatadogApiKeyResponse.model_validate_json(json.dumps(resp))
+        result = DeleteDatadogApiKeyResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}")
 

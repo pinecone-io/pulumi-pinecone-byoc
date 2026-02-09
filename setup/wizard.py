@@ -1,22 +1,17 @@
-"""
-Pinecone BYOC Setup Wizard.
-
-Interactive setup that creates a complete Pulumi project for BYOC deployment.
-"""
+"""Pinecone BYOC setup wizard."""
 
 import os
+import subprocess
 import sys
 import platform
 from dataclasses import dataclass
 from typing import Optional
 
-import boto3
 import yaml
 from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
 
-# Platform-specific imports
 IS_WINDOWS = platform.system() == "Windows"
 if not IS_WINDOWS:
     import tty
@@ -29,17 +24,28 @@ BLUE = "#002BFF"
 console = Console()
 
 
+@dataclass
+class PreflightResult:
+    name: str
+    passed: bool
+    message: str
+    details: Optional[str] = None
+
+
 def _read_input_with_placeholder_unix(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder (Unix implementation)."""
     console.print(f"  {prompt}: ", end="")
 
     # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
     # use binary mode with no buffering to avoid input lag
     tty_file = open("/dev/tty", "rb", buffering=0)
-    fd = tty_file.fileno()
-    old_settings = termios.tcgetattr(fd)
+    try:
+        fd = tty_file.fileno()
+        old_settings = termios.tcgetattr(fd)
+    except Exception:
+        tty_file.close()
+        raise
 
     def show_placeholder():
         if placeholder and not password:
@@ -138,7 +144,8 @@ def _read_input_with_placeholder_unix(
 def _read_input_with_placeholder_windows(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder (Windows implementation)."""
+    if sys.platform != "win32":
+        return placeholder or ""
     import msvcrt
 
     console.print(f"  {prompt}: ", end="")
@@ -179,7 +186,7 @@ def _read_input_with_placeholder_windows(
 
                 try:
                     char = char_bytes.decode("utf-8", errors="replace")
-                except:
+                except Exception:
                     continue
 
                 # enter - accept
@@ -242,120 +249,56 @@ def _read_input_with_placeholder_windows(
 def _read_input_with_placeholder(
     prompt: str, placeholder: str = "", password: bool = False
 ) -> str:
-    """Read input with a dimmed placeholder that disappears when typing."""
     if IS_WINDOWS:
         return _read_input_with_placeholder_windows(prompt, placeholder, password)
     else:
         return _read_input_with_placeholder_unix(prompt, placeholder, password)
 
 
-@dataclass
-class PreflightResult:
-    """Result of a single preflight check."""
-
-    name: str
-    passed: bool
-    message: str
-    details: Optional[str] = None
+# ---------------------------------------------------------------------------
+# Base Setup Wizard (shared between AWS and GCP)
+# ---------------------------------------------------------------------------
 
 
-class SetupWizard:
-    """Interactive setup wizard for Pinecone BYOC deployment."""
-
+class BaseSetupWizard:
     TOTAL_STEPS = 13
+    CLOUD_NAME: str = ""
+    HEADER_TITLE: str = "Pinecone BYOC Setup Wizard"
+    HEADER_SUBTITLE: str = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC."
+    )
+    DEFAULT_CIDR: str = "10.0.0.0/16"
+    DELETION_PROTECTION_DESC: str = ""
+    PRIVATE_ACCESS_DESC: str = ""
+    METADATA_NAME: str = "tags"
 
     def __init__(self):
         self.results: list[PreflightResult] = []
         self._current_step = 0
 
     def _step(self, title: str) -> str:
-        """Return formatted step header and increment counter."""
         self._current_step += 1
         return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
 
-    def run(self, output_dir: str = ".") -> bool:
-        """Run the interactive setup wizard."""
-        self._print_header()
-
-        # get pinecone api key
-        api_key = self._get_api_key()
-        if not api_key:
-            return False
-
-        # validate api key
-        if not self._validate_api_key(api_key):
-            return False
-
-        # validate aws credentials (early - we need them for everything else)
-        if not self._validate_aws_creds():
-            return False
-
-        # get region
-        region = self._get_region()
-
-        # get availability zones
-        azs = self._get_azs(region)
-
-        # get vpc cidr
-        cidr = self._get_cidr()
-
-        # get deletion protection preference
-        deletion_protection = self._get_deletion_protection()
-
-        # get public access preference
-        public_access = self._get_public_access()
-
-        # get custom tags
-        tags = self._get_tags()
-
-        # run preflight checks
-        if not self._run_preflight_checks(region, azs, cidr):
-            return False
-
-        # get project name
-        project_name = self._get_project_name()
-
-        # set up pulumi backend
-        if not self._setup_pulumi_backend():
-            return False
-
-        # generate everything
-        return self._generate_project(
-            output_dir,
-            project_name,
-            api_key,
-            region,
-            azs,
-            cidr,
-            deletion_protection,
-            public_access,
-            tags,
-        )
+    def _prompt(
+        self, message: str, default: Optional[str] = None, password: bool = False
+    ) -> str:
+        return _read_input_with_placeholder(message, default or "", password)
 
     def _print_header(self):
         console.print()
         console.print(
             Panel.fit(
-                f"[bold {BLUE}]Pinecone BYOC Setup Wizard[/]",
+                f"[bold {BLUE}]{self.HEADER_TITLE}[/]",
                 border_style=BLUE,
                 padding=(0, 2),
             )
         )
         console.print()
-        console.print(
-            "  This wizard will set up everything you need to deploy Pinecone BYOC.",
-            style="dim",
-        )
+        console.print(f"  {self.HEADER_SUBTITLE}", style="dim")
         console.print()
 
-    def _prompt(
-        self, message: str, default: Optional[str] = None, password: bool = False
-    ) -> str:
-        """Prompt for input with optional default shown as placeholder."""
-        return _read_input_with_placeholder(message, default or "", password)
-
     def _get_api_key(self) -> Optional[str]:
-        """Get Pinecone API key from user."""
         console.print()
         console.print(f"  {self._step('Pinecone API Key')}")
         console.print("  [dim]Find your key at app.pinecone.io[/]")
@@ -377,7 +320,6 @@ class SetupWizard:
         return api_key
 
     def _validate_api_key(self, api_key: str) -> bool:
-        """Validate the Pinecone API key by calling the API."""
         console.print()
         console.print(f"  {self._step('Validating API Key')}")
         console.print()
@@ -406,152 +348,61 @@ class SetupWizard:
                 console.print(f"  [red]✗[/] Failed to validate API key: {e}")
                 return False
 
-    def _validate_aws_creds(self) -> bool:
-        """Validate AWS credentials early - we need them for everything else."""
-        console.print()
-        console.print(f"  {self._step('AWS Credentials')}")
-        console.print()
-
-        with Status(
-            "  [dim]Validating AWS credentials...[/]", console=console, spinner="dots"
-        ):
-            try:
-                sts = boto3.client("sts")
-                identity = sts.get_caller_identity()
-                account_id = identity["Account"]
-            except Exception as e:
-                console.print(f"  [red]✗[/] AWS credentials invalid: {e}")
-                console.print()
-                console.print(
-                    "  [dim]Make sure you have valid AWS credentials configured.[/]"
-                )
-                console.print("  [dim]You can set them via:[/]")
-                console.print(
-                    "    [dim]· AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY[/]"
-                )
-                console.print("    [dim]· aws configure[/]")
-                console.print("    [dim]· AWS_PROFILE environment variable[/]")
-                return False
-
-        console.print(
-            f"  [green]✓[/] AWS credentials valid [dim](Account: {account_id})[/]"
-        )
-        return True
-
-    def _get_region(self) -> str:
-        """Get AWS region from user."""
-        console.print()
-        console.print(f"  {self._step('AWS Region')}")
-        console.print()
-        return self._prompt("Enter AWS region", "us-east-1")
-
-    def _fetch_azs(self, region: str) -> list[str]:
-        """Fetch available AZs from AWS for the given region."""
-        try:
-            ec2 = boto3.client("ec2", region_name=region)
-            response = ec2.describe_availability_zones(
-                Filters=[{"Name": "state", "Values": ["available"]}]
-            )
-            return sorted([az["ZoneName"] for az in response["AvailabilityZones"]])
-        except Exception as e:
-            console.print(f"  [yellow]⚠[/] Could not fetch AZs from AWS: {e}")
-            return [f"{region}a", f"{region}b", f"{region}c"]
-
-    def _get_azs(self, region: str) -> list[str]:
-        """Get availability zones from user."""
-        console.print()
-        console.print(f"  {self._step('Availability Zones')}")
-        console.print()
-
-        with Status(
-            "  [dim]Fetching availability zones...[/]", console=console, spinner="dots"
-        ):
-            available = self._fetch_azs(region)
-
-        console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
-        default_azs = available[:2]
-
-        azs_input = self._prompt("Enter AZs (comma-separated)", ",".join(default_azs))
-        azs = [az.strip() for az in azs_input.split(",")]
-        return azs
-
     def _get_cidr(self) -> str:
-        """Get VPC CIDR from user."""
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(
             "  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]"
         )
         console.print()
-        return self._prompt("Enter CIDR block", "10.0.0.0/16")
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR)
 
     def _get_deletion_protection(self) -> bool:
-        """Get deletion protection preference from user."""
         console.print()
         console.print(f"  {self._step('Deletion Protection')}")
-        console.print(
-            "  [dim]Protect RDS databases and S3 buckets from accidental deletion[/]"
-        )
+        console.print(f"  [dim]{self.DELETION_PROTECTION_DESC}[/]")
         console.print()
         response = self._prompt("Enable deletion protection? (Y/n)", "Y")
         return response.lower() in ("y", "yes", "")
 
     def _get_public_access(self) -> bool:
-        """Get public access preference from user."""
         console.print()
         console.print(f"  {self._step('Network Access')}")
         console.print("  [dim]Public access allows connections from the internet[/]")
-        console.print("  [dim]Private access requires AWS PrivateLink (more secure)[/]")
+        console.print(f"  [dim]{self.PRIVATE_ACCESS_DESC}[/]")
         console.print()
         response = self._prompt("Enable public access? (Y/n)", "Y")
         return response.lower() in ("y", "yes", "")
 
-    def _get_tags(self) -> dict[str, str]:
-        """Get custom tags from user."""
+    def _get_custom_metadata(self) -> dict[str, str]:
+        name = self.METADATA_NAME
         console.print()
-        console.print(f"  {self._step('Resource Tags')}")
+        console.print(f"  {self._step(f'Resource {name.title()}')}")
         console.print(
-            "  [dim]Add custom tags to all AWS resources (for cost tracking, etc.)[/]"
+            f"  [dim]Add custom {name} to all {self.CLOUD_NAME} resources (for cost tracking, etc.)[/]"
         )
         console.print(
             "  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]"
         )
         console.print()
 
-        tags_input = self._prompt("Enter tags (or press Enter to skip)", "")
-        if not tags_input:
+        input_val = self._prompt(f"Enter {name} (or press Enter to skip)", "")
+        if not input_val:
             return {}
 
-        tags = {}
-        for pair in tags_input.split(","):
+        metadata = {}
+        for pair in input_val.split(","):
             pair = pair.strip()
             if "=" in pair:
                 key, value = pair.split("=", 1)
-                tags[key.strip()] = value.strip()
+                metadata[key.strip()] = value.strip()
 
-        if tags:
-            console.print(f"  [dim]Tags to apply: {tags}[/]")
+        if metadata:
+            console.print(f"  [dim]{name.title()} to apply: {metadata}[/]")
 
-        return tags
-
-    def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
-        """Run preflight checks for AWS environment."""
-        console.print()
-        console.print(f"  {self._step('Preflight Checks')}")
-        console.print()
-
-        checker = PreflightChecker(region, azs, cidr)
-        if not checker.run_checks():
-            console.print()
-            console.print(
-                "  [red]Preflight checks failed. Fix the issues above before proceeding.[/]"
-            )
-            return False
-
-        return True
+        return metadata
 
     def _get_project_name(self) -> str:
-        """Get project name from user."""
         console.print()
         console.print(f"  {self._step('Project Name')}")
         console.print(
@@ -561,9 +412,6 @@ class SetupWizard:
         return self._prompt("Enter project name", "pinecone-byoc")
 
     def _setup_pulumi_backend(self) -> bool:
-        """Set up Pulumi backend (local or cloud)."""
-        import subprocess
-
         console.print()
         console.print(f"  {self._step('Pulumi Backend')}")
         console.print("  [dim]Where to store infrastructure state[/]")
@@ -582,10 +430,8 @@ class SetupWizard:
                 console.print("  [red]✗[/] Passphrase is required for local backend")
                 return False
 
-            # set env var for subsequent pulumi commands
             os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
 
-            # login to local backend
             result = subprocess.run(
                 ["pulumi", "login", "--local"],
                 capture_output=True,
@@ -614,213 +460,11 @@ class SetupWizard:
         return True
 
     def _check_pulumi_installed(self) -> bool:
-        """Check if pulumi CLI is installed."""
         import shutil
 
         return shutil.which("pulumi") is not None
 
-    def _generate_project(
-        self,
-        output_dir: str,
-        project_name: str,
-        api_key: str,
-        region: str,
-        azs: list[str],
-        cidr: str,
-        deletion_protection: bool,
-        public_access: bool,
-        tags: dict[str, str],
-    ):
-        """Generate complete Pulumi project."""
-        console.print()
-
-        console.print(f"  {self._step('Creating Project')}")
-        console.print()
-
-        if not self._check_pulumi_installed():
-            console.print("  [red]✗[/] Pulumi CLI not found")
-            console.print(
-                "  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/"
-            )
-            return False
-
-        import subprocess
-
-        # create Pulumi.yaml
-        pulumi_yaml = {
-            "name": project_name,
-            "runtime": {
-                "name": "python",
-                "options": {"virtualenv": ".venv", "toolchain": "uv"},
-            },
-            "description": "Pinecone BYOC deployment",
-        }
-
-        pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
-        with open(pulumi_yaml_path, "w") as f:
-            yaml.dump(pulumi_yaml, f, default_flow_style=False)
-        console.print("  [green]✓[/] Created Pulumi.yaml")
-
-        # create __main__.py
-        main_py = '''"""Pinecone BYOC deployment."""
-
-import pulumi
-from pulumi_pinecone_byoc import PineconeAWSCluster, PineconeAWSClusterArgs
-
-config = pulumi.Config()
-
-cluster = PineconeAWSCluster(
-    name="pinecone-aws-cluster",
-    args=PineconeAWSClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone-api-key"),
-        pinecone_version=config.require("pinecone-version"),
-        region=config.require("region"),
-        vpc_cidr=config.get("vpc-cidr"),
-        availability_zones=config.require_object("availability-zones"),
-        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
-        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
-        tags=config.get_object("tags"),
-    ),
-)
-
-update_kubeconfig_command = cluster.cluster_name.apply(
-    lambda name: f"aws eks update-kubeconfig --region {config.require('region')} --name {name}"
-)
-pulumi.export("environment", cluster.environment_name)
-pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
-'''
-
-        main_py_path = os.path.join(output_dir, "__main__.py")
-        with open(main_py_path, "w") as f:
-            f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
-
-        # create pyproject.toml for uv toolchain to install dependencies
-        pyproject_content = """[project]
-name = "pinecone-byoc"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["pulumi-pinecone-byoc"]
-"""
-        pyproject_path = os.path.join(output_dir, "pyproject.toml")
-        with open(pyproject_path, "w") as f:
-            f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
-
-        # install dependencies with uv
-        with Status(
-            "  [dim]Installing dependencies...[/]", console=console, spinner="dots"
-        ):
-            result = subprocess.run(
-                ["uv", "sync"],
-                cwd=output_dir,
-                capture_output=True,
-                text=True,
-            )
-
-        if result.returncode == 0:
-            # get installed version
-            version_result = subprocess.run(
-                ["uv", "pip", "show", "pulumi-pinecone-byoc"],
-                cwd=output_dir,
-                capture_output=True,
-                text=True,
-            )
-            pkg_version = "unknown"
-            for line in version_result.stdout.splitlines():
-                if line.startswith("Version:"):
-                    pkg_version = line.split(":", 1)[1].strip()
-                    break
-            console.print(
-                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
-            )
-        else:
-            console.print(
-                f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}"
-            )
-            console.print("  [dim]Run manually:[/] uv sync")
-            return False
-
-        # create stack config
-        stack_name = "prod"
-        deletion_protection_str = str(deletion_protection).lower()
-        public_access_str = str(public_access).lower()
-        config_content = f"""config:
-  {project_name}:region: {region}
-  {project_name}:pinecone-version: main-434e1c9
-  {project_name}:vpc-cidr: {cidr}
-  {project_name}:deletion-protection: {deletion_protection_str}
-  {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:availability-zones:
-"""
-        for az in azs:
-            config_content += f"    - {az}\n"
-
-        # add tags if provided (quote values to handle YAML special chars)
-        if tags:
-            config_content += f"  {project_name}:tags:\n"
-            for key, value in tags.items():
-                config_content += f'    {key}: "{value}"\n'
-
-        config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
-        with open(config_path, "w") as f:
-            f.write(config_content)
-        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
-
-        # init stack
-        with Status("  [dim]Initializing stack...[/]", console=console, spinner="dots"):
-            result = subprocess.run(
-                [
-                    "pulumi",
-                    "stack",
-                    "select",
-                    "--create",
-                    stack_name,
-                    "--cwd",
-                    output_dir,
-                ],
-                capture_output=True,
-                text=True,
-            )
-
-        if result.returncode == 0:
-            console.print(f"  [green]✓[/] Stack {stack_name} ready")
-        else:
-            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
-
-        # set api key as secret
-        with Status(
-            "  [dim]Storing API key securely...[/]", console=console, spinner="dots"
-        ):
-            result = subprocess.run(
-                [
-                    "pulumi",
-                    "config",
-                    "set",
-                    "--secret",
-                    "pinecone-api-key",
-                    api_key,
-                    "--stack",
-                    stack_name,
-                    "--cwd",
-                    output_dir,
-                ],
-                capture_output=True,
-                text=True,
-            )
-
-        if result.returncode != 0:
-            console.print(
-                f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}"
-            )
-            console.print(
-                "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
-            )
-            return False
-
-        console.print("  [green]✓[/] API key stored securely")
-
-        # print success
+    def _print_success(self, output_dir: str):
         console.print()
         console.print(
             Panel.fit(
@@ -836,13 +480,16 @@ dependencies = ["pulumi-pinecone-byoc"]
         console.print(f"    [bold {BLUE}]pulumi up[/]")
         console.print()
 
-        return True
+
+# ---------------------------------------------------------------------------
+# AWS Setup Wizard
+# ---------------------------------------------------------------------------
 
 
-class PreflightChecker:
-    """Runs preflight checks for AWS environment."""
-
+class AWSPreflightChecker:
     def __init__(self, region: str, azs: list[str], cidr: str):
+        import boto3
+
         self.region = region
         self.azs = azs
         self.cidr = cidr
@@ -853,7 +500,6 @@ class PreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        """Run all preflight checks."""
         checks = [
             ("VPC Quota", self._check_vpc_quota),
             ("Elastic IPs", self._check_eip_quota),
@@ -972,7 +618,7 @@ class PreflightChecker:
                     "NAT Gateways",
                     False,
                     f"Insufficient capacity in: {', '.join(insufficient_azs)}",
-                    "Request quota increase for 'NAT gateways per AZ'"
+                    "Request quota increase for 'NAT gateways per AZ'",
                 )
             else:
                 self._add_result(
@@ -1002,6 +648,8 @@ class PreflightChecker:
             self._add_result("Internet Gateways", False, "Failed to check", str(e))
 
     def _check_nlb_quota(self):
+        import boto3
+
         quota = self._get_quota("elasticloadbalancing", "L-53DA6B97") or 50
         try:
             elb = boto3.client("elbv2", region_name=self.region)
@@ -1134,10 +782,1076 @@ class PreflightChecker:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
 
 
-def run_setup(output_dir: str = ".") -> bool:
-    """Run the interactive setup wizard."""
-    wizard = SetupWizard()
-    return wizard.run(output_dir)
+class AWSSetupWizard(BaseSetupWizard):
+    HEADER_TITLE = "Pinecone BYOC Setup Wizard"
+    HEADER_SUBTITLE = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC."
+    )
+    DEFAULT_CIDR = "10.0.0.0/16"
+    DELETION_PROTECTION_DESC = (
+        "Protect RDS databases and S3 buckets from accidental deletion"
+    )
+    PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
+    METADATA_NAME = "tags"
+    CLOUD_NAME = "AWS"
+
+    def run(self, output_dir: str = ".") -> bool:
+        self._print_header()
+
+        api_key = self._get_api_key()
+        if not api_key:
+            return False
+
+        if not self._validate_api_key(api_key):
+            return False
+
+        if not self._validate_aws_creds():
+            return False
+
+        region = self._get_region()
+        azs = self._get_azs(region)
+        cidr = self._get_cidr()
+        deletion_protection = self._get_deletion_protection()
+        public_access = self._get_public_access()
+        tags = self._get_custom_metadata()
+
+        if not self._run_preflight_checks(region, azs, cidr):
+            return False
+
+        project_name = self._get_project_name()
+
+        if not self._setup_pulumi_backend():
+            return False
+
+        return self._generate_project(
+            output_dir,
+            project_name,
+            api_key,
+            region,
+            azs,
+            cidr,
+            deletion_protection,
+            public_access,
+            tags,
+        )
+
+    def _validate_aws_creds(self) -> bool:
+        console.print()
+        console.print(f"  {self._step('AWS Credentials')}")
+        console.print()
+
+        with Status(
+            "  [dim]Validating AWS credentials...[/]", console=console, spinner="dots"
+        ):
+            try:
+                import boto3
+
+                sts = boto3.client("sts")
+                identity = sts.get_caller_identity()
+                account_id = identity["Account"]
+            except Exception as e:
+                console.print(f"  [red]✗[/] AWS credentials invalid: {e}")
+                console.print()
+                console.print(
+                    "  [dim]Make sure you have valid AWS credentials configured.[/]"
+                )
+                console.print("  [dim]You can set them via:[/]")
+                console.print(
+                    "    [dim]· AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY[/]"
+                )
+                console.print("    [dim]· aws configure[/]")
+                console.print("    [dim]· AWS_PROFILE environment variable[/]")
+                return False
+
+        console.print(
+            f"  [green]✓[/] AWS credentials valid [dim](Account: {account_id})[/]"
+        )
+        return True
+
+    def _get_region(self) -> str:
+        console.print()
+        console.print(f"  {self._step('AWS Region')}")
+        console.print()
+        return self._prompt("Enter AWS region", "us-east-1")
+
+    def _fetch_azs(self, region: str) -> list[str]:
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_availability_zones(
+                Filters=[{"Name": "state", "Values": ["available"]}]
+            )
+            return sorted([az["ZoneName"] for az in response["AvailabilityZones"]])
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch AZs from AWS: {e}")
+            return [f"{region}a", f"{region}b", f"{region}c"]
+
+    def _get_azs(self, region: str) -> list[str]:
+        console.print()
+        console.print(f"  {self._step('Availability Zones')}")
+        console.print()
+
+        with Status(
+            "  [dim]Fetching availability zones...[/]", console=console, spinner="dots"
+        ):
+            available = self._fetch_azs(region)
+
+        console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
+        default_azs = available[:2]
+
+        azs_input = self._prompt("Enter AZs (comma-separated)", ",".join(default_azs))
+        azs = [az.strip() for az in azs_input.split(",")]
+        return azs
+
+    def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
+        console.print()
+        console.print(f"  {self._step('Preflight Checks')}")
+        console.print()
+
+        checker = AWSPreflightChecker(region, azs, cidr)
+        if not checker.run_checks():
+            console.print()
+            console.print(
+                "  [red]Preflight checks failed. Fix the issues above before proceeding.[/]"
+            )
+            return False
+
+        return True
+
+    def _generate_project(
+        self,
+        output_dir: str,
+        project_name: str,
+        api_key: str,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        deletion_protection: bool,
+        public_access: bool,
+        tags: dict[str, str],
+    ):
+        console.print()
+
+        console.print(f"  {self._step('Creating Project')}")
+        console.print()
+
+        if not self._check_pulumi_installed():
+            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print(
+                "  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/"
+            )
+            return False
+
+        pulumi_yaml = {
+            "name": project_name,
+            "runtime": {
+                "name": "python",
+                "options": {"virtualenv": ".venv", "toolchain": "uv"},
+            },
+            "description": "Pinecone BYOC deployment",
+        }
+
+        pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
+        with open(pulumi_yaml_path, "w") as f:
+            yaml.dump(pulumi_yaml, f, default_flow_style=False)
+        console.print("  [green]✓[/] Created Pulumi.yaml")
+
+        # create __main__.py
+        main_py = '''"""Pinecone BYOC deployment (AWS)."""
+
+import pulumi
+from pulumi_pinecone_byoc.aws import PineconeAWSCluster, PineconeAWSClusterArgs
+
+config = pulumi.Config()
+
+cluster = PineconeAWSCluster(
+    name="pinecone-aws-cluster",
+    args=PineconeAWSClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        region=config.require("region"),
+        vpc_cidr=config.get("vpc-cidr"),
+        availability_zones=config.require_object("availability-zones"),
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        tags=config.get_object("tags"),
+    ),
+)
+
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"aws eks update-kubeconfig --region {config.require('region')} --name {name}"
+)
+pulumi.export("environment", cluster.environment_name)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+'''
+
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
+
+        # create pyproject.toml for uv toolchain to install dependencies
+        pyproject_content = """[project]
+name = "pinecone-byoc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pulumi-pinecone-byoc[aws]"]
+"""
+        pyproject_path = os.path.join(output_dir, "pyproject.toml")
+        with open(pyproject_path, "w") as f:
+            f.write(pyproject_content)
+        console.print("  [green]✓[/] Created pyproject.toml")
+
+        # install dependencies with uv
+        with Status(
+            "  [dim]Installing dependencies...[/]", console=console, spinner="dots"
+        ):
+            result = subprocess.run(
+                ["uv", "sync"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            # get installed version
+            version_result = subprocess.run(
+                ["uv", "pip", "show", "pulumi-pinecone-byoc"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+            pkg_version = "unknown"
+            for line in version_result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    pkg_version = line.split(":", 1)[1].strip()
+                    break
+            console.print(
+                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+            )
+        else:
+            console.print(
+                f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}"
+            )
+            console.print("  [dim]Run manually:[/] uv sync")
+            return False
+
+        # create stack config
+        stack_name = "prod"
+        deletion_protection_str = str(deletion_protection).lower()
+        public_access_str = str(public_access).lower()
+        config_content = f"""config:
+  {project_name}:region: {region}
+  {project_name}:pinecone-version: main-a46d09c
+  {project_name}:vpc-cidr: {cidr}
+  {project_name}:deletion-protection: {deletion_protection_str}
+  {project_name}:public-access-enabled: {public_access_str}
+  {project_name}:availability-zones:
+"""
+        for az in azs:
+            config_content += f"    - {az}\n"
+
+        # add tags if provided (quote values to handle YAML special chars)
+        if tags:
+            config_content += f"  {project_name}:tags:\n"
+            for key, value in tags.items():
+                config_content += f'    {key}: "{value}"\n'
+
+        config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
+        with open(config_path, "w") as f:
+            f.write(config_content)
+        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+
+        # init stack
+        with Status("  [dim]Initializing stack...[/]", console=console, spinner="dots"):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "stack",
+                    "select",
+                    "--create",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+        else:
+            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+
+        # set api key as secret
+        with Status(
+            "  [dim]Storing API key securely...[/]", console=console, spinner="dots"
+        ):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "config",
+                    "set",
+                    "--secret",
+                    "pinecone-api-key",
+                    api_key,
+                    "--stack",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode != 0:
+            console.print(
+                f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}"
+            )
+            console.print(
+                "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
+            )
+            return False
+
+        console.print("  [green]✓[/] API key stored securely")
+
+        self._print_success(output_dir)
+        return True
+
+
+# ---------------------------------------------------------------------------
+# GCP Setup Wizard
+# ---------------------------------------------------------------------------
+
+
+class GCPPreflightChecker:
+    def __init__(self, project_id: str, region: str, zones: list[str], cidr: str):
+        self.project_id = project_id
+        self.region = region
+        self.zones = zones
+        self.cidr = cidr
+        self.results: list[PreflightResult] = []
+
+    def run_checks(self) -> bool:
+        checks = [
+            ("GCP APIs", self._check_apis_enabled),
+            ("VPC Networks", self._check_vpc_quota),
+            ("External IPs", self._check_external_ip_quota),
+            ("GKE Clusters", self._check_gke_quota),
+            ("Machine Types", self._check_machine_types),
+            ("Availability Zones", self._check_zones),
+            ("VPC CIDR", self._check_cidr_conflicts),
+        ]
+
+        for name, check_fn in checks:
+            with Status(
+                f"  [dim]Checking {name}...[/]", console=console, spinner="dots"
+            ):
+                check_fn()
+
+            # print the result that was just added
+            r = self.results[-1]
+            status = "✓" if r.passed else "✗"
+            color = "green" if r.passed else "red"
+            console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
+            if r.details and not r.passed:
+                console.print(f"    [dim]{r.details}[/]")
+
+        failed = [r for r in self.results if not r.passed]
+        return len(failed) == 0
+
+    def _add_result(
+        self, name: str, passed: bool, message: str, details: Optional[str] = None
+    ):
+        result = PreflightResult(name, passed, message, details)
+        self.results.append(result)
+
+    def _gcloud_json(self, args: list[str]):
+        import json
+
+        result = subprocess.run(
+            ["gcloud"] + args + [f"--project={self.project_id}", "--format=json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip().split("\n")[0])
+
+        return json.loads(result.stdout)
+
+    def _check_apis_enabled(self):
+        required_apis = [
+            "alloydb.googleapis.com",
+            "autoscaling.googleapis.com",
+            "cloudapis.googleapis.com",
+            "cloudkms.googleapis.com",
+            "cloudresourcemanager.googleapis.com",
+            "compute.googleapis.com",
+            "container.googleapis.com",
+            "dns.googleapis.com",
+            "domains.googleapis.com",
+            "iam.googleapis.com",
+            "iamcredentials.googleapis.com",
+            "networkmanagement.googleapis.com",
+            "secretmanager.googleapis.com",
+            "servicedirectory.googleapis.com",
+            "servicemanagement.googleapis.com",
+            "servicenetworking.googleapis.com",
+            "siteverification.googleapis.com",
+            "storage.googleapis.com",
+        ]
+
+        try:
+            result = subprocess.run(
+                [
+                    "gcloud",
+                    "services",
+                    "list",
+                    "--enabled",
+                    "--format=value(config.name)",
+                    f"--project={self.project_id}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                self._add_result(
+                    "GCP APIs",
+                    False,
+                    f"Failed: {result.stderr.strip().split(chr(10))[0]}",
+                )
+                return
+
+            enabled_apis = result.stdout.strip().split("\n")
+            missing = [api for api in required_apis if api not in enabled_apis]
+
+            if missing:
+                short_names = [api.replace(".googleapis.com", "") for api in missing]
+                self._add_result(
+                    "GCP APIs",
+                    False,
+                    f"{len(missing)} missing: {', '.join(short_names)}",
+                    f"Run: gcloud services enable {' '.join(missing)} --project={self.project_id}",
+                )
+            else:
+                self._add_result(
+                    "GCP APIs", True, f"All {len(required_apis)} required APIs enabled"
+                )
+        except Exception as e:
+            self._add_result("GCP APIs", False, f"Failed to check: {e}")
+
+    def _check_vpc_quota(self):
+        try:
+            networks = self._gcloud_json(["compute", "networks", "list"])
+            current = len(networks) if isinstance(networks, list) else 0
+            quota = 15
+            available = quota - current
+            self._add_result(
+                "VPC Networks",
+                available >= 1,
+                f"{available} available [dim](using {current}/{quota})[/]",
+                "Request quota increase for 'VPC networks'" if available < 1 else None,
+            )
+        except Exception as e:
+            self._add_result("VPC Networks", False, f"Failed to check: {e}")
+
+    def _check_external_ip_quota(self):
+        needed = 1  # one for external ingress
+        try:
+            addresses = self._gcloud_json(
+                ["compute", "addresses", "list", f"--regions={self.region}"]
+            )
+            current = len(addresses) if isinstance(addresses, list) else 0
+            quota = 8  # default regional static IP quota
+            available = quota - current
+            self._add_result(
+                "External IPs",
+                available >= needed,
+                f"{available} available, need {needed} [dim](using {current}/{quota})[/]",
+                "Request quota increase for 'Static IP addresses'"
+                if available < needed
+                else None,
+            )
+        except Exception as e:
+            self._add_result("External IPs", False, f"Failed to check: {e}")
+
+    def _check_gke_quota(self):
+        try:
+            data = self._gcloud_json(["container", "clusters", "list"])
+            current = len(data) if isinstance(data, list) else 0
+            quota = 50
+            available = quota - current
+            self._add_result(
+                "GKE Clusters",
+                available >= 1,
+                f"{available} available [dim](using {current}/{quota})[/]",
+            )
+        except Exception as e:
+            self._add_result("GKE Clusters", False, f"Failed to check: {e}")
+
+    def _check_machine_types(self):
+        machine_types = ["n2-standard-4", "n2-standard-2", "n2-highmem-2"]
+        unavailable = []
+
+        try:
+            for zone in self.zones:
+                result = subprocess.run(
+                    [
+                        "gcloud",
+                        "compute",
+                        "machine-types",
+                        "list",
+                        f"--project={self.project_id}",
+                        f"--zones={zone}",
+                        "--format=value(name)",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if result.returncode != 0:
+                    self._add_result(
+                        "Machine Types",
+                        False,
+                        f"Failed: {result.stderr.strip().split(chr(10))[0]}",
+                    )
+                    return
+
+                available = result.stdout.strip().split("\n")
+                for mt in machine_types:
+                    if mt not in available:
+                        unavailable.append(f"{mt} in {zone}")
+
+            self._add_result(
+                "Machine Types",
+                len(unavailable) == 0,
+                "All required types available"
+                if not unavailable
+                else f"Unavailable: {', '.join(unavailable)}",
+                "Choose different zones or machine types" if unavailable else None,
+            )
+        except Exception as e:
+            self._add_result("Machine Types", False, f"Failed to check: {e}")
+
+    def _check_zones(self):
+        try:
+            result = subprocess.run(
+                [
+                    "gcloud",
+                    "compute",
+                    "zones",
+                    "list",
+                    "--format=value(name)",
+                    f"--project={self.project_id}",
+                    f"--filter=region:{self.region}",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                self._add_result(
+                    "Availability Zones",
+                    False,
+                    f"Failed: {result.stderr.strip().split(chr(10))[0]}",
+                )
+                return
+
+            available_zones = [z for z in result.stdout.strip().split("\n") if z]
+            invalid = [zone for zone in self.zones if zone not in available_zones]
+
+            if invalid:
+                self._add_result(
+                    "Availability Zones",
+                    False,
+                    f"Invalid zones: {', '.join(invalid)}",
+                    f"Valid zones for {self.region}: {', '.join(available_zones)}",
+                )
+            else:
+                self._add_result(
+                    "Availability Zones", True, "All requested zones available"
+                )
+        except Exception as e:
+            self._add_result("Availability Zones", False, f"Failed to check: {e}")
+
+    def _check_cidr_conflicts(self):
+        import ipaddress
+
+        try:
+            target_net = ipaddress.ip_network(self.cidr)
+        except ValueError:
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"Invalid CIDR: {self.cidr}",
+                "Enter a valid CIDR block (e.g., 10.112.0.0/12)",
+            )
+            return
+
+        try:
+            networks = self._gcloud_json(["compute", "networks", "list"])
+            if not isinstance(networks, list):
+                networks = []
+
+            conflicts = []
+            # check subnets directly in the region
+            result = subprocess.run(
+                [
+                    "gcloud",
+                    "compute",
+                    "networks",
+                    "subnets",
+                    "list",
+                    f"--project={self.project_id}",
+                    f"--regions={self.region}",
+                    "--format=value(ipCidrRange,network)",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                for line in result.stdout.strip().split("\n"):
+                    if not line.strip():
+                        continue
+                    parts = line.split()
+                    if parts:
+                        try:
+                            existing_net = ipaddress.ip_network(parts[0])
+                            if target_net.overlaps(existing_net):
+                                conflicts.append(parts[0])
+                        except ValueError:
+                            continue
+
+            if conflicts:
+                self._add_result(
+                    "VPC CIDR",
+                    False,
+                    f"{self.cidr} conflicts with existing subnets: {', '.join(conflicts)}",
+                    "Choose a non-overlapping CIDR block",
+                )
+            else:
+                self._add_result("VPC CIDR", True, f"{self.cidr} has no conflicts")
+        except Exception as e:
+            self._add_result("VPC CIDR", False, f"Failed to check: {e}")
+
+
+class GCPSetupWizard(BaseSetupWizard):
+    HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
+    HEADER_SUBTITLE = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
+    )
+    DEFAULT_CIDR = "10.112.0.0/12"
+    DELETION_PROTECTION_DESC = (
+        "Protect AlloyDB databases and GCS buckets from accidental deletion"
+    )
+    PRIVATE_ACCESS_DESC = (
+        "Private access requires Private Service Connect (more secure)"
+    )
+    METADATA_NAME = "labels"
+    CLOUD_NAME = "GCP"
+
+    def run(self, output_dir: str = ".") -> bool:
+        self._print_header()
+
+        api_key = self._get_api_key()
+        if not api_key:
+            return False
+
+        if not self._validate_api_key(api_key):
+            return False
+
+        project_id = self._validate_gcp_creds()
+        if not project_id:
+            return False
+
+        project_id = self._get_project_id(project_id)
+        region = self._get_region()
+        zones = self._get_zones(region)
+        cidr = self._get_cidr()
+        deletion_protection = self._get_deletion_protection()
+        public_access = self._get_public_access()
+        labels = self._get_custom_metadata()
+
+        if not self._run_preflight_checks(project_id, region, zones, cidr):
+            return False
+
+        project_name = self._get_project_name()
+
+        if not self._setup_pulumi_backend():
+            return False
+
+        return self._generate_project(
+            output_dir,
+            project_name,
+            api_key,
+            project_id,
+            region,
+            zones,
+            cidr,
+            deletion_protection,
+            public_access,
+            labels,
+        )
+
+    def _validate_gcp_creds(self) -> Optional[str]:
+        console.print()
+        console.print(f"  {self._step('GCP Credentials')}")
+        console.print()
+
+        with Status(
+            "  [dim]Validating GCP credentials...[/]", console=console, spinner="dots"
+        ):
+            try:
+                try:
+                    from google.auth import default
+
+                    credentials, project_id = default()
+                    if credentials and project_id:
+                        console.print(
+                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                        )
+                        return project_id
+                except ImportError:
+                    pass
+
+                result = subprocess.run(
+                    ["gcloud", "config", "get-value", "project"],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    project_id = result.stdout.strip()
+                    console.print(
+                        f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                    )
+                    return project_id
+                else:
+                    raise Exception("Could not determine GCP project")
+
+            except Exception as e:
+                console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
+                console.print()
+                console.print(
+                    "  [dim]Make sure you have valid GCP credentials configured.[/]"
+                )
+                console.print("  [dim]You can set them via:[/]")
+                console.print("    [dim]· gcloud auth application-default login[/]")
+                console.print(
+                    "    [dim]· GOOGLE_APPLICATION_CREDENTIALS environment variable[/]"
+                )
+                console.print("    [dim]· gcloud config set project PROJECT_ID[/]")
+                return None
+
+    def _get_project_id(self, detected_project: str) -> str:
+        console.print()
+        console.print(f"  {self._step('GCP Project ID')}")
+        console.print()
+        return self._prompt("Enter GCP project ID", detected_project)
+
+    def _get_region(self) -> str:
+        console.print()
+        console.print(f"  {self._step('GCP Region')}")
+        console.print()
+        return self._prompt("Enter GCP region", "us-central1")
+
+    def _get_zones(self, region: str) -> list[str]:
+        console.print()
+        console.print(f"  {self._step('GCP Zones')}")
+        console.print()
+
+        default_zones = [f"{region}-a", f"{region}-b"]
+        console.print(
+            f"  [dim]Default zones for {region}:[/] {', '.join(default_zones)}"
+        )
+
+        zones_input = self._prompt(
+            "Enter zones (comma-separated)", ",".join(default_zones)
+        )
+        zones = [zone.strip() for zone in zones_input.split(",")]
+        return zones
+
+    def _run_preflight_checks(
+        self, project_id: str, region: str, zones: list[str], cidr: str
+    ) -> bool:
+        console.print()
+        console.print(f"  {self._step('Preflight Checks')}")
+        console.print()
+
+        checker = GCPPreflightChecker(project_id, region, zones, cidr)
+        if not checker.run_checks():
+            console.print()
+            console.print(
+                "  [red]Preflight checks failed. Fix the issues above before proceeding.[/]"
+            )
+            return False
+
+        return True
+
+    def _generate_project(
+        self,
+        output_dir: str,
+        project_name: str,
+        api_key: str,
+        project_id: str,
+        region: str,
+        zones: list[str],
+        cidr: str,
+        deletion_protection: bool,
+        public_access: bool,
+        labels: dict[str, str],
+    ):
+        console.print()
+
+        if not self._check_pulumi_installed():
+            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print(
+                "  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/"
+            )
+            return False
+
+        # create Pulumi.yaml
+        pulumi_yaml = {
+            "name": project_name,
+            "runtime": {
+                "name": "python",
+                "options": {"virtualenv": ".venv", "toolchain": "uv"},
+            },
+            "description": "Pinecone BYOC deployment on GCP",
+        }
+
+        pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
+        with open(pulumi_yaml_path, "w") as f:
+            yaml.dump(pulumi_yaml, f, default_flow_style=False)
+        console.print("  [green]✓[/] Created Pulumi.yaml")
+
+        # create __main__.py
+        main_py = '''"""Pinecone BYOC deployment on GCP."""
+
+import pulumi
+from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
+
+config = pulumi.Config()
+gcp_config = pulumi.Config("gcp")
+
+cluster = PineconeGCPCluster(
+    "pinecone-byoc",
+    PineconeGCPClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        project=gcp_config.require("project"),
+        region=config.require("region"),
+        availability_zones=config.require_object("availability-zones"),
+        vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/12",
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        labels=config.get_object("labels") or {},
+    ),
+)
+
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"gcloud container clusters get-credentials {name} --region {config.require('region')} --project {gcp_config.require('project')}"
+)
+pulumi.export("environment", cluster.environment.env_name)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+'''
+
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
+
+        # create pyproject.toml for uv toolchain to install dependencies
+        pyproject_content = """[project]
+name = "pinecone-byoc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pulumi-pinecone-byoc[gcp]"]
+"""
+        pyproject_path = os.path.join(output_dir, "pyproject.toml")
+        with open(pyproject_path, "w") as f:
+            f.write(pyproject_content)
+        console.print("  [green]✓[/] Created pyproject.toml")
+
+        # install dependencies with uv
+        with Status(
+            "  [dim]Installing dependencies...[/]", console=console, spinner="dots"
+        ):
+            result = subprocess.run(
+                ["uv", "sync"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            # get installed version
+            version_result = subprocess.run(
+                ["uv", "pip", "show", "pulumi-pinecone-byoc"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+            pkg_version = "unknown"
+            for line in version_result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    pkg_version = line.split(":", 1)[1].strip()
+                    break
+            console.print(
+                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+            )
+        else:
+            console.print(
+                f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}"
+            )
+            console.print("  [dim]Run manually:[/] uv sync")
+            return False
+
+        # create stack config
+        stack_name = "prod"
+        deletion_protection_str = str(deletion_protection).lower()
+        public_access_str = str(public_access).lower()
+        config_content = f"""config:
+  gcp:project: {project_id}
+  {project_name}:region: {region}
+  {project_name}:pinecone-version: main-a46d09c
+  {project_name}:vpc-cidr: {cidr}
+  {project_name}:deletion-protection: {deletion_protection_str}
+  {project_name}:public-access-enabled: {public_access_str}
+  {project_name}:availability-zones:
+"""
+        for zone in zones:
+            config_content += f"    - {zone}\n"
+
+        # add labels if provided (quote values to handle YAML special chars)
+        if labels:
+            config_content += f"  {project_name}:labels:\n"
+            for key, value in labels.items():
+                config_content += f'    {key}: "{value}"\n'
+
+        config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
+        with open(config_path, "w") as f:
+            f.write(config_content)
+        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+
+        # init stack
+        with Status("  [dim]Initializing stack...[/]", console=console, spinner="dots"):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "stack",
+                    "select",
+                    "--create",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+        else:
+            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+
+        # set api key as secret
+        with Status(
+            "  [dim]Storing API key securely...[/]", console=console, spinner="dots"
+        ):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "config",
+                    "set",
+                    "--secret",
+                    "pinecone-api-key",
+                    api_key,
+                    "--stack",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode != 0:
+            console.print(
+                f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}"
+            )
+            console.print(
+                "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
+            )
+            return False
+
+        console.print("  [green]✓[/] API key stored securely")
+
+        self._print_success(output_dir)
+        return True
+
+
+def select_cloud() -> str:
+    console.print()
+    console.print(
+        Panel.fit(
+            f"[bold {BLUE}]Pinecone BYOC Setup Wizard[/]",
+            border_style=BLUE,
+            padding=(0, 2),
+        )
+    )
+    console.print()
+    console.print(
+        "  This wizard will set up everything you need to deploy Pinecone BYOC.",
+        style="dim",
+    )
+    console.print()
+
+    console.print(f"  [bold {BLUE}]Select Cloud Provider[/]")
+    console.print()
+    console.print("  [1] AWS")
+    console.print("  [2] GCP")
+    console.print()
+
+    cloud = _read_input_with_placeholder("Enter choice (1 or 2)", "1")
+
+    if cloud == "1":
+        return "aws"
+    elif cloud == "2":
+        return "gcp"
+    else:
+        console.print(f"  [red]✗[/] Invalid choice: {cloud}")
+        console.print("  [dim]Please choose 1 (AWS) or 2 (GCP)[/]")
+        sys.exit(1)
+
+
+def run_setup(output_dir: str = ".", cloud: Optional[str] = None) -> bool:
+    try:
+        if not cloud:
+            cloud = select_cloud()
+
+        if cloud == "aws":
+            wizard = AWSSetupWizard()
+            return wizard.run(output_dir)
+        elif cloud == "gcp":
+            wizard = GCPSetupWizard()
+            return wizard.run(output_dir)
+        else:
+            console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
+            console.print("  [dim]Valid options: aws, gcp[/]")
+            return False
+
+    except KeyboardInterrupt:
+        console.print()
+        console.print("  [yellow]Setup cancelled by user[/]")
+        return False
+    except Exception as e:
+        console.print()
+        console.print(f"  [red]✗[/] Setup failed: {e}")
+        return False
 
 
 if __name__ == "__main__":
@@ -1147,7 +1861,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--output-dir", default=".", help="Directory to write project files"
     )
+    parser.add_argument(
+        "--cloud",
+        choices=["aws", "gcp"],
+        help="Cloud provider (aws or gcp). If not specified, you will be prompted.",
+    )
     args = parser.parse_args()
 
-    success = run_setup(args.output_dir)
+    success = run_setup(args.output_dir, args.cloud)
     sys.exit(0 if success else 1)

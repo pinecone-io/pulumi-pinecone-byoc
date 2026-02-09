@@ -5,17 +5,27 @@ description = "Pulumi components for Pinecone BYOC clusters"
 readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.12"
-keywords = ["pulumi", "pinecone", "byoc", "kubernetes", "aws", "infrastructure"]
+keywords = ["pulumi", "pinecone", "byoc", "kubernetes", "aws", "gcp", "infrastructure"]
 dependencies = [
     "pulumi>=3.216.0,<4.0.0",
-    "pulumi-aws>=7.14.0,<8.0.0",
     "pulumi-kubernetes>=4.25.0,<5.0.0",
-    "pulumi-eks>=4.2.0,<5.0.0",
     "pulumi-random>=4.19.0,<5.0.0",
     "pydantic>=2.12.0,<3.0.0",
     "requests>=2.32.0,<3.0.0",
+    "kubernetes>=32.0.0,<34.0.0",
+]
+
+[project.optional-dependencies]
+aws = [
+    "pulumi-aws>=7.14.0,<8.0.0",
+    "pulumi-eks>=4.2.0,<5.0.0",
     "boto3>=1.42.0,<2.0.0",
-    "kubernetes>=32.0.0,<33.0.0",
+]
+
+gcp = [
+    "pulumi-gcp>=8.10.0,<9.0.0",
+    "google-auth>=2.35.0,<3.0.0",
+    "google-cloud-compute>=1.20.0,<2.0.0",
 ]
 
 [project.urls]
@@ -49,3 +59,6 @@ exclude = [
     "**/__pycache__",
     "**/*.pyc",
 ]
+
+[tool.ty.environment]
+extra-paths = ["typings"]

@@ -1,6 +1,4 @@
-"""
-PineconeAWSCluster - main component for BYOC deployments.
-"""
+"""PineconeAWSCluster - main component for AWS BYOC deployments."""
 
 from typing import Optional
 from dataclasses import dataclass, field
@@ -16,13 +14,15 @@ from .dns import DNS
 from .nlb import NLB
 from .rds import RDS, RDSInstance
 from .k8s_addons import K8sAddons
-from .k8s_secrets import K8sSecrets
-from .k8s_configmaps import K8sConfigMaps
-from .ecr_refresher import EcrCredentialRefresher
+from ..common.k8s_secrets import K8sSecrets
+from ..common.k8s_configmaps import K8sConfigMaps
+from ..common.cred_refresher import RegistryCredentialRefresher
 from .pulumi_operator import PulumiOperator
-from .pinetools import Pinetools
-from .uninstaller import ClusterUninstaller
-from .providers import (
+from ..common.pinetools import Pinetools
+from ..common.uninstaller import ClusterUninstaller
+from ..common.registry import AWS_REGISTRY
+from ..common.naming import cell_name as _cell_name
+from ..common.providers import (
     Environment,
     EnvironmentArgs,
     ServiceAccount,
@@ -54,52 +54,37 @@ class NodePool:
 class PineconeAWSClusterArgs:
     # required
     pinecone_api_key: pulumi.Input[str]
-    pinecone_version: pulumi.Input[str]
+    pinecone_version: str
 
     # aws specific
-    region: pulumi.Input[str] = "us-east-1"
-    availability_zones: pulumi.Input[list[str]] = field(
+    region: str = "us-east-1"
+    availability_zones: list[str] = field(
         default_factory=lambda: ["us-east-1a", "us-east-1b"]
     )
 
     # networking
-    vpc_cidr: pulumi.Input[str] = "10.0.0.0/16"
+    vpc_cidr: str = "10.0.0.0/16"
 
     # kubernetes
-    kubernetes_version: pulumi.Input[str] = "1.33"
+    kubernetes_version: str = "1.33"
     node_pools: Optional[list[NodePool]] = None
 
     # dns
-    parent_dns_zone_name: pulumi.Input[str] = "byoc.pinecone.io"
+    parent_dns_zone_name: str = "byoc.pinecone.io"
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
     deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
 
     # pinecone specific
-    api_url: pulumi.Input[str] = "https://api.pinecone.io"
-    global_env: pulumi.Input[str] = "prod"
-    auth0_domain: pulumi.Input[str] = "https://login.pinecone.io"
-    gcp_project: Optional[pulumi.Input[str]] = None  # defaults based on global_env
+    api_url: str = "https://api.pinecone.io"
+    global_env: str = "prod"
+    auth0_domain: str = "https://login.pinecone.io"
+    # gcp_project is needed by some helmfiles even for AWS clusters (cross-cloud monitoring/metrics)
+    gcp_project: str = "production-pinecone"
 
     # tags
     tags: Optional[dict[str, str]] = None
-
-
-# max length of org name for cell name, to avoid exceeding AWS resource name limits
-ORG_NAME_MAX_LENGTH = 16
-
-
-# cell_name derived from environment org_name and env_name - e.g. pinecone-byoc-0123
-def _cell_name(environment: Environment) -> pulumi.Output[str]:
-    def sanitize(name: str) -> str:
-        import re
-
-        return re.sub(r"[^a-z0-9]", "", name.lower())[:ORG_NAME_MAX_LENGTH]
-
-    return pulumi.Output.all(environment.org_name, environment.env_name).apply(
-        lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}"
-    )
 
 
 class PineconeAWSCluster(pulumi.ComponentResource):
@@ -196,8 +181,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
-        # storage integration role - allows data-importer to access customer S3 data
-        # trust policy allows any role in the account (ec2 node role can assume it)
+        # storage integration role for data-importer S3 access
         caller_identity = aws.get_caller_identity()
         assume_role_policy = pulumi.Output.from_input(caller_identity.account_id).apply(
             lambda account_id: json.dumps(
@@ -274,7 +258,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
-        # AMP access for Prometheus remote write
         self._amp_access = AmpAccess(
             f"{config.resource_prefix}-amp-access",
             AmpAccessArgs(
@@ -287,7 +270,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
         )
 
-        # Allow the AMP ingest role to assume the Pinecone role
         aws.iam.RolePolicy(
             f"{config.resource_prefix}-amp-allow-assume-pinecone-role",
             role=self._k8s_addons.amp_ingest_role.id,
@@ -308,7 +290,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._amp_access]),
         )
 
-        # NLB for private endpoint access (creates private ALB + NLB)
         self._nlb = NLB(
             f"{config.resource_prefix}-nlb",
             config,
@@ -337,9 +318,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
         )
 
-        # pulumi-k8s-operator with s3 backend (no pulumi cloud token needed)
-        # create before K8sConfigMaps so we can include backend_url and secrets_provider
-        # note: the ServiceAccount is created by the Helm chart via helmfile config
         self._pulumi_operator = PulumiOperator(
             f"{config.resource_prefix}-pulumi-operator",
             config,
@@ -349,7 +327,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
 
-        # allow ec2 nodes to use pulumi kms key (for stack crds using node credentials)
         aws.iam.RolePolicy(
             f"{config.resource_prefix}-ec2-allow-kms",
             role=self._eks.node_role_name,
@@ -375,13 +352,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # gcp_project is needed by some helmfiles even for AWS clusters
-        # default based on global_env if not explicitly set
-        def get_gcp_project(env: str) -> str:
-            if args.gcp_project:
-                return args.gcp_project
-            return "production-pinecone" if env == "prod" else "development-pinecone"
-
         pulumi_outputs = {
             "cell_name": self._cell_name,
             "cloud": "aws",
@@ -395,20 +365,16 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_k8s_version": args.kubernetes_version,
             "aws_ec2_iam_role_arn": self._eks.node_role_arn,
             "aws_subnet_ids": self._vpc.private_subnet_ids,
-            "image_registry": "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4",
-            "gcp_project": pulumi.Output.from_input(args.global_env).apply(
-                get_gcp_project
-            ),
+            "image_registry": AWS_REGISTRY.base_url,
+            "gcp_project": args.gcp_project,
             "sli_checkers_project_id": self._api_key.project_id,
             "aws_storage_integration_role_arn": self._storage_integration_role.arn,
             "customer_tags": args.tags or {},
             "public_access_enabled": args.public_access_enabled,
             "external_dns_role_arn": self._k8s_addons.external_dns_role.arn,
-            # pulumi operator s3 backend config for Stack CRDs
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
             "pulumi_operator_role_arn": self._pulumi_operator.operator_role_arn,
-            # AMP remote write config
             "aws_amp_region": self._amp_access.amp_region,
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
@@ -431,32 +397,27 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
         )
 
-        # ecr credential refresher - distributes regcred to all pc-* namespaces
-        # uses cpgw-credentials secret created by K8sSecrets
-        self._ecr_refresher = EcrCredentialRefresher(
+        self._ecr_refresher = RegistryCredentialRefresher(
             f"{config.resource_prefix}-ecr-refresher",
             k8s_provider=self._eks.provider,
             cpgw_url=args.api_url,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._k8s_secrets]),
         )
 
-        # pinetools for cluster management
-        # depends on k8s_configmaps because pinetools needs the config configmap
         self._pinetools = Pinetools(
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
             pinecone_version=args.pinecone_version,
+            pinetools_image=AWS_REGISTRY.pinetools_image,
             opts=pulumi.ResourceOptions(
                 parent=self, depends_on=[self._eks, self._k8s_configmaps]
             ),
         )
 
-        # cluster uninstaller - runs `pinetools cluster uninstall --force` on destroy
-        # MUST depend on all K8s resources so it's destroyed FIRST
-        # this ensures cleanup runs before any K8s resources are deleted
         self._uninstaller = ClusterUninstaller(
             f"{config.resource_prefix}-uninstaller",
             kubeconfig=self._eks.kubeconfig.apply(json.dumps),
+            pinetools_image=self._pinetools.pinetools_image,
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
@@ -509,7 +470,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeAWSClusterArgs):
-        from config import Config, NodePoolConfig, NodePoolTaint, DatabaseConfig
+        # lazy import to avoid circular dependency: config imports are deferred
+        from config.aws import AWSConfig, DatabaseConfig
+        from config.base import NodePoolConfig, NodePoolTaint
 
         node_pools = []
         if args.node_pools:
@@ -541,9 +504,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 ),
             ]
 
-        return Config(
+        return AWSConfig(
             region=args.region,
-            environment="prod",
             global_env=args.global_env,
             cloud="aws",
             availability_zones=args.availability_zones,
@@ -568,7 +530,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._vpc.public_subnet_ids
 
     @property
-    def cluster_name(self) -> pulumi.Output[str]:
+    def name(self) -> pulumi.Output[str]:
         return self._eks.cluster_name
 
     @property
@@ -636,12 +598,12 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._dns.name_servers
 
     @property
-    def nlb_dns_name(self) -> Optional[pulumi.Output[str]]:
-        return self._nlb.nlb_dns_name if self._nlb else None
+    def nlb_dns_name(self) -> pulumi.Output[str]:
+        return self._nlb.nlb_dns_name
 
     @property
-    def nlb_target_group_arn(self) -> Optional[pulumi.Output[str]]:
-        return self._nlb.target_group_arn if self._nlb else None
+    def nlb_target_group_arn(self) -> pulumi.Output[str]:
+        return self._nlb.target_group_arn
 
     @property
     def environment(self) -> Environment:

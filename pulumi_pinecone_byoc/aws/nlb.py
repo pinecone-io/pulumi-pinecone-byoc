@@ -12,7 +12,7 @@ import pulumi
 import pulumi_aws as aws
 import pulumi_kubernetes as k8s
 
-from config import Config
+from config.aws import AWSConfig
 from .vpc import VPC
 from .dns import DNS
 
@@ -36,7 +36,7 @@ class NLB(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         vpc: VPC,
         dns: DNS,
         k8s_provider: pulumi.ProviderResource,
@@ -103,9 +103,13 @@ class NLB(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # build annotations - let AWS LB Controller manage security groups automatically
-        # (allows controller to create rules for ALB -> pod traffic)
-        def build_http2_annotations(cert_arn: str, subdomain: str) -> dict:
+        tls_secret_name = pulumi.Output.from_input(dns.subdomain).apply(
+            lambda s: f"{s.split('.')[0]}-tls"
+        )
+
+        tags_str = ",".join(f"{k}={v}" for k, v in config.tags().items())
+
+        def _base_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
                 "kubernetes.io/ingress.class": "alb",
                 "cert-manager.io/issuer": "letsencrypt-prod",
@@ -115,15 +119,20 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/target-type": "ip",
                 "alb.ingress.kubernetes.io/healthcheck-path": "/",
                 "alb.ingress.kubernetes.io/healthcheck-protocol": "HTTPS",
-                "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP2",
                 "alb.ingress.kubernetes.io/backend-protocol": "HTTPS",
                 "alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS": 443}]',
-                "alb.ingress.kubernetes.io/conditions.gateway-proxy": '[{"field":"http-header","httpHeaderConfig":{"httpHeaderName": "Content-Type", "values":["application/grpc"]}}]',
                 "alb.ingress.kubernetes.io/certificate-arn": cert_arn,
-                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{subdomain}.pinecone.io",
                 "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
+                "alb.ingress.kubernetes.io/tags": tags_str,
+            }
+
+        def build_http2_annotations(cert_arn: str, subdomain: str) -> dict:
+            return {
+                **_base_annotations(cert_arn, subdomain),
+                "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP2",
+                "alb.ingress.kubernetes.io/conditions.gateway-proxy": '[{"field":"http-header","httpHeaderConfig":{"httpHeaderName": "Content-Type", "values":["application/grpc"]}}]',
+                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{subdomain}.pinecone.io",
                 "alb.ingress.kubernetes.io/group.order": "1",
-                "alb.ingress.kubernetes.io/tags": ",".join([f"{k}={v}" for k, v in config.tags().items()]),
             }
 
         http2_annotations = pulumi.Output.all(
@@ -163,7 +172,7 @@ class NLB(pulumi.ComponentResource):
                 tls=[
                     k8s.networking.v1.IngressTLSArgs(
                         hosts=dns.private_dns_domains,
-                        secret_name=pulumi.Output.from_input(dns.subdomain).apply(lambda s: f"{s.split('.')[0]}-tls"),
+                        secret_name=tls_secret_name,
                     ),
                 ],
             ),
@@ -176,21 +185,9 @@ class NLB(pulumi.ComponentResource):
 
         def build_http1_annotations(cert_arn: str, subdomain: str) -> dict:
             return {
-                "kubernetes.io/ingress.class": "alb",
-                "cert-manager.io/issuer": "letsencrypt-prod",
-                "alb.ingress.kubernetes.io/group.name": "private-pinecone",
-                "alb.ingress.kubernetes.io/load-balancer-name": _alb_name(subdomain),
-                "alb.ingress.kubernetes.io/scheme": "internal",
-                "alb.ingress.kubernetes.io/target-type": "ip",
-                "alb.ingress.kubernetes.io/healthcheck-path": "/",
-                "alb.ingress.kubernetes.io/healthcheck-protocol": "HTTPS",
+                **_base_annotations(cert_arn, subdomain),
                 "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP1",
-                "alb.ingress.kubernetes.io/backend-protocol": "HTTPS",
-                "alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS": 443}]',
-                "alb.ingress.kubernetes.io/certificate-arn": cert_arn,
                 "alb.ingress.kubernetes.io/group.order": "2",
-                "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
-                "alb.ingress.kubernetes.io/tags": ",".join([f"{k}={v}" for k, v in config.tags().items()]),
             }
 
         http1_annotations = pulumi.Output.all(
@@ -248,7 +245,7 @@ class NLB(pulumi.ComponentResource):
                 tls=[
                     k8s.networking.v1.IngressTLSArgs(
                         hosts=dns.private_dns_domains,
-                        secret_name=pulumi.Output.from_input(dns.subdomain).apply(lambda s: f"{s.split('.')[0]}-tls"),
+                        secret_name=tls_secret_name,
                     ),
                 ],
             ),

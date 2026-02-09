@@ -11,7 +11,7 @@ import pulumi
 import pulumi_aws as aws
 import pulumi_random as random
 
-from config import Config, DatabaseInstanceConfig
+from config.aws import AWSConfig, DatabaseConfig, DatabaseInstanceConfig
 from .vpc import VPC
 
 
@@ -25,7 +25,7 @@ class RDSInstance(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         db_config: DatabaseInstanceConfig,
         vpc: VPC,
         security_group_id: pulumi.Output[str],
@@ -87,34 +87,28 @@ class RDSInstance(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        cluster_args = {
-            "cluster_identifier": self._resource_suffix.apply(
-                lambda s: f"{config.resource_prefix}-{db_config.name}-{s}"
-            ),
-            "engine": "aurora-postgresql",
-            "engine_mode": "provisioned",
-            "engine_version": db_config.engine_version,
-            "database_name": db_config.db_name,
-            "master_username": db_config.username,
-            "master_password": self._random_password.result,
-            "db_subnet_group_name": subnet_group_name,
-            "vpc_security_group_ids": [security_group_id],
-            "db_cluster_parameter_group_name": cluster_parameter_group.name,
-            "backup_retention_period": db_config.backup_retention_days,
-            "preferred_backup_window": "03:00-04:00",
-            "preferred_maintenance_window": "sun:04:00-sun:05:00",
-            "deletion_protection": db_config.deletion_protection,
-            "skip_final_snapshot": not db_config.deletion_protection,
-            "storage_encrypted": True,
-            "tags": config.tags(Name=f"{config.resource_prefix}-{db_config.name}"),
-        }
-
-        if kms_key_arn:
-            cluster_args["kms_key_id"] = kms_key_arn
-
         self.cluster = aws.rds.Cluster(
             f"{name}-cluster",
-            **cluster_args,
+            cluster_identifier=self._resource_suffix.apply(
+                lambda s: f"{config.resource_prefix}-{db_config.name}-{s}"
+            ),
+            engine="aurora-postgresql",
+            engine_mode="provisioned",
+            engine_version=db_config.engine_version,
+            database_name=db_config.db_name,
+            master_username=db_config.username,
+            master_password=self._random_password.result,
+            db_subnet_group_name=subnet_group_name,
+            vpc_security_group_ids=[security_group_id],
+            db_cluster_parameter_group_name=cluster_parameter_group.name,
+            backup_retention_period=db_config.backup_retention_days,
+            preferred_backup_window="03:00-04:00",
+            preferred_maintenance_window="sun:04:00-sun:05:00",
+            deletion_protection=db_config.deletion_protection,
+            skip_final_snapshot=not db_config.deletion_protection,
+            storage_encrypted=True,
+            kms_key_id=kms_key_arn,
+            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}"),
             opts=child_opts,
         )
 
@@ -125,7 +119,7 @@ class RDSInstance(pulumi.ComponentResource):
             ),
             cluster_identifier=self.cluster.id,
             instance_class=db_config.instance_class,
-            engine=self.cluster.engine,
+            engine=aws.rds.EngineType.AURORA_POSTGRESQL,
             engine_version=self.cluster.engine_version,
             publicly_accessible=False,
             db_subnet_group_name=subnet_group_name,
@@ -212,7 +206,7 @@ class RDS(pulumi.ComponentResource):
     def __init__(
         self,
         name: str,
-        config: Config,
+        config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
         kms_key_arn: Optional[pulumi.Output[str]] = None,

@@ -4,16 +4,13 @@ Shared k8s secrets for pinecone services.
 
 import base64
 import json
-from typing import Optional, TYPE_CHECKING
+from typing import Any, Optional
 
 import pulumi
 import pulumi_kubernetes as k8s
 
-if TYPE_CHECKING:
-    from .rds import RDSInstance
 
-
-def b64(data: str | pulumi.Output[str]) -> pulumi.Output[str]:
+def b64(data: pulumi.Input[str]) -> pulumi.Output[str]:
     return pulumi.Output.from_input(data).apply(
         lambda v: base64.b64encode(str(v).encode("utf-8")).decode("utf-8")
     )
@@ -35,8 +32,8 @@ class K8sSecrets(pulumi.ComponentResource):
         cpgw_api_key: pulumi.Input[str],
         gcps_api_key: Optional[pulumi.Input[str]] = None,
         dd_api_key: Optional[pulumi.Input[str]] = None,
-        control_db: Optional["RDSInstance"] = None,
-        system_db: Optional["RDSInstance"] = None,
+        control_db: Optional[Any] = None,
+        system_db: Optional[Any] = None,
         opts: Optional[pulumi.ResourceOptions] = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
@@ -72,7 +69,7 @@ class K8sSecrets(pulumi.ComponentResource):
                 namespace="external-secrets",
             ),
             data={
-                "api-key": self.cpgw_api_key.apply(b64),
+                "api-key": b64(self.cpgw_api_key),
             },
             type="Opaque",
             opts=ns_opts,
@@ -120,8 +117,8 @@ class K8sSecrets(pulumi.ComponentResource):
         self,
         name: str,
         k8s_provider: pulumi.ProviderResource,
-        control_db: "RDSInstance",
-        system_db: "RDSInstance",
+        control_db: Any,
+        system_db: Any,
     ):
         """Create database secrets in external-secrets namespace for ClusterExternalSecrets."""
         ns_opts = pulumi.ResourceOptions(
@@ -131,7 +128,7 @@ class K8sSecrets(pulumi.ComponentResource):
         )
 
         def build_db_credentials(
-            db: "RDSInstance",
+            db: Any,
         ) -> dict[str, pulumi.Output[str] | str]:
             url = pulumi.Output.all(
                 host=db.cluster.endpoint,
