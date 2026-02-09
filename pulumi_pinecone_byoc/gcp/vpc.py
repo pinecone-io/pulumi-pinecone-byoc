@@ -9,7 +9,6 @@ from config.gcp import GCPConfig
 
 
 class VPC(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
@@ -39,16 +38,6 @@ class VPC(pulumi.ComponentResource):
             network=self.network.id,
             ip_cidr_range=config.vpc_cidr,
             private_ip_google_access=True,
-            secondary_ip_ranges=[
-                gcp.compute.SubnetworkSecondaryIpRangeArgs(
-                    range_name="pods",
-                    ip_cidr_range=config.pod_cidr,
-                ),
-                gcp.compute.SubnetworkSecondaryIpRangeArgs(
-                    range_name="services",
-                    ip_cidr_range=config.service_cidr,
-                ),
-            ],
             opts=child_opts,
         )
 
@@ -58,7 +47,7 @@ class VPC(pulumi.ComponentResource):
             project=config.project,
             region=config.region,
             network=self.network.id,
-            ip_cidr_range=config.psc_cidr,
+            ip_cidr_range="10.100.1.0/24",
             purpose="PRIVATE_SERVICE_CONNECT",
             opts=child_opts,
         )
@@ -69,7 +58,7 @@ class VPC(pulumi.ComponentResource):
             project=config.project,
             region=config.region,
             network=self.network.id,
-            ip_cidr_range=config.proxy_cidr,
+            ip_cidr_range="10.100.2.0/24",
             purpose="REGIONAL_MANAGED_PROXY",
             role="ACTIVE",
             opts=child_opts,

@@ -31,13 +31,6 @@ class AlloyDBConfig(BaseModel):
 class GCPConfig(BaseConfig):
     cloud: str = "gcp"
     project: str = ""
-    public_subnet_mask: int = 20
-    private_subnet_mask: int = 18
-    pod_cidr: str = "10.4.0.0/14"
-    service_cidr: str = "10.8.0.0/18"
-    psc_cidr: str = "10.100.1.0/24"
-    proxy_cidr: str = "10.100.2.0/24"
-    master_cidr: str = "10.100.0.0/28"
 
     writer_k8s_service_accounts: list[str] = Field(
         default_factory=lambda: [
