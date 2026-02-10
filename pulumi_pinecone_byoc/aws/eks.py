@@ -303,10 +303,4 @@ class EKS(pulumi.ComponentResource):
 
     @property
     def cluster_security_group_id(self) -> pulumi.Output[str]:
-        # get the auto-created cluster security group by EKS tag
-        # use the actual cluster name from the EKS cluster
-        return self.cluster.eks_cluster.name.apply(
-            lambda cn: aws.ec2.get_security_group_output(
-                tags={"aws:eks:cluster-name": cn},
-            )
-        ).apply(lambda sg: sg.id)
+        return self.cluster.eks_cluster.vpc_config.cluster_security_group_id
