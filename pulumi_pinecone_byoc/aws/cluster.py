@@ -354,6 +354,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         pulumi_outputs = {
             "cell_name": self._cell_name,
+            "org_name": self._environment.org_name,
             "cloud": "aws",
             "region": args.region,
             "global_env": args.global_env,
