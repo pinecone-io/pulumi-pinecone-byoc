@@ -274,6 +274,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
         pulumi_outputs = {
             "cell_name": self._cell_name,
+            "org_name": self._environment.org_name,
             "cloud": "gcp",
             "region": config.region,
             "global_env": config.global_env,
