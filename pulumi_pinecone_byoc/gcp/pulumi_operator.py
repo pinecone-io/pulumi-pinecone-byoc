@@ -1,7 +1,5 @@
 """Pulumi Kubernetes Operator setup for GCP."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
@@ -18,7 +16,7 @@ class PulumiOperator(pulumi.ComponentResource):
         pulumi_sa_email: pulumi.Output[str],
         cell_name: pulumi.Input[str],
         operator_namespace: str = "pulumi-kubernetes-operator",
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:PulumiOperator", name, None, opts)
 
@@ -29,12 +27,8 @@ class PulumiOperator(pulumi.ComponentResource):
         self._state_bucket = self._create_state_bucket(name, child_opts)
         self._kms_key = self._create_kms_key(name, child_opts)
         self._create_iam_bindings(name, pulumi_sa_email, child_opts)
-        self._backend_url = self._state_bucket.name.apply(
-            lambda bucket: f"gs://{bucket}"
-        )
-        self._secrets_provider = self._kms_key.id.apply(
-            lambda key_id: f"gcpkms://{key_id}"
-        )
+        self._backend_url = self._state_bucket.name.apply(lambda bucket: f"gs://{bucket}")
+        self._secrets_provider = self._kms_key.id.apply(lambda key_id: f"gcpkms://{key_id}")
 
         self.register_outputs(
             {
@@ -45,9 +39,7 @@ class PulumiOperator(pulumi.ComponentResource):
             }
         )
 
-    def _create_state_bucket(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> gcp.storage.Bucket:
+    def _create_state_bucket(self, name: str, opts: pulumi.ResourceOptions) -> gcp.storage.Bucket:
         bucket_name = self._cell_name.apply(lambda cn: f"pc-pulumi-state-{cn}")
 
         bucket = gcp.storage.Bucket(
@@ -85,9 +77,7 @@ class PulumiOperator(pulumi.ComponentResource):
 
         return bucket
 
-    def _create_kms_key(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> gcp.kms.CryptoKey:
+    def _create_kms_key(self, name: str, opts: pulumi.ResourceOptions) -> gcp.kms.CryptoKey:
         key_ring = gcp.kms.KeyRing(
             f"{name}-pulumi-secrets-keyring",
             name=self._cell_name.apply(lambda cn: f"pulumi-secrets-{cn}"),

@@ -69,4 +69,3 @@ class GCPConfig(BaseConfig):
             "pinecone-managed-by": "pulumi",
         }
         return {**base_labels, **self.custom_tags, **extra}
-

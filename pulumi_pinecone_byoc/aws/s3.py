@@ -4,8 +4,6 @@ S3 component for Pinecone BYOC infrastructure.
 Creates S3 buckets for vector data storage, WAL, and operational data.
 """
 
-from typing import Optional
-
 import pulumi
 import pulumi_aws as aws
 
@@ -31,9 +29,9 @@ class S3Buckets(pulumi.ComponentResource):
         name: str,
         config: AWSConfig,
         cell_name: pulumi.Input[str],
-        kms_key_arn: Optional[pulumi.Output[str]] = None,
+        kms_key_arn: pulumi.Output[str] | None = None,
         force_destroy: bool = False,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:S3Buckets", name, None, opts)
 
@@ -104,8 +102,8 @@ class S3Buckets(pulumi.ComponentResource):
         name: str,
         bucket_type: str,
         enable_versioning: bool,
-        kms_key_arn: Optional[pulumi.Output[str]] = None,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        kms_key_arn: pulumi.Output[str] | None = None,
+        opts: pulumi.ResourceOptions | None = None,
     ) -> aws.s3.Bucket:
         """Create an S3 bucket with standard configuration."""
         full_bucket_name = self._cell_name.apply(

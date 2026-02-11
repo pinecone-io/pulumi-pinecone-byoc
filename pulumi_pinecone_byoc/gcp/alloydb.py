@@ -1,10 +1,9 @@
 """AlloyDB cluster infrastructure for PostgreSQL databases."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_gcp as gcp
 import pulumi_random as random
+
 from config.gcp import GCPConfig
 
 
@@ -36,7 +35,6 @@ class _AlloyDBConfigCompat:
 
 
 class AlloyDBInstance:
-
     def __init__(
         self,
         alloydb_cluster: gcp.alloydb.Cluster,
@@ -66,13 +64,10 @@ class AlloyDBInstance:
     def connection_string(self) -> pulumi.Output[str]:
         return pulumi.Output.all(
             self.instance.ip_address, self.username, self.password.result, self.db_name
-        ).apply(
-            lambda args: f"postgresql://{args[1]}:{args[2]}@{args[0]}:5432/{args[3]}"
-        )
+        ).apply(lambda args: f"postgresql://{args[1]}:{args[2]}@{args[0]}:5432/{args[3]}")
 
 
 class AlloyDB(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
@@ -81,7 +76,7 @@ class AlloyDB(pulumi.ComponentResource):
         private_ip_range_name: pulumi.Output[str],
         private_connection: gcp.servicenetworking.Connection,
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:AlloyDB", name, None, opts)
 
@@ -143,39 +138,27 @@ class AlloyDB(pulumi.ComponentResource):
                 user=db_config.username,
                 password=password.result,
             ),
-            deletion_policy="FORCE"
-            if not config.database.deletion_protection
-            else "DEFAULT",
+            deletion_policy="FORCE" if not config.database.deletion_protection else "DEFAULT",
             labels=config.labels(),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[private_connection]),
         )
 
-        instance_id = self._cell_name.apply(
-            lambda cn: f"{db_config.name}-{cn}-instance"
-        )
+        instance_id = self._cell_name.apply(lambda cn: f"{db_config.name}-{cn}-instance")
         instance = gcp.alloydb.Instance(
             f"{name}-instance",
             instance_id=instance_id,
             instance_type="PRIMARY",
             cluster=cluster.name,
-            machine_config=gcp.alloydb.InstanceMachineConfigArgs(
-                cpu_count=db_config.cpu_count
-            ),
-            availability_type="REGIONAL"
-            if config.database.deletion_protection
-            else "ZONAL",
+            machine_config=gcp.alloydb.InstanceMachineConfigArgs(cpu_count=db_config.cpu_count),
+            availability_type="REGIONAL" if config.database.deletion_protection else "ZONAL",
             labels=config.labels(),
             database_flags={
-                "max_connections": str(
-                    self._calculate_max_connections(db_config.cpu_count)
-                ),
+                "max_connections": str(self._calculate_max_connections(db_config.cpu_count)),
             },
             opts=pulumi.ResourceOptions(parent=self, depends_on=[cluster]),
         )
 
-        secret_id = self._cell_name.apply(
-            lambda cn: f"{db_config.name}-{cn}-credentials"
-        )
+        secret_id = self._cell_name.apply(lambda cn: f"{db_config.name}-{cn}-credentials")
         secret = gcp.secretmanager.Secret(
             f"{name}-secret",
             secret_id=secret_id,
@@ -188,7 +171,9 @@ class AlloyDB(pulumi.ComponentResource):
         secret_value = pulumi.Output.all(
             instance.ip_address, db_config.username, password.result, db_config.db_name
         ).apply(
-            lambda args: f'{{"host": "{args[0]}", "port": 5432, "username": "{args[1]}", "password": "{args[2]}", "database": "{args[3]}"}}'
+            lambda args: (
+                f'{{"host": "{args[0]}", "port": 5432, "username": "{args[1]}", "password": "{args[2]}", "database": "{args[3]}"}}'
+            )
         )
 
         gcp.secretmanager.SecretVersion(

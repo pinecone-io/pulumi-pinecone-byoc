@@ -8,36 +8,35 @@ service accounts, and API keys through the Pulumi resource lifecycle.
 import asyncio
 import time
 from collections.abc import Sequence
-from typing import Any, Optional
+from typing import Any
 
 import pulumi
 from pulumi import Output
 from pulumi.dynamic import (
-    Resource,
-    ResourceProvider,
     CreateResult,
     DiffResult,
+    Resource,
+    ResourceProvider,
     UpdateResult,
 )
 
 from .api import (
     PineconeApiInternalError,
-    create_environment,
-    delete_environment,
-    create_service_account,
-    delete_service_account,
-    create_api_key,
-    delete_api_key,
-    create_cpgw_api_key,
-    delete_cpgw_api_key,
-    create_dns_delegation,
-    delete_dns_delegation,
-    create_datadog_api_key,
-    delete_datadog_api_key,
     create_amp_access,
+    create_api_key,
+    create_cpgw_api_key,
+    create_datadog_api_key,
+    create_dns_delegation,
+    create_environment,
+    create_service_account,
     delete_amp_access,
+    delete_api_key,
+    delete_cpgw_api_key,
+    delete_datadog_api_key,
+    delete_dns_delegation,
+    delete_environment,
+    delete_service_account,
 )
-
 
 # =============================================================================
 # Environment Resource
@@ -103,9 +102,7 @@ class EnvironmentProvider(ResourceProvider):
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # force replace if env_name is missing (state corruption)
         if not _olds.get("env_name"):
-            return DiffResult(
-                changes=True, replaces=["env_name"], delete_before_replace=True
-            )
+            return DiffResult(changes=True, replaces=["env_name"], delete_before_replace=True)
 
         # cloud is case-insensitive, don't replace on case change
         old_cloud = _olds.get("cloud", "").lower()
@@ -165,7 +162,7 @@ class Environment(Resource):
         self,
         name: str,
         args: EnvironmentArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -235,9 +232,7 @@ class ServiceAccountProvider(ResourceProvider):
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # force replace if client_id or client_secret is missing (state corruption)
         if not _olds.get("client_id") or not _olds.get("client_secret"):
-            return DiffResult(
-                changes=True, replaces=["client_id"], delete_before_replace=True
-            )
+            return DiffResult(changes=True, replaces=["client_id"], delete_before_replace=True)
         # replace if name changes
         replaces = []
         if _olds.get("name") != _news.get("name"):
@@ -278,7 +273,7 @@ class ServiceAccount(Resource):
         self,
         name: str,
         args: ServiceAccountArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -362,9 +357,7 @@ class ApiKeyProvider(ResourceProvider):
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # force replace if value is missing (state corruption / key not recoverable)
         if not _olds.get("value"):
-            return DiffResult(
-                changes=True, replaces=["value"], delete_before_replace=True
-            )
+            return DiffResult(changes=True, replaces=["value"], delete_before_replace=True)
 
         # replace if project_name, key_name, or auth credentials change
         replaces = []
@@ -390,8 +383,14 @@ class ApiKeyProvider(ResourceProvider):
         from .api import Auth0Config
 
         # skip delete if missing required props (state corruption)
-        if not all([_props.get("auth0_domain"), _props.get("auth0_client_id"),
-                     _props.get("auth0_client_secret"), _props.get("api_url")]):
+        if not all(
+            [
+                _props.get("auth0_domain"),
+                _props.get("auth0_client_id"),
+                _props.get("auth0_client_secret"),
+                _props.get("api_url"),
+            ]
+        ):
             return
 
         auth0 = Auth0Config(
@@ -419,7 +418,7 @@ class ApiKey(Resource):
         self,
         name: str,
         args: ApiKeyArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -485,12 +484,8 @@ class DnsDelegationProvider(ResourceProvider):
         replaces = []
         if _olds.get("subdomain") != _news.get("subdomain"):
             replaces.append("subdomain")
-        changes = len(replaces) > 0 or _olds.get("nameservers") != _news.get(
-            "nameservers"
-        )
-        return DiffResult(
-            changes=changes, replaces=replaces, delete_before_replace=True
-        )
+        changes = len(replaces) > 0 or _olds.get("nameservers") != _news.get("nameservers")
+        return DiffResult(changes=changes, replaces=replaces, delete_before_replace=True)
 
     def update(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> UpdateResult:
         # re-create delegation with new nameservers
@@ -503,14 +498,18 @@ class DnsDelegationProvider(ResourceProvider):
                 cpgw_api_key=_news["cpgw_api_key"],
             )
         )
-        return UpdateResult(
-            {**_news, "fqdn": result.fqdn, "change_id": result.change_id}
-        )
+        return UpdateResult({**_news, "fqdn": result.fqdn, "change_id": result.change_id})
 
     def delete(self, _id: str, _props: dict[str, Any]) -> None:
         # skip delete if we don't have the required props (state corruption)
-        if not all([_props.get("subdomain"), _props.get("nameservers"),
-                     _props.get("api_url"), _props.get("cpgw_api_key")]):
+        if not all(
+            [
+                _props.get("subdomain"),
+                _props.get("nameservers"),
+                _props.get("api_url"),
+                _props.get("cpgw_api_key"),
+            ]
+        ):
             return
         asyncio.run(
             asyncio.to_thread(
@@ -532,7 +531,7 @@ class DnsDelegation(Resource):
         self,
         name: str,
         args: DnsDelegationArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -626,7 +625,7 @@ class DatadogApiKey(Resource):
         self,
         name: str,
         args: DatadogApiKeyArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -768,7 +767,7 @@ class AmpAccess(Resource):
         self,
         name: str,
         args: AmpAccessArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,
@@ -857,7 +856,7 @@ class CpgwApiKey(Resource):
         self,
         name: str,
         args: CpgwApiKeyArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         full_args = {
             "id": None,

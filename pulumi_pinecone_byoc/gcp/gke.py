@@ -1,16 +1,27 @@
 """GKE cluster infrastructure with Workload Identity."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
-from config.gcp import GCPConfig
+
 from config.base import NodePoolConfig
+from config.gcp import GCPConfig
+
+_GCP_SA_MAX_LEN = 30
+
+
+def _sa_id(prefix: str, cell_name: str) -> str:
+    """Build a GCP service account ID that fits within 30 chars.
+
+    Keeps the unique '-byoc-XXXX' suffix intact, truncates the org portion.
+    """
+    suffix = cell_name[cell_name.rfind("-byoc-") :]  # "-byoc-82cb" (10 chars)
+    max_org = _GCP_SA_MAX_LEN - len(prefix) - 1 - len(suffix)  # -1 for separator
+    org = cell_name[: cell_name.rfind("-byoc-")][:max_org]
+    return f"{prefix}-{org}{suffix}"
 
 
 class ServiceAccounts:
-
     def __init__(
         self,
         nodepool_sa: gcp.serviceaccount.Account,
@@ -29,7 +40,6 @@ class ServiceAccounts:
 
 
 class GKEResult:
-
     def __init__(
         self,
         cluster: gcp.container.Cluster,
@@ -46,7 +56,6 @@ class GKEResult:
 
 
 class GKE(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
@@ -54,7 +63,7 @@ class GKE(pulumi.ComponentResource):
         network_id: pulumi.Output[str],
         subnet_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:GKE", name, None, opts)
 
@@ -93,16 +102,12 @@ class GKE(pulumi.ComponentResource):
                 workload_pool=f"{config.project}.svc.id.goog"
             ),
             addons_config=gcp.container.ClusterAddonsConfigArgs(
-                dns_cache_config=gcp.container.ClusterAddonsConfigDnsCacheConfigArgs(
-                    enabled=True
-                ),
+                dns_cache_config=gcp.container.ClusterAddonsConfigDnsCacheConfigArgs(enabled=True),
             ),
             binary_authorization=gcp.container.ClusterBinaryAuthorizationArgs(
                 evaluation_mode="PROJECT_SINGLETON_POLICY_ENFORCE"
             ),
-            release_channel=gcp.container.ClusterReleaseChannelArgs(
-                channel="UNSPECIFIED"
-            ),
+            release_channel=gcp.container.ClusterReleaseChannelArgs(channel="UNSPECIFIED"),
             cluster_autoscaling=gcp.container.ClusterClusterAutoscalingArgs(
                 enabled=False,
                 autoscaling_profile="OPTIMIZE_UTILIZATION",
@@ -120,55 +125,43 @@ class GKE(pulumi.ComponentResource):
 
         nodepool_sa = gcp.serviceaccount.Account(
             f"{name}-np-sa",
-            account_id=self._cell_name.apply(lambda cn: f"np-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"Nodepool service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("np", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"Nodepool service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
         reader_sa = gcp.serviceaccount.Account(
             f"{name}-read-sa",
-            account_id=self._cell_name.apply(lambda cn: f"read-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"Reader service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("read", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"Reader service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
         writer_sa = gcp.serviceaccount.Account(
             f"{name}-write-sa",
-            account_id=self._cell_name.apply(lambda cn: f"write-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"Writer service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("write", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"Writer service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
         dns_sa = gcp.serviceaccount.Account(
             f"{name}-dns-sa",
-            account_id=self._cell_name.apply(lambda cn: f"dns-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"DNS service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("dns", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"DNS service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
         pulumi_sa = gcp.serviceaccount.Account(
             f"{name}-pulumi-sa",
-            account_id=self._cell_name.apply(lambda cn: f"pulumi-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"Pulumi service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("pulumi", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"Pulumi service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
         prometheus_sa = gcp.serviceaccount.Account(
             f"{name}-prometheus-sa",
-            account_id=self._cell_name.apply(lambda cn: f"prom-sa-{cn}"),
-            display_name=self._cell_name.apply(
-                lambda cn: f"Prometheus service account for {cn}"
-            ),
+            account_id=self._cell_name.apply(lambda cn: _sa_id("prom", cn)),
+            display_name=self._cell_name.apply(lambda cn: f"Prometheus service account for {cn}"),
             opts=pulumi.ResourceOptions(parent=self),
         )
 
@@ -227,7 +220,9 @@ class GKE(pulumi.ComponentResource):
             role="roles/iam.workloadIdentityUser",
             members=[
                 pulumi.Output.all(config.project, self._cell_name).apply(
-                    lambda args: f"serviceAccount:{args[0]}.svc.id.goog[gloo-system/certmanager-certgen]"
+                    lambda args: (
+                        f"serviceAccount:{args[0]}.svc.id.goog[gloo-system/certmanager-certgen]"
+                    )
                 )
             ],
             opts=pulumi.ResourceOptions(parent=self, depends_on=[dns_sa]),
@@ -240,7 +235,9 @@ class GKE(pulumi.ComponentResource):
             role="roles/iam.workloadIdentityUser",
             members=[
                 pulumi.Output.all(config.project, self._cell_name).apply(
-                    lambda args: f"serviceAccount:{args[0]}.svc.id.goog[pulumi-kubernetes-operator/pulumi-k8s-operator]"
+                    lambda args: (
+                        f"serviceAccount:{args[0]}.svc.id.goog[pulumi-kubernetes-operator/pulumi-k8s-operator]"
+                    )
                 )
             ],
             opts=pulumi.ResourceOptions(parent=self, depends_on=[pulumi_sa]),
@@ -289,7 +286,9 @@ class GKE(pulumi.ComponentResource):
             role="roles/iam.workloadIdentityUser",
             members=[
                 pulumi.Output.all(config.project).apply(
-                    lambda args: f"serviceAccount:{args[0]}.svc.id.goog[prometheus/prometheus-server]"
+                    lambda args: (
+                        f"serviceAccount:{args[0]}.svc.id.goog[prometheus/prometheus-server]"
+                    )
                 )
             ],
             opts=pulumi.ResourceOptions(parent=self, depends_on=[prometheus_sa]),
@@ -311,7 +310,8 @@ class GKE(pulumi.ComponentResource):
             cluster.endpoint,
             cluster.name,
         ).apply(
-            lambda args: f"""apiVersion: v1
+            lambda args: (
+                f"""apiVersion: v1
 clusters:
 - cluster:
     certificate-authority-data: {args[0]}
@@ -334,6 +334,7 @@ users:
       installHint: Install gke-gcloud-auth-plugin for use with kubectl
       provideClusterInfo: true
 """
+            )
         )
 
         k8s_provider = k8s.Provider(
@@ -378,9 +379,7 @@ users:
         base_labels["nodepool_name"] = np_config.name
         base_labels.update(config.labels())
 
-        labels = self._cell_name.apply(
-            lambda cn: {"pinecone.io/cell": cn, **base_labels}
-        )
+        labels = self._cell_name.apply(lambda cn: {"pinecone.io/cell": cn, **base_labels})
 
         taints = [
             gcp.container.NodePoolNodeConfigTaintArgs(

@@ -4,7 +4,6 @@ EKS component for Pinecone BYOC infrastructure.
 Creates a managed EKS cluster with configurable node groups.
 """
 
-from typing import Optional
 import json
 
 import pulumi
@@ -13,6 +12,7 @@ import pulumi_eks as eks
 import pulumi_kubernetes as k8s
 
 from config.aws import AWSConfig
+
 from .vpc import VPC
 
 # https://docs.aws.amazon.com/eks/latest/userguide/clusters.html
@@ -34,7 +34,7 @@ class EKS(pulumi.ComponentResource):
         config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:EKS", name, None, opts)
 
@@ -49,9 +49,7 @@ class EKS(pulumi.ComponentResource):
 
         self.cluster = eks.Cluster(
             resource_name=f"{config.resource_prefix}-eks-cluster",
-            name=self._cell_name.apply(
-                lambda cn: f"cluster-{cn}"[:AWS_EKS_CLUSTER_NAME_LIMIT]
-            ),
+            name=self._cell_name.apply(lambda cn: f"cluster-{cn}"[:AWS_EKS_CLUSTER_NAME_LIMIT]),
             vpc_id=vpc.vpc_id,
             public_subnet_ids=vpc.public_subnet_ids,
             private_subnet_ids=vpc.private_subnet_ids,
@@ -74,9 +72,7 @@ class EKS(pulumi.ComponentResource):
 
         self.node_groups: list[aws.eks.NodeGroup] = []
         for np_config in config.node_pools:
-            node_group = self._create_node_group(
-                name, np_config, vpc, self._node_role, child_opts
-            )
+            node_group = self._create_node_group(name, np_config, vpc, self._node_role, child_opts)
             self.node_groups.append(node_group)
 
         self._k8s_provider = k8s.Provider(
@@ -93,9 +89,7 @@ class EKS(pulumi.ComponentResource):
             }
         )
 
-    def _create_cluster_role(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> aws.iam.Role:
+    def _create_cluster_role(self, name: str, opts: pulumi.ResourceOptions) -> aws.iam.Role:
         """Create IAM role for EKS cluster."""
         assume_role_policy = json.dumps(
             {
@@ -132,9 +126,7 @@ class EKS(pulumi.ComponentResource):
 
         return role
 
-    def _create_node_role(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> aws.iam.Role:
+    def _create_node_role(self, name: str, opts: pulumi.ResourceOptions) -> aws.iam.Role:
         """Create IAM role for EKS node groups."""
         assume_role_policy = json.dumps(
             {
@@ -213,9 +205,7 @@ class EKS(pulumi.ComponentResource):
                     tags=self.config.tags(),
                 ),
             ],
-            tags=self.config.tags(
-                Name=f"{self.config.resource_prefix}-{np_config.name}-lt"
-            ),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-{np_config.name}-lt"),
             opts=opts,
         )
 
@@ -232,9 +222,7 @@ class EKS(pulumi.ComponentResource):
 
         # labels must be strings, so we need to use apply
         base_labels = {"pinecone.io/nodepool": np_config.name, **np_config.labels}
-        labels = self._cell_name.apply(
-            lambda cn: {"pinecone.io/cell": cn, **base_labels}
-        )
+        labels = self._cell_name.apply(lambda cn: {"pinecone.io/cell": cn, **base_labels})
 
         taints = [
             aws.eks.NodeGroupTaintArgs(key=t.key, value=t.value, effect=t.effect)
@@ -263,9 +251,7 @@ class EKS(pulumi.ComponentResource):
             ),
             labels=labels,
             taints=taints if taints else None,
-            tags=self.config.tags(
-                Name=f"{self.config.resource_prefix}-{np_config.name}"
-            ),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-{np_config.name}"),
             # ignore desired_size changes - managed by cluster autoscaler
             opts=pulumi.ResourceOptions.merge(
                 opts,

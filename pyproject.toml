@@ -28,6 +28,14 @@ gcp = [
     "google-cloud-compute>=1.20.0,<2.0.0",
 ]
 
+[dependency-groups]
+dev = [
+    "ruff>=0.11.0",
+    "ty>=0.0.1a7",
+    "rich>=14.0.0",
+    "pyyaml>=6.0.0",
+]
+
 [project.urls]
 Homepage = "https://www.pinecone.io"
 Documentation = "https://docs.pinecone.io/guides/production/bring-your-own-cloud"
@@ -62,3 +70,17 @@ exclude = [
 
 [tool.ty.environment]
 extra-paths = ["typings"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "SIM115", # open-file-with-context-handler (/dev/tty needs manual close)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"typings/**" = ["UP007", "UP046", "UP047"]  # type stubs need Generic[] syntax

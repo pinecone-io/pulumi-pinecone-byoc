@@ -1,6 +1,6 @@
-from .base import BaseConfig, NodePoolConfig, NodePoolTaint
 from .aws import AWSConfig, DatabaseConfig, DatabaseInstanceConfig
-from .gcp import GCPConfig, AlloyDBConfig, AlloyDBInstanceConfig
+from .base import BaseConfig, NodePoolConfig, NodePoolTaint
+from .gcp import AlloyDBConfig, AlloyDBInstanceConfig, GCPConfig
 
 __all__ = [
     "BaseConfig",

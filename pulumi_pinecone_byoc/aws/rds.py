@@ -4,14 +4,14 @@ RDS component for Pinecone BYOC infrastructure.
 Creates Aurora PostgreSQL clusters for control-db and system-db.
 """
 
-from typing import Optional
 import json
 
 import pulumi
 import pulumi_aws as aws
 import pulumi_random as random
 
-from config.aws import AWSConfig, DatabaseConfig, DatabaseInstanceConfig
+from config.aws import AWSConfig, DatabaseInstanceConfig
+
 from .vpc import VPC
 
 
@@ -31,8 +31,8 @@ class RDSInstance(pulumi.ComponentResource):
         security_group_id: pulumi.Output[str],
         subnet_group_name: pulumi.Output[str],
         resource_suffix: pulumi.Input[str],
-        kms_key_arn: Optional[pulumi.Output[str]] = None,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        kms_key_arn: pulumi.Output[str] | None = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:RDSInstance", name, None, opts)
 
@@ -54,9 +54,7 @@ class RDSInstance(pulumi.ComponentResource):
                 lambda s: f"{config.resource_prefix}-{s}/{db_config.name}/master-password"
             ),
             recovery_window_in_days=0,
-            tags=config.tags(
-                Name=f"{config.resource_prefix}-{db_config.name}-master-password"
-            ),
+            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-master-password"),
             opts=child_opts,
         )
 
@@ -126,9 +124,7 @@ class RDSInstance(pulumi.ComponentResource):
             performance_insights_enabled=True,
             performance_insights_retention_period=7,
             auto_minor_version_upgrade=False,
-            tags=config.tags(
-                Name=f"{config.resource_prefix}-{db_config.name}-instance-0"
-            ),
+            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-instance-0"),
             opts=child_opts,
         )
 
@@ -138,9 +134,7 @@ class RDSInstance(pulumi.ComponentResource):
                 lambda s: f"{config.resource_prefix}-{s}/{db_config.name}/connection"
             ),
             recovery_window_in_days=0,
-            tags=config.tags(
-                Name=f"{config.resource_prefix}-{db_config.name}-connection"
-            ),
+            tags=config.tags(Name=f"{config.resource_prefix}-{db_config.name}-connection"),
             opts=child_opts,
         )
 
@@ -209,8 +203,8 @@ class RDS(pulumi.ComponentResource):
         config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
-        kms_key_arn: Optional[pulumi.Output[str]] = None,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        kms_key_arn: pulumi.Output[str] | None = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:RDS", name, None, opts)
 
@@ -222,9 +216,7 @@ class RDS(pulumi.ComponentResource):
         # Shared subnet group for all databases
         self.subnet_group = aws.rds.SubnetGroup(
             f"{name}-subnet-group",
-            name=self._resource_suffix.apply(
-                lambda s: f"{config.resource_prefix}-db-{s}"
-            ),
+            name=self._resource_suffix.apply(lambda s: f"{config.resource_prefix}-db-{s}"),
             subnet_ids=vpc.private_subnet_ids,
             tags=config.tags(Name=f"{config.resource_prefix}-db-subnet-group"),
             opts=child_opts,

@@ -5,16 +5,17 @@ Creates a Network Load Balancer for private endpoint access.
 Architecture: NLB -> Private ALB -> gateway-proxy pods
 """
 
+import contextlib
 import time
-from typing import Optional
 
 import pulumi
 import pulumi_aws as aws
 import pulumi_kubernetes as k8s
 
 from config.aws import AWSConfig
-from .vpc import VPC
+
 from .dns import DNS
+from .vpc import VPC
 
 # https://docs.aws.amazon.com/elasticloadbalancing/latest/APIReference/API_CreateLoadBalancer.html
 AWS_ALB_NAME_LIMIT = 32
@@ -42,7 +43,7 @@ class NLB(pulumi.ComponentResource):
         k8s_provider: pulumi.ProviderResource,
         cluster_security_group_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:NLB", name, None, opts)
 
@@ -135,9 +136,9 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/group.order": "1",
             }
 
-        http2_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain
-        ).apply(lambda args: build_http2_annotations(*args))
+        http2_annotations = pulumi.Output.all(dns.private_certificate_arn, dns.subdomain).apply(
+            lambda args: build_http2_annotations(*args)
+        )
 
         # private ingress for HTTP2/gRPC traffic
         private_lb_http2 = k8s.networking.v1.Ingress(
@@ -190,9 +191,9 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/group.order": "2",
             }
 
-        http1_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain
-        ).apply(lambda args: build_http1_annotations(*args))
+        http1_annotations = pulumi.Output.all(dns.private_certificate_arn, dns.subdomain).apply(
+            lambda args: build_http1_annotations(*args)
+        )
 
         # private ingress for HTTP1 traffic
         private_lb_http1 = k8s.networking.v1.Ingress(
@@ -260,9 +261,7 @@ class NLB(pulumi.ComponentResource):
         # target group for the private ALB
         self.target_group = aws.lb.TargetGroup(
             f"{name}-alb-tg",
-            name=self._cell_name.apply(
-                lambda cn: f"{cn}-tg"[:AWS_TARGET_GROUP_NAME_LIMIT]
-            ),
+            name=self._cell_name.apply(lambda cn: f"{cn}-tg"[:AWS_TARGET_GROUP_NAME_LIMIT]),
             target_type="alb",
             port=443,
             protocol="TCP",
@@ -313,9 +312,7 @@ class NLB(pulumi.ComponentResource):
 
         self.nlb = aws.lb.LoadBalancer(
             f"{name}-nlb",
-            name=self._resource_suffix.apply(
-                lambda s: f"{config.resource_prefix}-nlb-{s}"
-            ),
+            name=self._resource_suffix.apply(lambda s: f"{config.resource_prefix}-nlb-{s}"),
             internal=True,
             load_balancer_type="network",
             subnets=vpc.private_subnet_ids,
@@ -384,18 +381,12 @@ class NLB(pulumi.ComponentResource):
 
             ec2 = boto3.client("ec2", region_name=config.region)
 
-            resp = ec2.describe_vpc_endpoint_service_configurations(
-                ServiceIds=[service_id]
-            )
+            resp = ec2.describe_vpc_endpoint_service_configurations(ServiceIds=[service_id])
             configs = resp.get("ServiceConfigurations", [])
             if configs:
-                state = (
-                    configs[0].get("PrivateDnsNameConfiguration", {}).get("State", "")
-                )
+                state = configs[0].get("PrivateDnsNameConfiguration", {}).get("State", "")
                 if state == "verified":
-                    pulumi.log.info(
-                        f"Private DNS domain already verified for {service_id}"
-                    )
+                    pulumi.log.info(f"Private DNS domain already verified for {service_id}")
                     return service_name
 
             pulumi.log.info("Waiting 60s for DNS propagation before verification...")
@@ -405,15 +396,11 @@ class NLB(pulumi.ComponentResource):
             for attempt in range(max_attempts):
                 # trigger verification on first attempt and every 3rd attempt
                 if attempt % 3 == 0:
-                    try:
+                    with contextlib.suppress(Exception):
                         ec2.start_vpc_endpoint_service_private_dns_verification(
                             ServiceId=service_id
                         )
-                    except Exception:
-                        pass
-                resp = ec2.describe_vpc_endpoint_service_configurations(
-                    ServiceIds=[service_id]
-                )
+                resp = ec2.describe_vpc_endpoint_service_configurations(ServiceIds=[service_id])
                 configs = resp.get("ServiceConfigurations", [])
                 if configs:
                     dns_configs = configs[0].get("PrivateDnsNameConfiguration", {})
@@ -422,9 +409,7 @@ class NLB(pulumi.ComponentResource):
                         pulumi.log.info(f"Private DNS domain verified for {service_id}")
                         return service_name
                     elif state == "failed":
-                        raise Exception(
-                            f"Private DNS domain verification failed for {service_id}"
-                        )
+                        raise Exception(f"Private DNS domain verification failed for {service_id}")
                     pulumi.log.info(
                         f"Waiting for domain verification ({state})... attempt {attempt + 1}/{max_attempts}"
                     )

@@ -5,7 +5,6 @@ Creates S3 backend, KMS key for secrets, and IRSA for the operator.
 """
 
 import json
-from typing import Optional
 
 import pulumi
 import pulumi_aws as aws
@@ -34,7 +33,7 @@ class PulumiOperator(pulumi.ComponentResource):
         oidc_provider_url: pulumi.Input[str],
         cell_name: pulumi.Input[str],
         operator_namespace: str = "pulumi-kubernetes-operator",
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:PulumiOperator", name, None, opts)
 
@@ -77,9 +76,7 @@ class PulumiOperator(pulumi.ComponentResource):
             }
         )
 
-    def _create_state_bucket(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> aws.s3.Bucket:
+    def _create_state_bucket(self, name: str, opts: pulumi.ResourceOptions) -> aws.s3.Bucket:
         """Create S3 bucket for Pulumi state storage."""
         bucket_name = self._cell_name.apply(lambda cn: f"pc-pulumi-state-{cn}")
 
@@ -210,9 +207,7 @@ class PulumiOperator(pulumi.ComponentResource):
         role = aws.iam.Role(
             f"{name}-operator-role",
             assume_role_policy=assume_role_policy,
-            tags=self.config.tags(
-                Name=f"{self.config.resource_prefix}-pulumi-operator"
-            ),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-pulumi-operator"),
             opts=opts,
         )
 

@@ -4,8 +4,6 @@ VPC component for Pinecone BYOC infrastructure.
 Creates a production-ready VPC with public and private subnets across multiple AZs.
 """
 
-from typing import Optional
-
 import pulumi
 import pulumi_aws as aws
 
@@ -25,7 +23,7 @@ class VPC(pulumi.ComponentResource):
         self,
         name: str,
         config: AWSConfig,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
@@ -148,14 +146,14 @@ class VPC(pulumi.ComponentResource):
                 opts=opts,
             )
 
-        for i, (subnet, nat) in enumerate(zip(self.private_subnets, self.nat_gateways)):
+        for i, (subnet, nat) in enumerate(
+            zip(self.private_subnets, self.nat_gateways, strict=True)
+        ):
             az = self.config.availability_zones[i]
             private_rt = aws.ec2.RouteTable(
                 f"{name}-private-rt-{az}",
                 vpc_id=self.vpc.id,
-                tags=self.config.tags(
-                    Name=f"{self.config.resource_prefix}-private-rt-{az}"
-                ),
+                tags=self.config.tags(Name=f"{self.config.resource_prefix}-private-rt-{az}"),
                 opts=opts,
             )
 

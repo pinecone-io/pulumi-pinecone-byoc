@@ -1,7 +1,5 @@
 """K8s addons for GCP infrastructure."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_kubernetes as k8s
 
@@ -13,7 +11,7 @@ class K8sAddons(pulumi.ComponentResource):
         self,
         name: str,
         gke: GKE,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sAddons", name, None, opts)
 

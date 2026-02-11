@@ -1,4 +1,3 @@
-from typing import Optional
 import json
 
 import pulumi
@@ -7,6 +6,7 @@ import pulumi_kubernetes as k8s
 from pulumi_kubernetes.helm.v3 import Release, ReleaseArgs
 
 from config.aws import AWSConfig
+
 from .eks import EKS
 
 AWS_LOAD_BALANCER_POLICY = {
@@ -17,9 +17,7 @@ AWS_LOAD_BALANCER_POLICY = {
             "Action": ["iam:CreateServiceLinkedRole"],
             "Resource": "*",
             "Condition": {
-                "StringEquals": {
-                    "iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"
-                }
+                "StringEquals": {"iam:AWSServiceName": "elasticloadbalancing.amazonaws.com"}
             },
         },
         {
@@ -231,7 +229,7 @@ class K8sAddons(pulumi.ComponentResource):
         eks: EKS,
         vpc_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sAddons", name, None, opts)
 
@@ -241,9 +239,7 @@ class K8sAddons(pulumi.ComponentResource):
         self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        self.gloo_namespace = self._create_gloo_namespace(
-            name, eks.provider, child_opts
-        )
+        self.gloo_namespace = self._create_gloo_namespace(name, eks.provider, child_opts)
 
         self.alb_controller_role = self._create_alb_controller_role(
             name,
@@ -273,9 +269,7 @@ class K8sAddons(pulumi.ComponentResource):
             eks.provider,
             eks.cluster_name,
             self.cluster_autoscaler_role.arn,
-            pulumi.ResourceOptions(
-                parent=self, depends_on=[self.cluster_autoscaler_role]
-            ),
+            pulumi.ResourceOptions(parent=self, depends_on=[self.cluster_autoscaler_role]),
         )
 
         self.external_dns_role = self._create_external_dns_role(
@@ -452,9 +446,7 @@ class K8sAddons(pulumi.ComponentResource):
                     "enableCertManager": False,
                 },
             ),
-            opts=pulumi.ResourceOptions(
-                parent=opts.parent, provider=k8s_provider, depends_on=[sa]
-            ),
+            opts=pulumi.ResourceOptions(parent=opts.parent, provider=k8s_provider, depends_on=[sa]),
         )
 
     def _create_cluster_autoscaler_role(
@@ -472,9 +464,7 @@ class K8sAddons(pulumi.ComponentResource):
             assume_role_policy=self._create_irsa_trust_policy(
                 oidc_arn, oidc_url, "kube-system", "cluster-autoscaler-sa"
             ),
-            tags=self.config.tags(
-                Name=f"{self.config.resource_prefix}-cluster-autoscaler"
-            ),
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-cluster-autoscaler"),
             opts=opts,
         )
 
@@ -708,9 +698,7 @@ class K8sAddons(pulumi.ComponentResource):
         opts: pulumi.ResourceOptions,
     ) -> aws.iam.Role:
         """Create IAM role for suspend-azrebalance cronjob to manage ASG processes."""
-        role_name = self._cell_name.apply(
-            lambda cn: f"control-plane-azrebalance-role-{cn}"
-        )
+        role_name = self._cell_name.apply(lambda cn: f"control-plane-azrebalance-role-{cn}")
         role = aws.iam.Role(
             f"{name}-azrebalance-role",
             name=role_name,

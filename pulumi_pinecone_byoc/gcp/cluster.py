@@ -1,39 +1,38 @@
 """PineconeGCPCluster - main component for BYOC deployments on GCP."""
 
-from typing import Optional
 from dataclasses import dataclass, field
 
 import pulumi
 
-from .vpc import VPC
-from .gke import GKE
-from .gcs import GCSBuckets
-from .dns import DNS
-from .nlb import InternalLoadBalancer
-from .alloydb import AlloyDB
-from .k8s_addons import K8sAddons
-from ..common.k8s_secrets import K8sSecrets
-from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.cred_refresher import RegistryCredentialRefresher
-from .pulumi_operator import PulumiOperator
+from ..common.k8s_configmaps import K8sConfigMaps
+from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
 from ..common.pinetools import Pinetools
-from ..common.uninstaller import ClusterUninstaller
-from ..common.registry import GCP_REGISTRY
 from ..common.providers import (
-    Environment,
-    EnvironmentArgs,
-    ServiceAccount,
-    ServiceAccountArgs,
+    AmpAccess,
+    AmpAccessArgs,
     ApiKey,
     ApiKeyArgs,
     CpgwApiKey,
     CpgwApiKeyArgs,
     DatadogApiKey,
     DatadogApiKeyArgs,
-    AmpAccess,
-    AmpAccessArgs,
+    Environment,
+    EnvironmentArgs,
+    ServiceAccount,
+    ServiceAccountArgs,
 )
+from ..common.registry import GCP_REGISTRY
+from ..common.uninstaller import ClusterUninstaller
+from .alloydb import AlloyDB
+from .dns import DNS
+from .gcs import GCSBuckets
+from .gke import GKE
+from .k8s_addons import K8sAddons
+from .nlb import InternalLoadBalancer
+from .pulumi_operator import PulumiOperator
+from .vpc import VPC
 
 
 @dataclass
@@ -65,7 +64,7 @@ class PineconeGCPClusterArgs:
 
     # kubernetes
     kubernetes_version: str = "1.33"
-    node_pools: Optional[list[NodePool]] = None
+    node_pools: list[NodePool] | None = None
 
     # dns
     parent_dns_zone_name: str = "byoc.pinecone.io"
@@ -83,11 +82,11 @@ class PineconeGCPClusterArgs:
     amp_aws_account_id: str = "713131977538"
 
     # tags/labels
-    labels: Optional[dict[str, str]] = None
+    labels: dict[str, str] | None = None
 
     # workload identity - K8s service accounts that need GCS access
-    writer_k8s_service_accounts: Optional[list[str]] = None
-    reader_k8s_service_accounts: Optional[list[str]] = None
+    writer_k8s_service_accounts: list[str] | None = None
+    reader_k8s_service_accounts: list[str] | None = None
 
 
 class PineconeGCPCluster(pulumi.ComponentResource):
@@ -95,7 +94,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
         self,
         name: str,
         args: PineconeGCPClusterArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:PineconeGCPCluster", name, None, opts)
 
@@ -152,9 +151,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 auth0_client_id=self._service_account.client_id,
                 auth0_client_secret=self._service_account.client_secret,
             ),
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._service_account]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._service_account]),
         )
 
         self._datadog_api_key = DatadogApiKey(
@@ -293,7 +290,15 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": "",
+            "gcp_np_sa_email": self._gke.service_accounts.nodepool_sa.email,
+            "gcp_read_sa_email": self._gke.service_accounts.reader_sa.email,
+            "gcp_write_sa_email": self._gke.service_accounts.writer_sa.email,
+            "gcp_dns_sa_email": self._gke.service_accounts.dns_sa.email,
+            "gcp_pulumi_sa_email": self._gke.service_accounts.pulumi_sa.email,
             "gcp_prometheus_sa_email": self._gke.service_accounts.prometheus_sa.email,
+            "gcp_write_sa_id": self._gke.service_accounts.writer_sa.account_id,
+            "gcp_read_sa_id": self._gke.service_accounts.reader_sa.account_id,
+            "gcp_dns_sa_id": self._gke.service_accounts.dns_sa.account_id,
             "gcp_amp_aws_account_id": self._amp_access.pinecone_role_arn.apply(
                 lambda arn: arn.split(":")[4]
             ),
@@ -329,9 +334,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             k8s_provider=self._gke.k8s_provider,
             pinecone_version=args.pinecone_version,
             pinetools_image=GCP_REGISTRY.pinetools_image,
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._gke, self._k8s_configmaps]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke, self._k8s_configmaps]),
         )
 
         self._uninstaller = ClusterUninstaller(
@@ -382,8 +385,8 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeGCPClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
-        from config.gcp import GCPConfig, AlloyDBConfig, AlloyDBInstanceConfig
         from config.base import NodePoolConfig
+        from config.gcp import AlloyDBConfig, AlloyDBInstanceConfig, GCPConfig
 
         node_pools = []
         if args.node_pools:

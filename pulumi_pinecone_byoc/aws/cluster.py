@@ -1,41 +1,40 @@
 """PineconeAWSCluster - main component for AWS BYOC deployments."""
 
-from typing import Optional
-from dataclasses import dataclass, field
 import json
+from dataclasses import dataclass, field
 
 import pulumi
 import pulumi_aws as aws
 
-from .vpc import VPC
-from .eks import EKS
-from .s3 import S3Buckets
-from .dns import DNS
-from .nlb import NLB
-from .rds import RDS, RDSInstance
-from .k8s_addons import K8sAddons
-from ..common.k8s_secrets import K8sSecrets
-from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.cred_refresher import RegistryCredentialRefresher
-from .pulumi_operator import PulumiOperator
-from ..common.pinetools import Pinetools
-from ..common.uninstaller import ClusterUninstaller
-from ..common.registry import AWS_REGISTRY
+from ..common.k8s_configmaps import K8sConfigMaps
+from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
+from ..common.pinetools import Pinetools
 from ..common.providers import (
-    Environment,
-    EnvironmentArgs,
-    ServiceAccount,
-    ServiceAccountArgs,
+    AmpAccess,
+    AmpAccessArgs,
     ApiKey,
     ApiKeyArgs,
     CpgwApiKey,
     CpgwApiKeyArgs,
     DatadogApiKey,
     DatadogApiKeyArgs,
-    AmpAccess,
-    AmpAccessArgs,
+    Environment,
+    EnvironmentArgs,
+    ServiceAccount,
+    ServiceAccountArgs,
 )
+from ..common.registry import AWS_REGISTRY
+from ..common.uninstaller import ClusterUninstaller
+from .dns import DNS
+from .eks import EKS
+from .k8s_addons import K8sAddons
+from .nlb import NLB
+from .pulumi_operator import PulumiOperator
+from .rds import RDS, RDSInstance
+from .s3 import S3Buckets
+from .vpc import VPC
 
 
 @dataclass
@@ -58,16 +57,14 @@ class PineconeAWSClusterArgs:
 
     # aws specific
     region: str = "us-east-1"
-    availability_zones: list[str] = field(
-        default_factory=lambda: ["us-east-1a", "us-east-1b"]
-    )
+    availability_zones: list[str] = field(default_factory=lambda: ["us-east-1a", "us-east-1b"])
 
     # networking
     vpc_cidr: str = "10.0.0.0/16"
 
     # kubernetes
     kubernetes_version: str = "1.33"
-    node_pools: Optional[list[NodePool]] = None
+    node_pools: list[NodePool] | None = None
 
     # dns
     parent_dns_zone_name: str = "byoc.pinecone.io"
@@ -84,7 +81,7 @@ class PineconeAWSClusterArgs:
     gcp_project: str = "production-pinecone"
 
     # tags
-    tags: Optional[dict[str, str]] = None
+    tags: dict[str, str] | None = None
 
 
 class PineconeAWSCluster(pulumi.ComponentResource):
@@ -92,7 +89,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self,
         name: str,
         args: PineconeAWSClusterArgs,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:PineconeAWSCluster", name, None, opts)
 
@@ -149,9 +146,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 auth0_client_id=self._service_account.client_id,
                 auth0_client_secret=self._service_account.client_secret,
             ),
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._service_account]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._service_account]),
         )
 
         self._datadog_api_key = DatadogApiKey(
@@ -410,9 +405,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             k8s_provider=self._eks.provider,
             pinecone_version=args.pinecone_version,
             pinetools_image=AWS_REGISTRY.pinetools_image,
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._eks, self._k8s_configmaps]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks, self._k8s_configmaps]),
         )
 
         self._uninstaller = ClusterUninstaller(

@@ -1,7 +1,5 @@
 """GCS buckets for GCP infrastructure."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_gcp as gcp
 
@@ -9,14 +7,13 @@ from config.gcp import GCPConfig
 
 
 class GCSBuckets(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
         config: GCPConfig,
         cell_name: pulumi.Input[str],
         force_destroy: bool = False,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:GCSBuckets", name, None, opts)
 
@@ -75,7 +72,7 @@ class GCSBuckets(pulumi.ComponentResource):
         name: str,
         bucket_type: str,
         enable_versioning: bool,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ) -> gcp.storage.Bucket:
         full_bucket_name = self._cell_name.apply(lambda cn: f"pc-{bucket_type}-{cn}")
 

@@ -5,7 +5,6 @@ k8s configmaps for pinetools helm bootstrapping.
 """
 
 import json
-from typing import Optional
 
 import pulumi
 import pulumi_kubernetes as k8s
@@ -24,7 +23,7 @@ class K8sConfigMaps(pulumi.ComponentResource):
         region: pulumi.Input[str],
         public_access_enabled: pulumi.Input[bool],
         pulumi_outputs: dict[str, pulumi.Input],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sConfigMaps", name, None, opts)
 
@@ -85,9 +84,7 @@ class K8sConfigMaps(pulumi.ComponentResource):
         outputs_json = pulumi.Output.all(
             **{k: pulumi.Output.from_input(v) for k, v in pulumi_outputs.items()}
         ).apply(
-            lambda outputs: json.dumps(
-                {k: v for k, v in dict(outputs).items() if v is not None}
-            )
+            lambda outputs: json.dumps({k: v for k, v in dict(outputs).items() if v is not None})
         )
 
         k8s.core.v1.ConfigMap(
