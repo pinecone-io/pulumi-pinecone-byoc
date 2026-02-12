@@ -1,11 +1,11 @@
+import contextlib
 import json
 import time
-from typing import Tuple
 from dataclasses import dataclass
 
 import pulumi
-from pydantic import BaseModel
 import requests
+from pydantic import BaseModel
 
 
 class PineconeApiError(Exception):
@@ -135,9 +135,7 @@ def request(
             last_error = PineconeApiInternalError(error_msg)
             if attempt < max_retries:
                 delay = base_delay * (2**attempt)
-                pulumi.log.warn(
-                    f"request failed ({error_msg}), retrying in {delay}s..."
-                )
+                pulumi.log.warn(f"request failed ({error_msg}), retrying in {delay}s...")
                 time.sleep(delay)
                 continue
             raise last_error
@@ -170,7 +168,7 @@ def create_environment(
     try:
         environment = CreateEnvironmentResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return environment
 
@@ -191,7 +189,7 @@ def create_service_account(
     name: str,
     api_url: str,
     secret: str,
-) -> Tuple[str, str, str]:
+) -> tuple[str, str, str]:
     try:
         resp = request(
             "POST",
@@ -204,7 +202,7 @@ def create_service_account(
 
         service_account = CreateServiceAccountResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiInternalError(f"invalid response: {e}")
+        raise PineconeApiInternalError(f"invalid response: {e}") from e
 
     return service_account.id, service_account.client_id, service_account.client_secret
 
@@ -221,7 +219,7 @@ def delete_service_account(
             headers=cpgw_headers(secret),
         )
     except Exception as e:
-        raise PineconeApiInternalError(f"failed to delete service account: {e}")
+        raise PineconeApiInternalError(f"failed to delete service account: {e}") from e
 
 
 def create_api_key(
@@ -243,7 +241,7 @@ def create_api_key(
     try:
         project = CreateProjectResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiInternalError(f"invalid response: {e}")
+        raise PineconeApiInternalError(f"invalid response: {e}") from e
 
     # if this fails, clean up the project to avoid orphans
     try:
@@ -255,15 +253,13 @@ def create_api_key(
         )
         api_key = CreateApiKeyResponse.model_validate(resp)
     except Exception as e:
-        try:
+        with contextlib.suppress(Exception):
             request(
                 "DELETE",
                 f"{management_plane_url(api_url)}/projects/{project.id}",
                 headers=management_plane_headers(get_access_token(api_url, auth0)),
             )
-        except Exception:
-            pass  # best effort cleanup
-        raise PineconeApiInternalError(f"failed to create api key: {e}")
+        raise PineconeApiInternalError(f"failed to create api key: {e}") from e
 
     return api_key
 
@@ -304,7 +300,7 @@ def create_cpgw_api_key(
     try:
         result = CreateCpgwApiKeyResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return result
 
@@ -352,7 +348,7 @@ def create_dns_delegation(
     try:
         result = CreateDnsDelegationResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return result
 
@@ -377,7 +373,7 @@ def delete_dns_delegation(
     try:
         result = DeleteDnsDelegationResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return result
 
@@ -410,7 +406,7 @@ def create_amp_access(
     try:
         return CreateAmpAccessResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
 
 def delete_amp_access(
@@ -426,7 +422,7 @@ def delete_amp_access(
     try:
         return DeleteAmpAccessResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
 
 class CreateDatadogApiKeyResponse(BaseModel):
@@ -452,7 +448,7 @@ def create_datadog_api_key(
     try:
         result = CreateDatadogApiKeyResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return result
 
@@ -475,6 +471,6 @@ def delete_datadog_api_key(
     try:
         result = DeleteDatadogApiKeyResponse.model_validate(resp)
     except Exception as e:
-        raise PineconeApiError(500, f"invalid response: {e}")
+        raise PineconeApiError(500, f"invalid response: {e}") from e
 
     return result

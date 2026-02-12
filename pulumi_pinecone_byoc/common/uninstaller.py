@@ -1,16 +1,17 @@
 """Cluster uninstaller - runs pinetools uninstall before infrastructure teardown."""
 
+import contextlib
 import json
 import time
 import uuid
-from typing import Any, Optional
+from typing import Any
 
 import pulumi
 from pulumi.dynamic import (
-    Resource,
-    ResourceProvider,
     CreateResult,
     DiffResult,
+    Resource,
+    ResourceProvider,
     UpdateResult,
 )
 
@@ -21,20 +22,20 @@ class ClusterUninstallerProvider(ResourceProvider):
 
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # update state if kubeconfig or image changes, never trigger replacement
-        changed = _olds.get("kubeconfig") != _news.get("kubeconfig") or _olds.get(
-            "pinetools_image"
-        ) != _news.get("pinetools_image")
+        changed = (
+            _olds.get("kubeconfig") != _news.get("kubeconfig")
+            or _olds.get("pinetools_image") != _news.get("pinetools_image")
+            or _olds.get("cloud") != _news.get("cloud")
+        )
         return DiffResult(changes=changed)
 
-    def update(
-        self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]
-    ) -> UpdateResult:
+    def update(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> UpdateResult:
         return UpdateResult(outs=_news)
 
     def delete(self, _id: str, _props: dict[str, Any]) -> None:
+        import yaml
         from kubernetes import client, config
         from kubernetes.client.rest import ApiException
-        import yaml
 
         kubeconfig_str = _props.get("kubeconfig")
         if not kubeconfig_str:
@@ -50,12 +51,11 @@ class ClusterUninstallerProvider(ResourceProvider):
             try:
                 kubeconfig = yaml.safe_load(kubeconfig_str)
             except yaml.YAMLError as e:
-                raise Exception(f"Failed to parse kubeconfig as JSON or YAML: {e}")
+                raise Exception(f"Failed to parse kubeconfig as JSON or YAML: {e}") from e
 
         # gke exec-based auth needs a fresh gcloud token in dynamic provider context
-        users = kubeconfig.get("users", [])
-        has_exec = users and "exec" in users[0].get("user", {})
-        if has_exec:
+        if _props.get("cloud") == "gcp":
+            users = kubeconfig.get("users", [])
             try:
                 import subprocess
 
@@ -130,11 +130,9 @@ class ClusterUninstallerProvider(ResourceProvider):
             batch_v1.create_namespaced_job(namespace=namespace, body=job)
         except ApiException as e:
             if e.status == 409:
-                pulumi.log.warn(
-                    f"Uninstall job {job_name} already exists, waiting for it"
-                )
+                pulumi.log.warn(f"Uninstall job {job_name} already exists, waiting for it")
             else:
-                raise Exception(f"Failed to create uninstall job: {e}")
+                raise Exception(f"Failed to create uninstall job: {e}") from e
 
         timeout_seconds = 1800
         poll_interval = 10
@@ -158,13 +156,11 @@ class ClusterUninstallerProvider(ResourceProvider):
                     )
                     logs = ""
                     for pod in pods.items:
-                        try:
+                        with contextlib.suppress(Exception):
                             logs += core_v1.read_namespaced_pod_log(
                                 name=pod.metadata.name,
                                 namespace=namespace,
                             )
-                        except Exception:
-                            pass
 
                     raise Exception(
                         f"Uninstall job {job_name} failed. "
@@ -203,11 +199,13 @@ class ClusterUninstaller(Resource):
         name: str,
         kubeconfig: pulumi.Input[str],
         pinetools_image: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        cloud: pulumi.Input[str],
+        opts: pulumi.ResourceOptions | None = None,
     ):
         props = {
             "kubeconfig": kubeconfig,
             "pinetools_image": pinetools_image,
+            "cloud": cloud,
         }
         super().__init__(
             ClusterUninstallerProvider(),

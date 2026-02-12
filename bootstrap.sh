@@ -66,11 +66,18 @@ check_command "pulumi" "Pulumi CLI" "https://www.pulumi.com/docs/install/" || mi
 check_command "kubectl" "kubectl" "https://kubernetes.io/docs/tasks/tools/" || missing=1
 
 # cloud-specific tool checks
-if [ "$CLOUD" = "aws" ] || [ -z "$CLOUD" ]; then
+if [ "$CLOUD" = "aws" ]; then
     check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" || missing=1
-fi
-if [ "$CLOUD" = "gcp" ] || [ -z "$CLOUD" ]; then
+elif [ "$CLOUD" = "gcp" ]; then
     check_command "gcloud" "Google Cloud SDK" "https://cloud.google.com/sdk/docs/install" || missing=1
+else
+    # no cloud pre-selected: require at least one cloud CLI
+    has_cloud=0
+    check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" && has_cloud=1
+    check_command "gcloud" "Google Cloud SDK" "https://cloud.google.com/sdk/docs/install" && has_cloud=1
+    if [ $has_cloud -eq 0 ]; then
+        missing=1
+    fi
 fi
 
 echo ""
@@ -111,6 +118,7 @@ if [ "$CLOUD" = "gcp" ] || [ -z "$CLOUD" ]; then
         fi
     fi
 fi
+
 echo ""
 
 # get project directory (read from /dev/tty for curl pipe compatibility)

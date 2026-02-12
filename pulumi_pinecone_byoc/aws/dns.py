@@ -1,5 +1,3 @@
-from typing import Optional
-
 import pulumi
 import pulumi_aws as aws
 
@@ -15,7 +13,7 @@ class DNS(pulumi.ComponentResource):
         parent_zone_name: pulumi.Input[str],
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
 
@@ -89,9 +87,7 @@ class DNS(pulumi.ComponentResource):
                 zone_id=self.zone.id,
                 name=self.certificate.domain_validation_options[i].resource_record_name,
                 type=self.certificate.domain_validation_options[i].resource_record_type,
-                records=[
-                    self.certificate.domain_validation_options[i].resource_record_value
-                ],
+                records=[self.certificate.domain_validation_options[i].resource_record_value],
                 ttl=300,
                 allow_overwrite=True,
                 opts=child_opts,
@@ -109,9 +105,7 @@ class DNS(pulumi.ComponentResource):
         # private endpoint certificate - for PrivateLink access
         # these domains use .private suffix pattern
         private_cnames = [f"{c}.private" for c in DNS_CNAMES]
-        self._private_dns_domains = [
-            fqdn.apply(lambda f, c=c: f"{c}.{f}") for c in private_cnames
-        ]
+        self._private_dns_domains = [fqdn.apply(lambda f, c=c: f"{c}.{f}") for c in private_cnames]
 
         self.private_certificate = aws.acm.Certificate(
             f"{name}-private-cert",
@@ -132,16 +126,10 @@ class DNS(pulumi.ComponentResource):
             private_validation_record = aws.route53.Record(
                 f"{name}-private-cert-validation-{i}",
                 zone_id=self.zone.id,
-                name=self.private_certificate.domain_validation_options[
-                    i
-                ].resource_record_name,
-                type=self.private_certificate.domain_validation_options[
-                    i
-                ].resource_record_type,
+                name=self.private_certificate.domain_validation_options[i].resource_record_name,
+                type=self.private_certificate.domain_validation_options[i].resource_record_type,
                 records=[
-                    self.private_certificate.domain_validation_options[
-                        i
-                    ].resource_record_value
+                    self.private_certificate.domain_validation_options[i].resource_record_value
                 ],
                 ttl=300,
                 allow_overwrite=True,
@@ -153,9 +141,7 @@ class DNS(pulumi.ComponentResource):
             f"{name}-private-cert-validation",
             certificate_arn=self.private_certificate.arn,
             validation_record_fqdns=[r.fqdn for r in private_validation_records],
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=private_validation_records
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=private_validation_records),
         )
 
         self._fqdn = fqdn

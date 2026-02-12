@@ -1,15 +1,13 @@
 """Cloud DNS infrastructure for domain management."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_gcp as gcp
+
 from ..common.naming import DNS_CNAMES
 from ..common.providers import DnsDelegation, DnsDelegationArgs
 
 
 class DNS(pulumi.ComponentResource):
-
     def __init__(
         self,
         name: str,
@@ -18,7 +16,7 @@ class DNS(pulumi.ComponentResource):
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
 

@@ -1,6 +1,5 @@
 """VPC component for GCP infrastructure."""
 
-from typing import Optional
 import ipaddress
 
 import pulumi
@@ -15,7 +14,7 @@ class VPC(pulumi.ComponentResource):
         name: str,
         config: GCPConfig,
         cell_name: pulumi.Input[str],
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
@@ -93,9 +92,7 @@ class VPC(pulumi.ComponentResource):
             network=self.network.id,
             service="servicenetworking.googleapis.com",
             reserved_peering_ranges=[self.private_ip_range.name],
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self.private_ip_range]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.private_ip_range]),
         )
 
         self.router = gcp.compute.Router(

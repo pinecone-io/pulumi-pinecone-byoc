@@ -1,12 +1,13 @@
 """Internal load balancer with Private Service Connect."""
 
-from typing import Optional
 import time
 
 import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
+
 from config.gcp import GCPConfig
+
 from ..common.naming import DNS_CNAMES
 
 
@@ -21,7 +22,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
         subdomain: pulumi.Output[str],
         cell_name: pulumi.Input[str],
         public_access_enabled: bool = True,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:InternalLoadBalancer", name, None, opts)
 
@@ -222,9 +223,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
         def get_lb_ip_and_link(_ingress_status, cell_name_str: str, retries: int = 30):
             for attempt in range(retries):
                 try:
-                    rules = gcp.compute.get_forwarding_rules(
-                        config.project, config.region
-                    )
+                    rules = gcp.compute.get_forwarding_rules(config.project, config.region)
                     lb = next(
                         (
                             r

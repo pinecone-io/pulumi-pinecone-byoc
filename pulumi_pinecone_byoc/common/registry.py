@@ -3,7 +3,6 @@
 from dataclasses import dataclass
 from typing import Literal
 
-
 PINETOOLS_TAG = "latest"
 
 RegistryType = Literal["ecr", "gcr"]

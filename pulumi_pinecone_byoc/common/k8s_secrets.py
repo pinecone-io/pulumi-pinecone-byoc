@@ -4,7 +4,7 @@ Shared k8s secrets for pinecone services.
 
 import base64
 import json
-from typing import Any, Optional
+from typing import Any
 
 import pulumi
 import pulumi_kubernetes as k8s
@@ -16,9 +16,7 @@ def b64(data: pulumi.Input[str]) -> pulumi.Output[str]:
     )
 
 
-def postgres_url(
-    host: str, port: int, username: str, password: str, db_name: str
-) -> str:
+def postgres_url(host: str, port: int, username: str, password: str, db_name: str) -> str:
     return f"postgres://{username}:{password}@{host}:{port}/{db_name}"
 
 
@@ -30,11 +28,11 @@ class K8sSecrets(pulumi.ComponentResource):
         name: str,
         k8s_provider: pulumi.ProviderResource,
         cpgw_api_key: pulumi.Input[str],
-        gcps_api_key: Optional[pulumi.Input[str]] = None,
-        dd_api_key: Optional[pulumi.Input[str]] = None,
-        control_db: Optional[Any] = None,
-        system_db: Optional[Any] = None,
-        opts: Optional[pulumi.ResourceOptions] = None,
+        gcps_api_key: pulumi.Input[str] | None = None,
+        dd_api_key: pulumi.Input[str] | None = None,
+        control_db: Any | None = None,
+        system_db: Any | None = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
 

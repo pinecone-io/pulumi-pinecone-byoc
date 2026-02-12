@@ -1,0 +1,209 @@
+name: E2E GCP
+
+on:
+  workflow_call: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: gcp-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set stack name
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            echo "STACK_NAME=ci-gcp-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          else
+            echo "STACK_NAME=ci-gcp-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v6
+
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+
+      - name: Run wizard (headless)
+        id: wizard
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          GCP_PROJECT: staging-pinecone-byoc
+          PINECONE_REGION: us-central1
+          PINECONE_AZS: "us-central1-a,us-central1-b"
+          PINECONE_VPC_CIDR: "10.112.0.0/12"
+          PINECONE_DELETION_PROTECTION: "false"
+          PINECONE_PUBLIC_ACCESS: "false"
+          PINECONE_PROJECT_NAME: "pinecone-byoc"
+        run: |
+          uv run --with rich --with pyyaml python setup/wizard.py \
+            --cloud gcp \
+            --headless \
+            --stack-name "$STACK_NAME" \
+            --skip-install \
+            --output-dir ./e2e-project
+
+      - name: Patch __main__.py with CI overrides
+        working-directory: ./e2e-project
+        run: |
+          python3 << 'PATCH'
+          path = "__main__.py"
+          content = open(path).read()
+          content = content.replace(
+              "        labels=config.get_object(\"labels\") or {},",
+              """        labels=config.get_object("labels") or {},
+                  global_env=config.require("global-env"),
+                  api_url=config.require("api-url"),
+                  auth0_domain=config.require("auth0-domain"),
+                  amp_aws_account_id=config.require("amp-aws-account-id"),""",
+          )
+          open(path, "w").write(content)
+          PATCH
+
+      - name: Replace PyPI dep with local source
+        working-directory: ./e2e-project
+        run: |
+          sed -i 's|"pulumi-pinecone-byoc\[gcp\]"|"pulumi-pinecone-byoc[gcp] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
+          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
+
+      - name: Install dependencies
+        working-directory: ./e2e-project
+        run: uv sync
+
+      - name: Setup Pulumi stack
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          pulumi stack select --create "$STACK_NAME"
+
+      - name: Set Pulumi config
+        working-directory: ./e2e-project
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          pulumi config set --secret pinecone-api-key "$PINECONE_API_KEY" --stack "$STACK_NAME"
+          pulumi config set global-env ci --stack "$STACK_NAME"
+          pulumi config set api-url "https://api-staging.pinecone.io" --stack "$STACK_NAME"
+          pulumi config set auth0-domain "https://internal-beta-pinecone-io.us.auth0.com" --stack "$STACK_NAME"
+          pulumi config set amp-aws-account-id "115740606080" --stack "$STACK_NAME"
+
+      - name: Pulumi up
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi up --yes --stack "$STACK_NAME"
+
+  down:
+    needs: up
+    if: always() && needs.up.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: gcp-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set stack name
+        run: |
+          if [ -n "$PR_NUMBER" ]; then
+            echo "STACK_NAME=ci-gcp-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          else
+            echo "STACK_NAME=ci-gcp-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+          fi
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+
+      - name: Authenticate to GCP
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud CLI
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: gke-gcloud-auth-plugin
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v6
+
+      - name: Run wizard (headless)
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          GCP_PROJECT: staging-pinecone-byoc
+          PINECONE_REGION: us-central1
+          PINECONE_AZS: "us-central1-a,us-central1-b"
+          PINECONE_VPC_CIDR: "10.112.0.0/12"
+          PINECONE_DELETION_PROTECTION: "false"
+          PINECONE_PUBLIC_ACCESS: "false"
+          PINECONE_PROJECT_NAME: "pinecone-byoc"
+        run: |
+          uv run --with rich --with pyyaml python setup/wizard.py \
+            --cloud gcp \
+            --headless \
+            --stack-name "$STACK_NAME" \
+            --skip-install \
+            --output-dir ./e2e-project
+
+      - name: Replace PyPI dep with local source
+        working-directory: ./e2e-project
+        run: |
+          sed -i 's|"pulumi-pinecone-byoc\[gcp\]"|"pulumi-pinecone-byoc[gcp] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
+          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
+
+      - name: Install dependencies
+        working-directory: ./e2e-project
+        run: uv sync
+
+      - name: Cancel stale locks
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi cancel --yes --stack "$STACK_NAME" 2>/dev/null || true
+
+      - name: Pulumi destroy
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi destroy --yes --stack "$STACK_NAME"
+
+      - name: Pulumi stack rm
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi stack rm "$STACK_NAME" --yes --force

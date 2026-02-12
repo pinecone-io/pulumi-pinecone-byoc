@@ -1,10 +1,7 @@
 """Pinetools setup for cluster management."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_kubernetes as k8s
-
 
 WAIT_FOR_REGCRED_SCRIPT = """
 echo "Waiting for regcred secret in pc-control-plane namespace..."
@@ -24,9 +21,7 @@ exit 1
 def _job_name(pinecone_version: str) -> str:
     import re
 
-    return f"pinetools-install-{re.sub(r'[^a-z0-9\-]', '', pinecone_version.lower())}".strip(
-        "-"
-    )
+    return f"pinetools-install-{re.sub(r'[^a-z0-9\-]', '', pinecone_version.lower())}".strip("-")
 
 
 class Pinetools(pulumi.ComponentResource):
@@ -37,7 +32,7 @@ class Pinetools(pulumi.ComponentResource):
         pinecone_version: pulumi.Input[str],
         pinetools_image: str,
         schedule: str = "0 * * * *",
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:Pinetools", name, None, opts)
 
@@ -165,9 +160,7 @@ class Pinetools(pulumi.ComponentResource):
                 concurrency_policy="Forbid",
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(spec=make_cronjob_spec()),
             ),
-            opts=pulumi.ResourceOptions(
-                parent=self, provider=k8s_provider, depends_on=[sa]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider, depends_on=[sa]),
         )
 
         # job name includes version suffix: same version = skip, new version = replace

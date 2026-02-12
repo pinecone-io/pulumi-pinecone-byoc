@@ -1,10 +1,7 @@
 """Registry credential refresher cronjob. Supports ECR and GCR."""
 
-from typing import Optional
-
 import pulumi
 import pulumi_kubernetes as k8s
-
 
 EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system"
 
@@ -119,7 +116,7 @@ class RegistryCredentialRefresher(pulumi.ComponentResource):
         cpgw_url: pulumi.Input[str],
         registry: str = "ecr",
         schedule: str = "* * * * *",
-        opts: Optional[pulumi.ResourceOptions] = None,
+        opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__(
             f"pinecone:common:RegistryCredentialRefresher-{registry}", name, None, opts
