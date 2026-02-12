@@ -85,6 +85,7 @@ jobs:
         working-directory: ./e2e-project
         run: |
           sed -i 's|"pulumi-pinecone-byoc\[aws\]"|"pulumi-pinecone-byoc[aws] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
+          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
 
       - name: Install dependencies
         working-directory: ./e2e-project
@@ -173,6 +174,7 @@ jobs:
         working-directory: ./e2e-project
         run: |
           sed -i 's|"pulumi-pinecone-byoc\[aws\]"|"pulumi-pinecone-byoc[aws] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
+          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
 
       - name: Install dependencies
         working-directory: ./e2e-project

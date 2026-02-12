@@ -22,9 +22,11 @@ class ClusterUninstallerProvider(ResourceProvider):
 
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
         # update state if kubeconfig or image changes, never trigger replacement
-        changed = _olds.get("kubeconfig") != _news.get("kubeconfig") or _olds.get(
-            "pinetools_image"
-        ) != _news.get("pinetools_image")
+        changed = (
+            _olds.get("kubeconfig") != _news.get("kubeconfig")
+            or _olds.get("pinetools_image") != _news.get("pinetools_image")
+            or _olds.get("cloud") != _news.get("cloud")
+        )
         return DiffResult(changes=changed)
 
     def update(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> UpdateResult:
