@@ -52,9 +52,8 @@ class ClusterUninstallerProvider(ResourceProvider):
                 raise Exception(f"Failed to parse kubeconfig as JSON or YAML: {e}") from e
 
         # gke exec-based auth needs a fresh gcloud token in dynamic provider context
-        users = kubeconfig.get("users", [])
-        has_exec = users and "exec" in users[0].get("user", {})
-        if has_exec:
+        if _props.get("cloud") == "gcp":
+            users = kubeconfig.get("users", [])
             try:
                 import subprocess
 
@@ -198,11 +197,13 @@ class ClusterUninstaller(Resource):
         name: str,
         kubeconfig: pulumi.Input[str],
         pinetools_image: pulumi.Input[str],
+        cloud: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ):
         props = {
             "kubeconfig": kubeconfig,
             "pinetools_image": pinetools_image,
+            "cloud": cloud,
         }
         super().__init__(
             ClusterUninstallerProvider(),
