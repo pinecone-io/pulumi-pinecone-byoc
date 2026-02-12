@@ -1005,7 +1005,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         config_content = f"""config:
   aws:region: {region}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-6cbebd5
+  {project_name}:pinecone-version: main-818794e
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
@@ -1688,7 +1688,7 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         config_content = f"""config:
   gcp:project: {project_id}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-6cbebd5
+  {project_name}:pinecone-version: main-818794e
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
