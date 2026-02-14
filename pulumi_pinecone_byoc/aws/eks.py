@@ -179,8 +179,9 @@ class EKS(pulumi.ComponentResource):
             self.cluster.eks_cluster.endpoint,
             self.cluster.eks_cluster.certificate_authority.data,
             self.cluster.eks_cluster.kubernetes_network_configs[0].service_ipv4_cidr,
-        ).apply(lambda args: base64.b64encode(
-            f"""MIME-Version: 1.0
+        ).apply(
+            lambda args: base64.b64encode(
+                f"""MIME-Version: 1.0
 Content-Type: multipart/mixed; boundary="==BOUNDARY=="
 
 --==BOUNDARY==
@@ -196,7 +197,9 @@ spec:
     certificateAuthorityData: {args[2]}
     cidr: {args[3]}
 --==BOUNDARY==--
-""".encode("utf-8")).decode("utf-8"))
+""".encode("utf-8")
+            ).decode("utf-8")
+        )
 
     def _create_launch_template(
         self,

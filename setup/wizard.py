@@ -908,7 +908,9 @@ class AWSSetupWizard(BaseSetupWizard):
     def _get_custom_ami_id(self) -> str | None:
         console.print()
         console.print(f"  {self._step('Custom AMI (Optional)')}")
-        console.print("  [dim]Specify a custom AMI ID for EKS nodes (leave blank for default AWS AMI)[/]")
+        console.print(
+            "  [dim]Specify a custom AMI ID for EKS nodes (leave blank for default AWS AMI)[/]"
+        )
         console.print()
         ami_id = self._prompt("Enter AMI ID (or press Enter to skip)", "")
         return ami_id or None
