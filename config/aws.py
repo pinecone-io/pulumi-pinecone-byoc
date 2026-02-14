@@ -59,6 +59,9 @@ class AWSConfig(BaseConfig):
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
+    # Custom AMI
+    custom_ami_id: str | None = None
+
     # Custom tags from user
     custom_tags: dict[str, str] = Field(default_factory=dict)
 

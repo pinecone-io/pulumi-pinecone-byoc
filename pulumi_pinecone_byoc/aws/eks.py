@@ -4,6 +4,7 @@ EKS component for Pinecone BYOC infrastructure.
 Creates a managed EKS cluster with configurable node groups.
 """
 
+import base64
 import json
 
 import pulumi
@@ -69,6 +70,8 @@ class EKS(pulumi.ComponentResource):
             tags=config.tags(),
             opts=child_opts,
         )
+
+        self._base64_encoded_user_data = self._create_user_data() if config.custom_ami_id else None
 
         self.node_groups: list[aws.eks.NodeGroup] = []
         for np_config in config.node_pools:
@@ -166,6 +169,38 @@ class EKS(pulumi.ComponentResource):
 
         return role
 
+    def _create_user_data(self) -> pulumi.Output[str]:
+        """Create base64-encoded user data for custom AMI bootstrap via nodeadm.
+
+        See https://awslabs.github.io/amazon-eks-ami/nodeadm/
+        """
+        return pulumi.Output.all(
+            self.cluster.eks_cluster.name,
+            self.cluster.eks_cluster.endpoint,
+            self.cluster.eks_cluster.certificate_authorities[0].data,
+            self.cluster.eks_cluster.kubernetes_network_configs[0].service_ipv4_cidr,
+        ).apply(
+            lambda args: base64.b64encode(
+                f"""MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="==BOUNDARY=="
+
+--==BOUNDARY==
+Content-Type: application/node.eks.aws
+
+---
+apiVersion: node.eks.aws/v1alpha1
+kind: NodeConfig
+spec:
+  cluster:
+    name: {args[0]}
+    apiServerEndpoint: {args[1]}
+    certificateAuthority: {args[2]}
+    cidr: {args[3]}
+--==BOUNDARY==--
+""".encode()
+            ).decode("utf-8")
+        )
+
     def _create_launch_template(
         self,
         name: str,
@@ -195,6 +230,8 @@ class EKS(pulumi.ComponentResource):
                 http_put_response_hop_limit=2,
                 http_tokens="optional",
             ),
+            image_id=self.config.custom_ami_id,
+            user_data=self._base64_encoded_user_data,
             tag_specifications=[
                 aws.ec2.LaunchTemplateTagSpecificationArgs(
                     resource_type="instance",
@@ -237,7 +274,7 @@ class EKS(pulumi.ComponentResource):
             ),
             node_role_arn=node_role.arn,
             subnet_ids=vpc.private_subnet_ids,
-            ami_type="AL2023_x86_64_STANDARD",
+            ami_type="AL2023_x86_64_STANDARD" if self.config.custom_ami_id is None else "CUSTOM",
             instance_types=[np_config.instance_type],
             # disk_size is configured in launch template
             scaling_config=aws.eks.NodeGroupScalingConfigArgs(
@@ -290,3 +327,7 @@ class EKS(pulumi.ComponentResource):
     @property
     def cluster_security_group_id(self) -> pulumi.Output[str]:
         return self.cluster.eks_cluster.vpc_config.cluster_security_group_id
+
+    @property
+    def base64_encoded_user_data(self) -> pulumi.Output[str] | None:
+        return self._base64_encoded_user_data
