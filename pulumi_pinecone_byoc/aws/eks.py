@@ -4,8 +4,8 @@ EKS component for Pinecone BYOC infrastructure.
 Creates a managed EKS cluster with configurable node groups.
 """
 
-import json
 import base64
+import json
 
 import pulumi
 import pulumi_aws as aws
@@ -197,7 +197,7 @@ spec:
     certificateAuthorityData: {args[2]}
     cidr: {args[3]}
 --==BOUNDARY==--
-""".encode("utf-8")
+""".encode()
             ).decode("utf-8")
         )
 
