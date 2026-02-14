@@ -177,7 +177,7 @@ class EKS(pulumi.ComponentResource):
         return pulumi.Output.all(
             self.cluster.eks_cluster.name,
             self.cluster.eks_cluster.endpoint,
-            self.cluster.eks_cluster.certificate_authority.data,
+            self.cluster.eks_cluster.certificate_authorities[0].data,
             self.cluster.eks_cluster.kubernetes_network_configs[0].service_ipv4_cidr,
         ).apply(
             lambda args: base64.b64encode(
@@ -194,7 +194,7 @@ spec:
   cluster:
     name: {args[0]}
     apiServerEndpoint: {args[1]}
-    certificateAuthorityData: {args[2]}
+    certificateAuthority: {args[2]}
     cidr: {args[3]}
 --==BOUNDARY==--
 """.encode()
