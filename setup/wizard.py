@@ -760,6 +760,7 @@ class AWSPreflightChecker:
 
 
 class AWSSetupWizard(BaseSetupWizard):
+    TOTAL_STEPS = 14
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
@@ -786,6 +787,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         region = self._get_region()
         azs = self._get_azs(region)
+        custom_ami_id = self._get_custom_ami_id()
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
@@ -809,6 +811,7 @@ class AWSSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             tags,
+            custom_ami_id=custom_ami_id,
         )
 
     def _run_headless(self, output_dir: str) -> bool:
@@ -828,6 +831,7 @@ class AWSSetupWizard(BaseSetupWizard):
         )
         public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
         project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
+        custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
 
         return self._generate_project(
             output_dir,
@@ -839,6 +843,7 @@ class AWSSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
+            custom_ami_id=custom_ami_id,
         )
 
     def _validate_aws_creds(self) -> bool:
@@ -900,6 +905,14 @@ class AWSSetupWizard(BaseSetupWizard):
         azs = [az.strip() for az in azs_input.split(",")]
         return azs
 
+    def _get_custom_ami_id(self) -> str | None:
+        console.print()
+        console.print(f"  {self._step('Custom AMI (Optional)')}")
+        console.print("  [dim]Specify a custom AMI ID for EKS nodes (leave blank for default AWS AMI)[/]")
+        console.print()
+        ami_id = self._prompt("Enter AMI ID (or press Enter to skip)", "")
+        return ami_id or None
+
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
@@ -926,6 +939,7 @@ class AWSSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         tags: dict[str, str],
+        custom_ami_id: str | None = None,
     ):
         console.print()
 
@@ -970,6 +984,7 @@ cluster = PineconeAWSCluster(
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        custom_ami_id=config.get("custom-ami-id"),
         tags=config.get_object("tags"),
     ),
 )
@@ -1013,6 +1028,10 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
 """
         for az in azs:
             config_content += f"    - {az}\n"
+
+        # add custom AMI ID if provided
+        if custom_ami_id:
+            config_content += f"  {project_name}:custom-ami-id: {custom_ami_id}\n"
 
         # add tags if provided (quote values to handle YAML special chars)
         if tags:
