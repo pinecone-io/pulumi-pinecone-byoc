@@ -379,6 +379,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
             "base64_encoded_user_data": self._eks.base64_encoded_user_data,
+            "custom_ami_id": args.custom_ami_id,
         }
 
         self._k8s_configmaps = K8sConfigMaps(
