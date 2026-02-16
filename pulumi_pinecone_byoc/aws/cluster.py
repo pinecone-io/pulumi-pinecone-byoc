@@ -80,6 +80,9 @@ class PineconeAWSClusterArgs:
     # gcp_project is needed by some helmfiles even for AWS clusters (cross-cloud monitoring/metrics)
     gcp_project: str = "production-pinecone"
 
+    # custom AMI
+    custom_ami_id: str | None = None
+
     # tags
     tags: dict[str, str] | None = None
 
@@ -375,6 +378,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
+            "base64_encoded_user_data": self._eks.base64_encoded_user_data,
+            "custom_ami_id": args.custom_ami_id,
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -509,6 +514,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
             database=DatabaseConfig(deletion_protection=args.deletion_protection),
+            custom_ami_id=args.custom_ami_id,
             custom_tags=args.tags or {},
         )
 
