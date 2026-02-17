@@ -10,15 +10,17 @@ class NodePoolTaint(BaseModel):
 
 
 class NodePoolConfig(BaseModel):
-    """Shared node pool config. AWS reads instance_type/desired_size/disk_type; GCP reads machine_type."""
+    """Shared node pool config. Each cloud reads its own field: instance_type (AWS), machine_type (GCP), vm_size (Azure)."""
 
     name: str
-    # AWS-only (ignored by GCP)
+    # AWS-only
     instance_type: str = "r6in.large"
     desired_size: int = 3
     disk_type: str = "gp3"
-    # GCP-only (ignored by AWS)
+    # GCP-only
     machine_type: str = "n2-standard-4"
+    # Azure-only
+    vm_size: str = "Standard_D4s_v5"
     # Common
     min_size: int = 1
     max_size: int = 10

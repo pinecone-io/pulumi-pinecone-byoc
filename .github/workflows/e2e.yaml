@@ -19,6 +19,7 @@ jobs:
     outputs:
       aws: ${{ steps.filter.outputs.aws }}
       gcp: ${{ steps.filter.outputs.gcp }}
+      azure: ${{ steps.filter.outputs.azure }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -31,16 +32,18 @@ jobs:
               - 'config/aws.py'
               - 'config/base.py'
               - 'config/__init__.py'
-              - 'setup/wizard.py'
-              - 'setup/aws_wizard.py'
             gcp:
               - 'pulumi_pinecone_byoc/gcp/**'
               - 'pulumi_pinecone_byoc/common/**'
               - 'config/gcp.py'
               - 'config/base.py'
               - 'config/__init__.py'
-              - 'setup/wizard.py'
-              - 'setup/gcp_wizard.py'
+            azure:
+              - 'pulumi_pinecone_byoc/azure/**'
+              - 'pulumi_pinecone_byoc/common/**'
+              - 'config/azure.py'
+              - 'config/base.py'
+              - 'config/__init__.py'
 
   aws:
     needs: changes
@@ -54,19 +57,26 @@ jobs:
     uses: ./.github/workflows/gcp.yaml
     secrets: inherit
 
+  azure:
+    needs: changes
+    if: needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch'
+    uses: ./.github/workflows/azure.yaml
+    secrets: inherit
+
   result:
     if: always()
-    needs: [changes, aws, gcp]
+    needs: [changes, aws, gcp, azure]
     runs-on: ubuntu-latest
     steps:
       - run: |
           echo "AWS: ${{ needs.aws.result }}"
           echo "GCP: ${{ needs.gcp.result }}"
-          if [ "${{ needs.aws.result }}" = "failure" ] || [ "${{ needs.gcp.result }}" = "failure" ]; then
+          echo "Azure: ${{ needs.azure.result }}"
+          if [ "${{ needs.aws.result }}" = "failure" ] || [ "${{ needs.gcp.result }}" = "failure" ] || [ "${{ needs.azure.result }}" = "failure" ]; then
             echo "E2E failed"
             exit 1
           fi
-          if [ "${{ needs.aws.result }}" = "cancelled" ] || [ "${{ needs.gcp.result }}" = "cancelled" ]; then
+          if [ "${{ needs.aws.result }}" = "cancelled" ] || [ "${{ needs.gcp.result }}" = "cancelled" ] || [ "${{ needs.azure.result }}" = "cancelled" ]; then
             echo "E2E cancelled"
             exit 1
           fi

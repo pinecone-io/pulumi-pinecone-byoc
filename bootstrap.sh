@@ -8,6 +8,7 @@
 # With cloud pre-selected:
 #   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash -s -- --cloud aws
 #   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash -s -- --cloud gcp
+#   curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main/bootstrap.sh | bash -s -- --cloud azure
 #
 set -e
 
@@ -70,11 +71,14 @@ if [ "$CLOUD" = "aws" ]; then
     check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" || missing=1
 elif [ "$CLOUD" = "gcp" ]; then
     check_command "gcloud" "Google Cloud SDK" "https://cloud.google.com/sdk/docs/install" || missing=1
+elif [ "$CLOUD" = "azure" ]; then
+    check_command "az" "Azure CLI" "https://learn.microsoft.com/en-us/cli/azure/install-azure-cli" || missing=1
 else
     # no cloud pre-selected: require at least one cloud CLI
     has_cloud=0
     check_command "aws" "AWS CLI" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html" && has_cloud=1
     check_command "gcloud" "Google Cloud SDK" "https://cloud.google.com/sdk/docs/install" && has_cloud=1
+    check_command "az" "Azure CLI" "https://learn.microsoft.com/en-us/cli/azure/install-azure-cli" && has_cloud=1
     if [ $has_cloud -eq 0 ]; then
         missing=1
     fi
@@ -118,6 +122,16 @@ if [ "$CLOUD" = "gcp" ] || [ -z "$CLOUD" ]; then
         fi
     fi
 fi
+if [ "$CLOUD" = "azure" ] || [ -z "$CLOUD" ]; then
+    if command -v az &> /dev/null; then
+        echo "Checking Azure credentials..."
+        if az account show &> /dev/null 2>&1; then
+            echo -e "  ${GREEN}✓${RESET} Azure credentials configured"
+        else
+            echo -e "  ${DIM}Azure credentials not configured (needed for Azure deployments)${RESET}"
+        fi
+    fi
+fi
 
 echo ""
 
@@ -152,6 +166,8 @@ if [ "$CLOUD" = "aws" ]; then
     CLOUD_DEPS='    "boto3>=1.42.0",'
 elif [ "$CLOUD" = "gcp" ]; then
     CLOUD_DEPS='    "google-auth>=2.0.0",'
+elif [ "$CLOUD" = "azure" ]; then
+    CLOUD_DEPS=''
 else
     CLOUD_DEPS='    "boto3>=1.42.0",
     "google-auth>=2.0.0",'

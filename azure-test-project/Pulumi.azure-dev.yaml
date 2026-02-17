@@ -1,0 +1,13 @@
+config:
+  pinecone-byoc:pinecone-api-key:
+    secure: AAABAMyPnOIeGr5MX8AYP+RMyaMxhNIgdvWOoU3cDUTL6DPWnUH7pGSz8Ky1Ff7SDCPbkD8CVmFQ96CsmdB+Pr/zZBtgzzQ32x4t1Sn7uH5A3erHzCP6sDrgQr7/r8pqd5eZMHwe3YaxzFs=
+  pinecone-byoc:region: eastus2
+  pinecone-byoc:availability-zones: '["2","3"]'
+  pinecone-byoc:vpc-cidr: 172.16.0.0/16
+  pinecone-byoc:pinecone-version: main-3ec9b2d
+  pinecone-byoc:subscription-id: 1c9ff4ca-dfa4-43ac-b461-3d4d68168e54
+  pinecone-byoc:global-env: dev
+  pinecone-byoc:api-url: https://api-staging.pinecone.io
+  pinecone-byoc:auth0-domain: https://internal-beta-pinecone-io.us.auth0.com
+  pinecone-byoc:deletion-protection: "false"
+  pinecone-byoc:public-access-enabled: "false"

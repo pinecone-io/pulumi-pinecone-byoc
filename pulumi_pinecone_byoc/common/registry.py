@@ -3,9 +3,10 @@
 from dataclasses import dataclass
 from typing import Literal
 
-PINETOOLS_TAG = "latest"
+# TODO: revert to "latest" after testing
+PINETOOLS_TAG = "smbyoc-13"
 
-RegistryType = Literal["ecr", "gcr"]
+RegistryType = Literal["ecr", "gcr", "acr"]
 
 
 @dataclass(frozen=True)
@@ -26,4 +27,9 @@ AWS_REGISTRY = ContainerRegistry(
 GCP_REGISTRY = ContainerRegistry(
     base_url="us-docker.pkg.dev/pinecone-artifacts/unstable",
     type="gcr",
+)
+
+AZURE_REGISTRY = ContainerRegistry(
+    base_url="pinecone.azurecr.io/unstable/pinecone/v4",
+    type="acr",
 )

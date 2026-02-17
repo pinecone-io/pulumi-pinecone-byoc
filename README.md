@@ -2,7 +2,7 @@
 
 [![PyPI version](https://img.shields.io/pypi/v/pulumi-pinecone-byoc)](https://pypi.org/project/pulumi-pinecone-byoc/)
 
-Deploy Pinecone in your own cloud account (AWS or GCP) with full control over your infrastructure.
+Deploy Pinecone in your own cloud account (AWS, GCP, or Azure) with full control over your infrastructure.
 
 ![Demo](./assets/demo.gif)
 
@@ -15,7 +15,7 @@ curl -fsSL https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/ma
 ```
 
 This will:
-1. Select your cloud provider (AWS or GCP)
+1. Select your cloud provider (AWS, GCP, or Azure)
 2. Check that required tools are installed (Python 3.12+, uv, cloud CLI, Pulumi, kubectl)
 3. Verify your cloud credentials
 4. Run an interactive setup wizard
@@ -32,7 +32,7 @@ Provisioning takes approximately 25-30 minutes.
 
 ## Prerequisites
 
-### Common Tools (Required for Both AWS and GCP)
+### Common Tools (Required for All Clouds)
 
 | Tool | Purpose | Install |
 |------|---------|---------|
@@ -53,16 +53,21 @@ Provisioning takes approximately 25-30 minutes.
 |------|---------|---------|
 | gcloud CLI | GCP access | [GCP docs](https://cloud.google.com/sdk/docs/install) |
 
+**Azure**
+| Tool | Purpose | Install |
+|------|---------|---------|
+| Azure CLI | Azure access | [Azure docs](https://learn.microsoft.com/en-us/cli/azure/install-azure-cli) |
+
 ## Architecture
 
 ```
 ┌──────────────────────┐                    ┌───────────────────────────────────────────────┐
-│                      │    operations      │              Your AWS/GCP Account (VPC)       │
+│                      │    operations      │         Your AWS/GCP/Azure Account (VPC)      │
 │  Pinecone            │───────────────────▶│                                               │
 │  Control Plane       │                    │  ┌─────────────┐  ┌─────────────────────────┐ │
 │                      │◀───────────────────│  │  Control    │  │                         │ │
 │                      │   cluster state    │  │  Plane      │  │    Cluster Manager      │ │
-└──────────────────────┘                    │  └─────────────┘  │        (EKS/GKE)        │ │
+└──────────────────────┘                    │  └─────────────┘  │     (EKS/GKE/AKS)      │ │
                                             │  ┌─────────────┐  └─────────────────────────┘ │
                                             │  │  Heartbeat  │                              │
                                             │  └─────────────┘                              │
@@ -72,9 +77,10 @@ Provisioning takes approximately 25-30 minutes.
 │  Observability (DD)  │   traces           │  │                                           ││
 │                      │                    │  └───────────────────────────────────────────┘│
 └──────────────────────┘                    │  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
-                                            │  │  S3/GCS  │  |   RDS/   |  │  Route53/   │  │
-        No customer data                    │  │  Buckets │  │  Alloy   │  |  Cloud DNS  |  │
-        leaves the cluster                  │  └──────────┘  └──────────┘  └─────────────┘  │
+                                            │  │ S3/GCS/  │  | RDS/Allo|  │ Route53/    │  │
+        No customer data                    │  │  Blob    │  │ yDB/Flex│  | CloudDNS/  |  │
+        leaves the cluster                  │  └──────────┘  └──────────┘  | Azure DNS  |  │
+                                            │                              └─────────────┘  │
                                             └───────────────────────────────────────────────┘
 ```
 
@@ -104,6 +110,11 @@ aws eks update-kubeconfig --region <region> --name <cluster-name>
 **GCP:**
 ```bash
 gcloud container clusters get-credentials <cluster-name> --region <region> --project <project-id>
+```
+
+**Azure:**
+```bash
+az aks get-credentials --resource-group <resource-group> --name <cluster-name>
 ```
 
 The exact command is output after `pulumi up` completes.
@@ -147,6 +158,19 @@ The setup wizard creates a Pulumi stack with these configurable options:
 | `public_access_enabled` | Enable public endpoint (false = Private Service Connect only) | `true` |
 | `labels` | Custom labels to apply to all resources | `{}` |
 
+**Azure Configuration Options:**
+
+| Option | Description | Default |
+|--------|-------------|---------|
+| `pinecone-version` | Pinecone release version (required) | — |
+| `subscription-id` | Azure subscription ID (required) | — |
+| `region` | Azure region | `eastus` |
+| `availability_zones` | Zones for high availability | `["1", "2"]` |
+| `vpc_cidr` | VNet IP range | `10.0.0.0/16` |
+| `deletion_protection` | Protect databases/storage from accidental deletion | `true` |
+| `public_access_enabled` | Enable public endpoint (false = Private Link only) | `true` |
+| `tags` | Custom tags to apply to all resources | `{}` |
+
 Edit `Pulumi.<stack>.yaml` to modify these values.
 
 ## Programmatic Usage
@@ -189,6 +213,9 @@ uv add 'pulumi-pinecone-byoc[aws]'
 
 # For GCP
 uv add 'pulumi-pinecone-byoc[gcp]'
+
+# For Azure
+uv add 'pulumi-pinecone-byoc[azure]'
 ```
 
 ## Troubleshooting
@@ -208,6 +235,12 @@ The setup wizard runs preflight checks for cloud quotas. If these fail:
 2. **Compute Quotas** - Request CPU/disk quota increases via GCP Console
 3. **GKE Clusters** - Request a limit increase if at quota
 4. **IP Addresses** - Release unused static IPs or request more
+
+**Azure:**
+1. **Resource Providers** - Register required providers (Microsoft.Compute, Microsoft.ContainerService, etc.)
+2. **vCPU Quotas** - Request vCPU quota increases via Azure Portal
+3. **AKS Clusters** - Request a limit increase if at quota
+4. **Storage Accounts** - Ensure unique naming (3-24 lowercase alphanumeric characters)
 
 ### Deployment failures
 
@@ -229,6 +262,9 @@ aws sts get-caller-identity
 # GCP
 gcloud auth list
 gcloud config get-value project
+
+# Azure
+az account show
 ```
 
 ## Cleanup

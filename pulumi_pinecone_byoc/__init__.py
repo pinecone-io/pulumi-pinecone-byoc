@@ -1,11 +1,12 @@
 """
 pulumi-pinecone-byoc - Pulumi components for Pinecone BYOC clusters.
 
-Multi-cloud support: AWS and GCP.
+Multi-cloud support: AWS, GCP, and Azure.
 
 Usage:
     from pulumi_pinecone_byoc.aws import PineconeAWSCluster
     from pulumi_pinecone_byoc.gcp import PineconeGCPCluster
+    from pulumi_pinecone_byoc.azure import PineconeAzureCluster
 """
 
 try:

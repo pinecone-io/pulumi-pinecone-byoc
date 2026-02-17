@@ -1815,6 +1815,689 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         return True
 
 
+# ---------------------------------------------------------------------------
+# Azure Setup Wizard
+# ---------------------------------------------------------------------------
+
+
+class AzurePreflightChecker:
+    def __init__(self, subscription_id: str, region: str, zones: list[str], cidr: str):
+        self.subscription_id = subscription_id
+        self.region = region
+        self.zones = zones
+        self.cidr = cidr
+        self.results: list[PreflightResult] = []
+
+    def run_checks(self) -> bool:
+        checks = [
+            ("Resource Providers", self._check_resource_providers),
+            ("PostgreSQL Flexible Server", self._check_postgres_availability),
+            ("vCPU Quota", self._check_vcpu_quota),
+            ("AKS Clusters", self._check_aks_quota),
+            ("Availability Zones", self._check_zones),
+            ("VNet CIDR", self._check_cidr_conflicts),
+        ]
+
+        for name, check_fn in checks:
+            with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
+                check_fn()
+
+            r = self.results[-1]
+            status = "✓" if r.passed else "✗"
+            color = "green" if r.passed else "red"
+            console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
+            if r.details and not r.passed:
+                console.print(f"    [dim]{r.details}[/]")
+
+        failed = [r for r in self.results if not r.passed]
+        return len(failed) == 0
+
+    def _add_result(self, name: str, passed: bool, message: str, details: str | None = None):
+        result = PreflightResult(name, passed, message, details)
+        self.results.append(result)
+
+    def _az_json(self, args: list[str]):
+        import json
+
+        result = subprocess.run(
+            ["az"] + args + ["--output", "json"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip().split("\n")[0])
+        return json.loads(result.stdout)
+
+    def _check_resource_providers(self):
+        required_providers = [
+            "Microsoft.Compute",
+            "Microsoft.ContainerService",
+            "Microsoft.DBforPostgreSQL",
+            "Microsoft.Storage",
+            "Microsoft.Network",
+            "Microsoft.KeyVault",
+            "Microsoft.ManagedIdentity",
+            "Microsoft.Authorization",
+        ]
+
+        try:
+            providers = self._az_json(["provider", "list"])
+            registered = {
+                p["namespace"] for p in providers if p.get("registrationState") == "Registered"
+            }
+            missing = [p for p in required_providers if p not in registered]
+
+            if missing:
+                self._add_result(
+                    "Resource Providers",
+                    False,
+                    f"{len(missing)} not registered: {', '.join(missing)}",
+                    f"Run: az provider register --namespace {missing[0]}",
+                )
+            else:
+                self._add_result(
+                    "Resource Providers",
+                    True,
+                    f"All {len(required_providers)} required providers registered",
+                )
+        except Exception as e:
+            self._add_result("Resource Providers", False, f"Failed to check: {e}")
+
+    def _check_postgres_availability(self):
+        try:
+            result = subprocess.run(
+                [
+                    "az",
+                    "postgres",
+                    "flexible-server",
+                    "list-skus",
+                    "--location",
+                    self.region,
+                    "--subscription",
+                    self.subscription_id,
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                self._add_result(
+                    "PostgreSQL Flexible Server",
+                    False,
+                    f"Failed: {result.stderr.strip().split(chr(10))[0]}",
+                )
+                return
+
+            import json
+
+            skus = json.loads(result.stdout)
+            if not skus:
+                self._add_result(
+                    "PostgreSQL Flexible Server",
+                    False,
+                    f"No SKUs available in {self.region}",
+                    "Choose a different region",
+                )
+                return
+
+            # check if provisioning is restricted in this region
+            reason = skus[0].get("reason") or ""
+            if "restricted" in reason.lower():
+                self._add_result(
+                    "PostgreSQL Flexible Server",
+                    False,
+                    f"Provisioning restricted in {self.region}",
+                    "Choose a different region or request a quota increase",
+                )
+                return
+
+            # check that our target SKU (Standard_D2s_v3) is available
+            target_sku = "Standard_D2s_v3"
+            found = False
+            for cap in skus:
+                for edition in cap.get("supportedServerEditions", []):
+                    if edition.get("name") == "GeneralPurpose":
+                        for sku in edition.get("supportedServerSkus", []):
+                            if sku.get("name") == target_sku:
+                                found = True
+                                break
+
+            if found:
+                self._add_result(
+                    "PostgreSQL Flexible Server",
+                    True,
+                    f"{target_sku} available in {self.region}",
+                )
+            else:
+                self._add_result(
+                    "PostgreSQL Flexible Server",
+                    False,
+                    f"{target_sku} not available in {self.region}",
+                    "Choose a different region or VM SKU",
+                )
+        except Exception as e:
+            self._add_result("PostgreSQL Flexible Server", False, f"Failed to check: {e}")
+
+    def _check_vcpu_quota(self):
+        try:
+            usages = self._az_json(
+                [
+                    "vm",
+                    "list-usage",
+                    "--location",
+                    self.region,
+                    "--subscription",
+                    self.subscription_id,
+                ]
+            )
+            # check total regional vCPUs
+            for usage in usages:
+                if usage.get("name", {}).get("value") == "cores":
+                    current = int(usage.get("currentValue", 0))
+                    limit = int(usage.get("limit", 0))
+                    available = limit - current
+                    # need at least 8 vCPUs for default node pool
+                    self._add_result(
+                        "vCPU Quota",
+                        available >= 8,
+                        f"{available} available [dim](using {current}/{limit})[/]",
+                        "Request quota increase for 'Total Regional vCPUs'"
+                        if available < 8
+                        else None,
+                    )
+                    return
+            self._add_result("vCPU Quota", True, "Could not determine quota, skipping")
+        except Exception as e:
+            self._add_result("vCPU Quota", False, f"Failed to check: {e}")
+
+    def _check_aks_quota(self):
+        try:
+            clusters = self._az_json(
+                [
+                    "aks",
+                    "list",
+                    "--subscription",
+                    self.subscription_id,
+                ]
+            )
+            current = len(clusters) if isinstance(clusters, list) else 0
+            quota = 100
+            available = quota - current
+            self._add_result(
+                "AKS Clusters",
+                available >= 1,
+                f"{available} available [dim](using {current}/{quota})[/]",
+            )
+        except Exception as e:
+            self._add_result("AKS Clusters", False, f"Failed to check: {e}")
+
+    def _check_zones(self):
+        try:
+            import json
+
+            # use REST API directly - much faster than `az vm list-skus` CLI
+            result = subprocess.run(
+                [
+                    "az", "rest", "--method", "get",
+                    "--url",
+                    f"https://management.azure.com/subscriptions/{self.subscription_id}"
+                    f"/providers/Microsoft.Compute/skus?api-version=2021-07-01"
+                    f"&$filter=location eq '{self.region}'",
+                    "--output", "json",
+                ],
+                capture_output=True, text=True, timeout=30,
+            )
+            if result.returncode != 0:
+                self._add_result("Availability Zones", False, f"Failed: {result.stderr.strip()}")
+                return
+
+            data = json.loads(result.stdout)
+            available_zones: set[str] = set()
+            restricted_zones: set[str] = set()
+
+            for sku in data.get("value", []):
+                if sku.get("name") != "Standard_D4s_v3" or sku.get("resourceType") != "virtualMachines":
+                    continue
+                for loc in sku.get("locationInfo", []):
+                    available_zones.update(loc.get("zones", []))
+                for restriction in sku.get("restrictions", []):
+                    if restriction.get("type") == "Zone":
+                        zones = restriction.get("restrictionInfo", {}).get("zones", [])
+                        restricted_zones.update(zones)
+
+            available_zones -= restricted_zones
+
+            if not available_zones:
+                self._add_result("Availability Zones", False, "No zones available for Standard_D4s_v3")
+                return
+
+            invalid = [z for z in self.zones if z not in available_zones]
+            if invalid:
+                self._add_result(
+                    "Availability Zones",
+                    False,
+                    f"Zones not available: {', '.join(invalid)}",
+                    f"Valid zones for {self.region}: {', '.join(sorted(available_zones))}",
+                )
+            else:
+                self._add_result("Availability Zones", True, "All requested zones available")
+        except Exception as e:
+            self._add_result("Availability Zones", False, f"Failed to check: {e}")
+
+    def _check_cidr_conflicts(self):
+        import ipaddress
+
+        try:
+            target_net = ipaddress.ip_network(self.cidr)
+        except ValueError:
+            self._add_result(
+                "VNet CIDR",
+                False,
+                f"Invalid CIDR: {self.cidr}",
+                "Enter a valid CIDR block (e.g., 10.0.0.0/16)",
+            )
+            return
+
+        try:
+            vnets = self._az_json(
+                [
+                    "network",
+                    "vnet",
+                    "list",
+                    "--subscription",
+                    self.subscription_id,
+                ]
+            )
+            if not isinstance(vnets, list):
+                vnets = []
+
+            conflicts = []
+            for vnet in vnets:
+                for prefix in vnet.get("addressSpace", {}).get("addressPrefixes", []):
+                    try:
+                        existing_net = ipaddress.ip_network(prefix)
+                        if target_net.overlaps(existing_net):
+                            conflicts.append(prefix)
+                    except ValueError:
+                        continue
+
+            if conflicts:
+                self._add_result(
+                    "VNet CIDR",
+                    False,
+                    f"{self.cidr} conflicts with existing VNets: {', '.join(conflicts)}",
+                    "Choose a non-overlapping CIDR block",
+                )
+            else:
+                self._add_result("VNet CIDR", True, f"{self.cidr} has no conflicts")
+        except Exception as e:
+            self._add_result("VNet CIDR", False, f"Failed to check: {e}")
+
+
+class AzureSetupWizard(BaseSetupWizard):
+    HEADER_TITLE = "Pinecone BYOC Setup Wizard - Azure"
+    HEADER_SUBTITLE = (
+        "This wizard will set up everything you need to deploy Pinecone BYOC on Azure."
+    )
+    DEFAULT_CIDR = "10.0.0.0/16"
+    DELETION_PROTECTION_DESC = (
+        "Protect PostgreSQL databases and storage accounts from accidental deletion"
+    )
+    PRIVATE_ACCESS_DESC = "Private access requires Azure Private Link (more secure)"
+    METADATA_NAME = "tags"
+    CLOUD_NAME = "Azure"
+
+    def run(self, output_dir: str = ".") -> bool:
+        if self._headless:
+            return self._run_headless(output_dir)
+
+        self._print_header()
+
+        api_key = self._get_api_key()
+        if not api_key:
+            return False
+
+        if not self._validate_api_key(api_key):
+            return False
+
+        subscription_id = self._validate_azure_creds()
+        if not subscription_id:
+            return False
+
+        subscription_id = self._get_subscription_id(subscription_id)
+        region = self._get_region()
+        zones = self._get_zones(region)
+        cidr = self._get_cidr()
+        deletion_protection = self._get_deletion_protection()
+        public_access = self._get_public_access()
+        tags = self._get_custom_metadata()
+
+        if not self._run_preflight_checks(subscription_id, region, zones, cidr):
+            return False
+
+        project_name = self._get_project_name()
+
+        if not self._setup_pulumi_backend():
+            return False
+
+        return self._generate_project(
+            output_dir,
+            project_name,
+            api_key,
+            subscription_id,
+            region,
+            zones,
+            cidr,
+            deletion_protection,
+            public_access,
+            tags,
+        )
+
+    def _run_headless(self, output_dir: str) -> bool:
+        console.print("  [dim]Running in headless mode (reading from environment)[/]")
+
+        api_key = os.environ.get("PINECONE_API_KEY")
+        if not api_key:
+            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
+            return False
+
+        subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
+        if not subscription_id:
+            console.print("  [red]✗[/] AZURE_SUBSCRIPTION_ID environment variable is required")
+            return False
+
+        region = os.environ.get("PINECONE_REGION", "eastus")
+        zones_str = os.environ.get("PINECONE_AZS", "1,2")
+        zones = [z.strip() for z in zones_str.split(",")]
+        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
+        deletion_protection = (
+            os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
+        )
+        public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
+        project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
+
+        return self._generate_project(
+            output_dir,
+            project_name,
+            api_key,
+            subscription_id,
+            region,
+            zones,
+            cidr,
+            deletion_protection,
+            public_access,
+            {},
+        )
+
+    def _validate_azure_creds(self) -> str | None:
+        console.print()
+        console.print(f"  {self._step('Azure Credentials')}")
+        console.print()
+
+        with Status("  [dim]Validating Azure credentials...[/]", console=console, spinner="dots"):
+            try:
+                import json
+
+                result = subprocess.run(
+                    ["az", "account", "show", "--output", "json"],
+                    capture_output=True,
+                    text=True,
+                )
+                if result.returncode == 0 and result.stdout.strip():
+                    account = json.loads(result.stdout)
+                    subscription_id = account.get("id", "")
+                    subscription_name = account.get("name", "")
+                    console.print(
+                        f"  [green]✓[/] Azure credentials valid "
+                        f"[dim](Subscription: {subscription_name} / {subscription_id})[/]"
+                    )
+                    return subscription_id
+                else:
+                    raise Exception("Could not determine Azure subscription")
+
+            except Exception as e:
+                console.print(f"  [red]✗[/] Azure credentials invalid: {e}")
+                console.print()
+                console.print("  [dim]Make sure you have valid Azure credentials configured.[/]")
+                console.print("  [dim]You can set them via:[/]")
+                console.print("    [dim]· az login[/]")
+                console.print("    [dim]· az account set --subscription SUBSCRIPTION_ID[/]")
+                console.print("    [dim]· AZURE_SUBSCRIPTION_ID environment variable[/]")
+                return None
+
+    def _get_subscription_id(self, detected_subscription: str) -> str:
+        console.print()
+        console.print(f"  {self._step('Azure Subscription ID')}")
+        console.print()
+        return self._prompt("Enter Azure subscription ID", detected_subscription)
+
+    def _get_region(self) -> str:
+        console.print()
+        console.print(f"  {self._step('Azure Region')}")
+        console.print()
+        return self._prompt("Enter Azure region", "eastus")
+
+    def _get_zones(self, region: str) -> list[str]:
+        console.print()
+        console.print(f"  {self._step('Availability Zones')}")
+        console.print()
+
+        default_zones = ["1", "2"]
+        console.print(f"  [dim]Default zones for {region}:[/] {', '.join(default_zones)}")
+
+        zones_input = self._prompt("Enter zones (comma-separated)", ",".join(default_zones))
+        zones = [zone.strip() for zone in zones_input.split(",")]
+        return zones
+
+    def _run_preflight_checks(
+        self, subscription_id: str, region: str, zones: list[str], cidr: str
+    ) -> bool:
+        console.print()
+        console.print(f"  {self._step('Preflight Checks')}")
+        console.print()
+
+        checker = AzurePreflightChecker(subscription_id, region, zones, cidr)
+        if not checker.run_checks():
+            console.print()
+            console.print(
+                "  [red]Preflight checks failed. Fix the issues above before proceeding.[/]"
+            )
+            return False
+
+        return True
+
+    def _generate_project(
+        self,
+        output_dir: str,
+        project_name: str,
+        api_key: str,
+        subscription_id: str,
+        region: str,
+        zones: list[str],
+        cidr: str,
+        deletion_protection: bool,
+        public_access: bool,
+        tags: dict[str, str],
+    ):
+        console.print()
+
+        if not self._check_pulumi_installed():
+            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print("  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/")
+            return False
+
+        pulumi_yaml = {
+            "name": project_name,
+            "runtime": {
+                "name": "python",
+                "options": {"virtualenv": ".venv", "toolchain": "uv"},
+            },
+            "description": "Pinecone BYOC deployment on Azure",
+        }
+
+        os.makedirs(output_dir, exist_ok=True)
+        pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
+        with open(pulumi_yaml_path, "w") as f:
+            yaml.dump(pulumi_yaml, f, default_flow_style=False)
+        console.print("  [green]✓[/] Created Pulumi.yaml")
+
+        main_py = '''"""Pinecone BYOC deployment on Azure."""
+
+import pulumi
+from pulumi_pinecone_byoc.azure import PineconeAzureCluster, PineconeAzureClusterArgs
+
+config = pulumi.Config()
+
+cluster = PineconeAzureCluster(
+    "pinecone-byoc",
+    PineconeAzureClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        subscription_id=config.require("subscription-id"),
+        region=config.require("region"),
+        availability_zones=config.require_object("availability-zones"),
+        vpc_cidr=config.get("vpc-cidr") or "10.0.0.0/16",
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        tags=config.get_object("tags"),
+    ),
+)
+
+region = config.require("region")
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"az aks get-credentials --resource-group {name.removeprefix('cluster-')}-{region}-rg --name {name}"
+)
+pulumi.export("environment", cluster.environment.env_name)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+'''
+
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
+
+        pyproject_content = """[project]
+name = "pinecone-byoc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = ["pulumi-pinecone-byoc[azure]"]
+"""
+        pyproject_path = os.path.join(output_dir, "pyproject.toml")
+        with open(pyproject_path, "w") as f:
+            f.write(pyproject_content)
+        console.print("  [green]✓[/] Created pyproject.toml")
+
+        stack_name = self._stack_name
+        deletion_protection_str = str(deletion_protection).lower()
+        public_access_str = str(public_access).lower()
+        config_content = f"""config:
+  {project_name}:subscription-id: {subscription_id}
+  {project_name}:region: {region}
+  {project_name}:pinecone-version: main-818794e
+  {project_name}:vpc-cidr: {cidr}
+  {project_name}:deletion-protection: {deletion_protection_str}
+  {project_name}:public-access-enabled: {public_access_str}
+  {project_name}:availability-zones:
+"""
+        for zone in zones:
+            config_content += f'    - "{zone}"\n'
+
+        if tags:
+            config_content += f"  {project_name}:tags:\n"
+            for key, value in tags.items():
+                config_content += f'    {key}: "{value}"\n'
+
+        config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
+        with open(config_path, "w") as f:
+            f.write(config_content)
+        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+
+        if self._skip_install:
+            return True
+
+        with Status("  [dim]Installing dependencies...[/]", console=console, spinner="dots"):
+            result = subprocess.run(
+                ["uv", "sync"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            version_result = subprocess.run(
+                ["uv", "pip", "show", "pulumi-pinecone-byoc"],
+                cwd=output_dir,
+                capture_output=True,
+                text=True,
+            )
+            pkg_version = "unknown"
+            for line in version_result.stdout.splitlines():
+                if line.startswith("Version:"):
+                    pkg_version = line.split(":", 1)[1].strip()
+                    break
+            console.print(
+                f"  [green]✓[/] Dependencies installed "
+                f"[dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+            )
+        else:
+            console.print(f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}")
+            console.print("  [dim]Run manually:[/] uv sync")
+            return False
+
+        with Status("  [dim]Initializing stack...[/]", console=console, spinner="dots"):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "stack",
+                    "select",
+                    "--create",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode == 0:
+            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+        else:
+            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+
+        with Status("  [dim]Storing API key securely...[/]", console=console, spinner="dots"):
+            result = subprocess.run(
+                [
+                    "pulumi",
+                    "config",
+                    "set",
+                    "--secret",
+                    "pinecone-api-key",
+                    api_key,
+                    "--stack",
+                    stack_name,
+                    "--cwd",
+                    output_dir,
+                ],
+                capture_output=True,
+                text=True,
+            )
+
+        if result.returncode != 0:
+            console.print(f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}")
+            console.print(
+                "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
+            )
+            return False
+
+        console.print("  [green]✓[/] API key stored securely")
+
+        self._print_success(output_dir)
+        return True
+
+
 def select_cloud() -> str:
     console.print()
     console.print(
@@ -1835,17 +2518,20 @@ def select_cloud() -> str:
     console.print()
     console.print("  [1] AWS")
     console.print("  [2] GCP")
+    console.print("  [3] Azure")
     console.print()
 
-    cloud = _read_input_with_placeholder("Enter choice (1 or 2)", "1")
+    cloud = _read_input_with_placeholder("Enter choice (1, 2, or 3)", "1")
 
     if cloud == "1":
         return "aws"
     elif cloud == "2":
         return "gcp"
+    elif cloud == "3":
+        return "azure"
     else:
         console.print(f"  [red]✗[/] Invalid choice: {cloud}")
-        console.print("  [dim]Please choose 1 (AWS) or 2 (GCP)[/]")
+        console.print("  [dim]Please choose 1 (AWS), 2 (GCP), or 3 (Azure)[/]")
         sys.exit(1)
 
 
@@ -1873,9 +2559,14 @@ def run_setup(
                 headless=headless, stack_name=stack_name, skip_install=skip_install
             )
             return wizard.run(output_dir)
+        elif cloud == "azure":
+            wizard = AzureSetupWizard(
+                headless=headless, stack_name=stack_name, skip_install=skip_install
+            )
+            return wizard.run(output_dir)
         else:
             console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
-            console.print("  [dim]Valid options: aws, gcp[/]")
+            console.print("  [dim]Valid options: aws, gcp, azure[/]")
             return False
 
     except KeyboardInterrupt:
@@ -1895,8 +2586,8 @@ if __name__ == "__main__":
     parser.add_argument("--output-dir", default=".", help="Directory to write project files")
     parser.add_argument(
         "--cloud",
-        choices=["aws", "gcp"],
-        help="Cloud provider (aws or gcp). If not specified, you will be prompted.",
+        choices=["aws", "gcp", "azure"],
+        help="Cloud provider (aws, gcp, or azure). If not specified, you will be prompted.",
     )
     parser.add_argument(
         "--headless",
