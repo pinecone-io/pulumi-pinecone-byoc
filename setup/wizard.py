@@ -2168,10 +2168,19 @@ class AzurePreflightChecker:
             return
 
         # derive subnets the same way vnet.py does
-        db_net = ipaddress.ip_network(
-            f"{aks_net.network_address + aks_net.num_addresses}/{aks_net.prefixlen}"
-        )
-        pls_net = ipaddress.ip_network(f"{db_net.network_address + db_net.num_addresses}/27")
+        try:
+            db_net = ipaddress.ip_network(
+                f"{aks_net.network_address + aks_net.num_addresses}/{aks_net.prefixlen}"
+            )
+            pls_net = ipaddress.ip_network(f"{db_net.network_address + db_net.num_addresses}/27")
+        except ValueError:
+            self._add_result(
+                "VNet CIDR",
+                False,
+                f"CIDR {self.cidr} is too small to derive required subnets",
+                "Use a /16 or larger CIDR block (e.g., 10.0.0.0/16)",
+            )
+            return
         aks_service_cidr = ipaddress.ip_network("112.0.0.0/16")
 
         # check derived subnets don't overlap AKS service CIDR

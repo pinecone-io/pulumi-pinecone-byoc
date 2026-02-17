@@ -39,7 +39,7 @@ from .vnet import VNet
 @dataclass
 class NodePool:
     name: str
-    vm_size: str = "Standard_D4s_v3"
+    vm_size: str = "Standard_D4s_v5"
     min_size: int = 1
     max_size: int = 10
     disk_size_gb: int = 100
@@ -270,7 +270,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         self._pulumi_operator = PulumiOperator(
             f"{config.resource_prefix}-pulumi-operator",
             config,
-            k8s_provider=self._aks.k8s_provider,
             resource_group_name=self._vnet.resource_group_name,
             resource_group_id=self._vnet.resource_group_id,
             storage_account=self._storage.storage_account,

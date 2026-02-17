@@ -97,7 +97,7 @@ class Database(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        network.VirtualNetworkLink(
+        vnet_link = network.VirtualNetworkLink(
             f"{name}-vnet-link",
             location="Global",
             private_zone_name=private_dns_zone.name,
@@ -114,6 +114,7 @@ class Database(pulumi.ComponentResource):
             resource_group_name=resource_group_name,
             delegated_subnet_id=delegated_subnet_id,
             private_dns_zone_id=private_dns_zone.id,
+            depends_on=[vnet_link],
         )
 
         self._system_db = self._create_flexible_server(
@@ -123,6 +124,7 @@ class Database(pulumi.ComponentResource):
             resource_group_name=resource_group_name,
             delegated_subnet_id=delegated_subnet_id,
             private_dns_zone_id=private_dns_zone.id,
+            depends_on=[vnet_link],
         )
 
         self.register_outputs(
@@ -140,6 +142,7 @@ class Database(pulumi.ComponentResource):
         resource_group_name: pulumi.Input[str],
         delegated_subnet_id: pulumi.Output[str],
         private_dns_zone_id: pulumi.Output[str],
+        depends_on: list | None = None,
     ) -> FlexibleServerInstance:
         password = random.RandomPassword(
             f"{name}-password",
@@ -176,6 +179,7 @@ class Database(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 protect=config.database.deletion_protection,
+                depends_on=depends_on or [],
                 ignore_changes=["availabilityZone", "highAvailability", "network"],
             ),
         )

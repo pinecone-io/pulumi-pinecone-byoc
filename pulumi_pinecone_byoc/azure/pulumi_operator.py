@@ -2,7 +2,6 @@
 
 import pulumi
 import pulumi_azure_native as azure_native
-import pulumi_kubernetes as k8s
 
 from config.azure import AzureConfig
 
@@ -14,7 +13,6 @@ class PulumiOperator(pulumi.ComponentResource):
         self,
         name: str,
         config: AzureConfig,
-        k8s_provider: k8s.Provider,
         resource_group_name: pulumi.Input[str],
         resource_group_id: pulumi.Input[str],
         storage_account: azure_native.storage.StorageAccount,
@@ -41,7 +39,6 @@ class PulumiOperator(pulumi.ComponentResource):
         self._key_vault_key = self._create_key_vault_key(name, child_opts)
         self._identity = self._create_managed_identity(name, child_opts)
         self._create_role_assignments(name, child_opts)
-        self._create_k8s_service_account(name, k8s_provider, child_opts)
 
         self._backend_url = self._storage_account.name.apply(
             lambda acct: f"azblob://pulumi-state?storage_account={acct}"
@@ -170,39 +167,6 @@ class PulumiOperator(pulumi.ComponentResource):
             role_definition_id=self._role_definition("b24988ac-6180-42a0-ab88-20f7382dd24c"),
             scope=self._resource_group_id,
             opts=opts,
-        )
-
-    def _create_k8s_service_account(
-        self,
-        name: str,
-        k8s_provider: k8s.Provider,
-        opts: pulumi.ResourceOptions,
-    ):
-        ns = k8s.core.v1.Namespace(
-            f"{name}-operator-ns",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name=self._operator_namespace,
-            ),
-            opts=pulumi.ResourceOptions(
-                parent=self,
-                provider=k8s_provider,
-            ),
-        )
-
-        k8s.core.v1.ServiceAccount(
-            f"{name}-operator-sa",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="pulumi-kubernetes-operator",
-                namespace=self._operator_namespace,
-                annotations={
-                    "azure.workload.identity/client-id": self._identity.client_id,
-                },
-            ),
-            opts=pulumi.ResourceOptions(
-                parent=self,
-                provider=k8s_provider,
-                depends_on=[ns],
-            ),
         )
 
     @property
