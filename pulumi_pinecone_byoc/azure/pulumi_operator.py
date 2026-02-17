@@ -6,8 +6,6 @@ import pulumi_kubernetes as k8s
 
 from config.azure import AzureConfig
 
-# azure storage account names: 3-24 chars, lowercase alphanumeric only
-STORAGE_ACCOUNT_NAME_LIMIT = 24
 # azure key vault names: 3-24 chars, alphanumeric and hyphens
 KEY_VAULT_NAME_LIMIT = 24
 
@@ -20,6 +18,7 @@ class PulumiOperator(pulumi.ComponentResource):
         k8s_provider: k8s.Provider,
         resource_group_name: pulumi.Input[str],
         resource_group_id: pulumi.Input[str],
+        storage_account: azure_native.storage.StorageAccount,
         oidc_issuer_url: pulumi.Input[str],
         tenant_id: pulumi.Input[str],
         cell_name: pulumi.Input[str],
@@ -32,12 +31,12 @@ class PulumiOperator(pulumi.ComponentResource):
         self._cell_name = pulumi.Output.from_input(cell_name)
         self._resource_group_name = pulumi.Output.from_input(resource_group_name)
         self._resource_group_id = pulumi.Output.from_input(resource_group_id)
+        self._storage_account = storage_account
         self._oidc_issuer_url = pulumi.Output.from_input(oidc_issuer_url)
         self._tenant_id = pulumi.Output.from_input(tenant_id)
         self._operator_namespace = operator_namespace
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        self._storage_account = self._create_state_storage(name, child_opts)
         self._state_container = self._create_state_container(name, child_opts)
         self._key_vault = self._create_key_vault(name, child_opts)
         self._key_vault_key = self._create_key_vault_key(name, child_opts)
@@ -61,28 +60,6 @@ class PulumiOperator(pulumi.ComponentResource):
                 "secrets_provider": self._secrets_provider,
                 "identity_client_id": self._identity_client_id,
             }
-        )
-
-    def _create_state_storage(
-        self, name: str, opts: pulumi.ResourceOptions
-    ) -> azure_native.storage.StorageAccount:
-        account_name = self._cell_name.apply(
-            lambda cn: f"pc{cn.replace('-', '')}st"[:STORAGE_ACCOUNT_NAME_LIMIT]
-        )
-
-        return azure_native.storage.StorageAccount(
-            f"{name}-state-account",
-            account_name=account_name,
-            resource_group_name=self._resource_group_name,
-            access_tier=azure_native.storage.AccessTier.HOT,
-            allow_blob_public_access=False,
-            allow_shared_key_access=True,
-            sku=azure_native.storage.SkuArgs(
-                name="Standard_LRS",
-            ),
-            kind="StorageV2",
-            tags=self.config.tags(),
-            opts=opts,
         )
 
     def _create_state_container(
@@ -166,13 +143,13 @@ class PulumiOperator(pulumi.ComponentResource):
         return f"/subscriptions/{self.config.subscription_id}/providers/Microsoft.Authorization/roleDefinitions/{role_id}"
 
     def _create_role_assignments(self, name: str, opts: pulumi.ResourceOptions):
-        # storage blob data contributor on state storage account
+        # storage blob data contributor scoped to state container
         azure_native.authorization.RoleAssignment(
             f"{name}-operator-storage-role",
             principal_id=self._identity.principal_id,
             principal_type=azure_native.authorization.PrincipalType.SERVICE_PRINCIPAL,
             role_definition_id=self._role_definition("ba92f5b4-2d11-453d-a403-e96b0029c9fe"),
-            scope=self._storage_account.id,
+            scope=self._state_container.id,
             opts=opts,
         )
 

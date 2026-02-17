@@ -273,10 +273,11 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             k8s_provider=self._aks.k8s_provider,
             resource_group_name=self._vnet.resource_group_name,
             resource_group_id=self._vnet.resource_group_id,
+            storage_account=self._storage.storage_account,
             oidc_issuer_url=self._aks.oidc_issuer_url,
             tenant_id=tenant_id,
             cell_name=self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._aks]),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._aks, self._storage]),
         )
 
         # AMP: CPGW acts as credential broker for Azure (no direct OIDC federation)
