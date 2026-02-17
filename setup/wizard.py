@@ -1954,8 +1954,8 @@ class AzurePreflightChecker:
                 )
                 return
 
-            # check that our target SKU (Standard_D2s_v3) is available
-            target_sku = "Standard_D2s_v3"
+            # check that our target SKU (Standard_D2s_v5) is available
+            target_sku = "Standard_D2s_v5"
             found = False
             for cap in skus:
                 for edition in cap.get("supportedServerEditions", []):

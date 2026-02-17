@@ -61,7 +61,7 @@ class DNS(pulumi.ComponentResource):
             record_type="A",
             a_records=[
                 network.ARecordArgs(
-                    ipv4_address=external_ip.ip_address,
+                    ipv4_address=external_ip.ip_address.apply(lambda ip: ip or ""),
                 ),
             ],
             ttl=300,

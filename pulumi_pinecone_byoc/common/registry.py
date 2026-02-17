@@ -3,8 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-# TODO: revert to "latest" after testing
-PINETOOLS_TAG = "smbyoc-13"
+PINETOOLS_TAG = "latest"
 
 RegistryType = Literal["ecr", "gcr", "acr"]
 
