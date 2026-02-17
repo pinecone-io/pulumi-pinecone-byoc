@@ -1,7 +1,0 @@
-description: Pinecone BYOC deployment on Azure
-name: pinecone-byoc
-runtime:
-  name: python
-  options:
-    toolchain: uv
-    virtualenv: .venv

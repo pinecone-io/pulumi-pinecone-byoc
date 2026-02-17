@@ -97,6 +97,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:PineconeAzureCluster", name, None, opts)
 
         self.args = args
+        if not args.subscription_id:
+            raise ValueError("subscription_id is required for Azure deployments")
         child_opts = pulumi.ResourceOptions(parent=self)
         config = self._build_config(args)
         self._config = config

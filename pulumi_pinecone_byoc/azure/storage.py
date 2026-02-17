@@ -85,6 +85,11 @@ class BlobStorage(pulumi.ComponentResource):
             )
             self.containers[container_type] = container
 
+        # azure lifecycle prefix_match requires {container-name}/{blob-prefix} format
+        data_container_name = self.containers["data"].name
+        janitor_container_name = self.containers["janitor"].name
+        internal_container_name = self.containers["internal"].name
+
         azure_native.storage.ManagementPolicy(
             f"{name}-lifecycle",
             account_name=self.storage_account.name,
@@ -123,7 +128,9 @@ class BlobStorage(pulumi.ComponentResource):
                             ),
                             filters=azure_native.storage.ManagementPolicyFilterArgs(
                                 blob_types=["blockBlob", "appendBlob"],
-                                prefix_match=["activity-scrapes/"],
+                                prefix_match=[
+                                    data_container_name.apply(lambda cn: f"{cn}/activity-scrapes/")
+                                ],
                             ),
                         ),
                     ),
@@ -141,7 +148,7 @@ class BlobStorage(pulumi.ComponentResource):
                             ),
                             filters=azure_native.storage.ManagementPolicyFilterArgs(
                                 blob_types=["blockBlob", "appendBlob"],
-                                prefix_match=["janitor/"],
+                                prefix_match=[janitor_container_name.apply(lambda cn: f"{cn}/")],
                             ),
                         ),
                     ),
@@ -159,7 +166,9 @@ class BlobStorage(pulumi.ComponentResource):
                             ),
                             filters=azure_native.storage.ManagementPolicyFilterArgs(
                                 blob_types=["blockBlob", "appendBlob"],
-                                prefix_match=["lag-reporter/"],
+                                prefix_match=[
+                                    internal_container_name.apply(lambda cn: f"{cn}/lag-reporter/")
+                                ],
                             ),
                         ),
                     ),
