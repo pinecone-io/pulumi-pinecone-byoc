@@ -167,7 +167,9 @@ class S3Buckets(pulumi.ComponentResource):
                     id="delete-activity-scrapes",
                     status="Enabled",
                     expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(days=30),
-                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(prefix="activity-scrapes/"),
+                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(
+                        prefix="activity-scrapes/"
+                    ),
                 ),
                 aws.s3.BucketLifecycleConfigurationRuleArgs(
                     id="delete-janitor",
@@ -179,7 +181,9 @@ class S3Buckets(pulumi.ComponentResource):
                     id="delete-lag-reporter",
                     status="Enabled",
                     expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(days=14),
-                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(prefix="lag-reporter/"),
+                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(
+                        prefix="lag-reporter/"
+                    ),
                 ),
             ],
             opts=opts,

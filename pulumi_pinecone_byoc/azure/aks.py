@@ -282,8 +282,7 @@ class AKS(pulumi.ComponentResource):
                     return kubeconfig
                 except socket.gaierror:
                     pulumi.log.info(
-                        f"Waiting for API server DNS ({hostname})... "
-                        f"attempt {attempt + 1}/12"
+                        f"Waiting for API server DNS ({hostname})... attempt {attempt + 1}/12"
                     )
                     time.sleep(5)
         return kubeconfig

@@ -2041,14 +2041,20 @@ class AzurePreflightChecker:
             # use REST API directly - much faster than `az vm list-skus` CLI
             result = subprocess.run(
                 [
-                    "az", "rest", "--method", "get",
+                    "az",
+                    "rest",
+                    "--method",
+                    "get",
                     "--url",
                     f"https://management.azure.com/subscriptions/{self.subscription_id}"
                     f"/providers/Microsoft.Compute/skus?api-version=2021-07-01"
                     f"&$filter=location eq '{self.region}'",
-                    "--output", "json",
+                    "--output",
+                    "json",
                 ],
-                capture_output=True, text=True, timeout=30,
+                capture_output=True,
+                text=True,
+                timeout=30,
             )
             if result.returncode != 0:
                 self._add_result("Availability Zones", False, f"Failed: {result.stderr.strip()}")
@@ -2059,7 +2065,10 @@ class AzurePreflightChecker:
             restricted_zones: set[str] = set()
 
             for sku in data.get("value", []):
-                if sku.get("name") != "Standard_D4s_v3" or sku.get("resourceType") != "virtualMachines":
+                if (
+                    sku.get("name") != "Standard_D4s_v3"
+                    or sku.get("resourceType") != "virtualMachines"
+                ):
                     continue
                 for loc in sku.get("locationInfo", []):
                     available_zones.update(loc.get("zones", []))
@@ -2071,7 +2080,9 @@ class AzurePreflightChecker:
             available_zones -= restricted_zones
 
             if not available_zones:
-                self._add_result("Availability Zones", False, "No zones available for Standard_D4s_v3")
+                self._add_result(
+                    "Availability Zones", False, "No zones available for Standard_D4s_v3"
+                )
                 return
 
             invalid = [z for z in self.zones if z not in available_zones]

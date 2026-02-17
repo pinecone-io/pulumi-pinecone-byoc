@@ -94,19 +94,22 @@ class GCSBuckets(pulumi.ComponentResource):
                 gcp.storage.BucketLifecycleRuleArgs(
                     action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
                     condition=gcp.storage.BucketLifecycleRuleConditionArgs(
-                        age=30, matches_prefixes=["activity-scrapes/"],
+                        age=30,
+                        matches_prefixes=["activity-scrapes/"],
                     ),
                 ),
                 gcp.storage.BucketLifecycleRuleArgs(
                     action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
                     condition=gcp.storage.BucketLifecycleRuleConditionArgs(
-                        age=7, matches_prefixes=["janitor/"],
+                        age=7,
+                        matches_prefixes=["janitor/"],
                     ),
                 ),
                 gcp.storage.BucketLifecycleRuleArgs(
                     action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
                     condition=gcp.storage.BucketLifecycleRuleConditionArgs(
-                        age=14, matches_prefixes=["lag-reporter/"],
+                        age=14,
+                        matches_prefixes=["lag-reporter/"],
                     ),
                 ),
             ],

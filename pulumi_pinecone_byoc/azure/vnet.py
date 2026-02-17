@@ -24,9 +24,7 @@ class VNet(pulumi.ComponentResource):
 
         self.resource_group = resources.ResourceGroup(
             f"{name}-rg",
-            resource_group_name=self._cell_name.apply(
-                lambda cn: f"{cn}-{config.region}-rg"
-            ),
+            resource_group_name=self._cell_name.apply(lambda cn: f"{cn}-{config.region}-rg"),
             location=config.region,
             tags=config.tags(),
             opts=child_opts,

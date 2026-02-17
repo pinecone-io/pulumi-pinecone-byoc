@@ -14,8 +14,12 @@ cluster = PineconeAzureCluster(
         region=config.require("region"),
         availability_zones=config.require_object("availability-zones"),
         vpc_cidr=config.get("vpc-cidr") or "10.0.0.0/16",
-        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
-        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        deletion_protection=config.get_bool("deletion-protection")
+        if config.get_bool("deletion-protection") is not None
+        else True,
+        public_access_enabled=config.get_bool("public-access-enabled")
+        if config.get_bool("public-access-enabled") is not None
+        else True,
         tags=config.get_object("tags"),
         global_env=config.require("global-env"),
         api_url=config.require("api-url"),
@@ -27,7 +31,9 @@ cluster = PineconeAzureCluster(
 
 region = config.require("region")
 update_kubeconfig_command = cluster.name.apply(
-    lambda name: f"az aks get-credentials --resource-group {name.removeprefix('cluster-')}-{region}-rg --name {name}"
+    lambda name: (
+        f"az aks get-credentials --resource-group {name.removeprefix('cluster-')}-{region}-rg --name {name}"
+    )
 )
 pulumi.export("environment", cluster.environment.env_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)

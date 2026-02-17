@@ -203,9 +203,11 @@ class InternalLoadBalancer(pulumi.ComponentResource):
 
         # extract internal LB IP from service status
         lb_ip = self._internal_lb_service.status.apply(
-            lambda s: s.load_balancer.ingress[0].ip
-            if s and s.load_balancer and s.load_balancer.ingress
-            else None
+            lambda s: (
+                s.load_balancer.ingress[0].ip
+                if s and s.load_balancer and s.load_balancer.ingress
+                else None
+            )
         )
 
         # private DNS A record: private.{zone} -> internal LB IP
