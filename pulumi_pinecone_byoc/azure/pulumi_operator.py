@@ -6,8 +6,7 @@ import pulumi_kubernetes as k8s
 
 from config.azure import AzureConfig
 
-# azure key vault names: 3-24 chars, alphanumeric and hyphens
-KEY_VAULT_NAME_LIMIT = 24
+from .naming import key_vault_name
 
 
 class PulumiOperator(pulumi.ComponentResource):
@@ -76,7 +75,7 @@ class PulumiOperator(pulumi.ComponentResource):
     def _create_key_vault(
         self, name: str, opts: pulumi.ResourceOptions
     ) -> azure_native.keyvault.Vault:
-        vault_name = self._cell_name.apply(lambda cn: f"pc-{cn}"[:KEY_VAULT_NAME_LIMIT])
+        vault_name = self._cell_name.apply(lambda cn: key_vault_name("pc", cn))
 
         return azure_native.keyvault.Vault(
             f"{name}-key-vault",

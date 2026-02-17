@@ -5,8 +5,7 @@ import pulumi_azure_native as azure_native
 
 from config.azure import AzureConfig
 
-# azure storage account names: 3-24 chars, lowercase alphanumeric only
-STORAGE_ACCOUNT_NAME_LIMIT = 24
+from .naming import storage_account_name
 
 CONTAINER_TYPES = ["data", "wal", "index-backups", "janitor", "internal"]
 
@@ -27,10 +26,7 @@ class BlobStorage(pulumi.ComponentResource):
         self._resource_group_name = pulumi.Output.from_input(resource_group_name)
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        # storage account name must be lowercase alphanumeric, 3-24 chars
-        account_name = self._cell_name.apply(
-            lambda cn: f"pc{cn.replace('-', '')}"[:STORAGE_ACCOUNT_NAME_LIMIT]
-        )
+        account_name = self._cell_name.apply(lambda cn: storage_account_name("pc", cn))
 
         self.storage_account = azure_native.storage.StorageAccount(
             f"{name}-account",
