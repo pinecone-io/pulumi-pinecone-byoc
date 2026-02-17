@@ -1834,6 +1834,7 @@ class AzurePreflightChecker:
             ("PostgreSQL Flexible Server", self._check_postgres_availability),
             ("vCPU Quota", self._check_vcpu_quota),
             ("AKS Clusters", self._check_aks_quota),
+            ("VM SKUs", self._check_vm_skus),
             ("Availability Zones", self._check_zones),
             ("VNet CIDR", self._check_cidr_conflicts),
         ]
@@ -1954,8 +1955,8 @@ class AzurePreflightChecker:
                 )
                 return
 
-            # check that our target SKU (Standard_D2s_v5) is available
-            target_sku = "Standard_D2s_v5"
+            # check that our target SKU (Standard_D2s_v3) is available
+            target_sku = "Standard_D2s_v3"
             found = False
             for cap in skus:
                 for edition in cap.get("supportedServerEditions", []):
@@ -2034,6 +2035,60 @@ class AzurePreflightChecker:
         except Exception as e:
             self._add_result("AKS Clusters", False, f"Failed to check: {e}")
 
+    def _check_vm_skus(self):
+        vm_skus = [
+            "Standard_D4s_v5",
+            "Standard_L2aos_v4",
+            "Standard_L2s_v4",
+            "Standard_L4s_v4",
+        ]
+        try:
+            import json
+
+            result = subprocess.run(
+                [
+                    "az",
+                    "rest",
+                    "--method",
+                    "get",
+                    "--url",
+                    f"https://management.azure.com/subscriptions/{self.subscription_id}"
+                    f"/providers/Microsoft.Compute/skus?api-version=2021-07-01"
+                    f"&$filter=location eq '{self.region}'",
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                self._add_result("VM SKUs", False, f"Failed: {result.stderr.strip()}")
+                return
+
+            data = json.loads(result.stdout)
+            available_skus: set[str] = set()
+            for sku in data.get("value", []):
+                if sku.get("resourceType") != "virtualMachines":
+                    continue
+                sku_name = sku.get("name", "")
+                restrictions = sku.get("restrictions", [])
+                is_restricted = any(r.get("type") == "Location" for r in restrictions)
+                if not is_restricted:
+                    available_skus.add(sku_name)
+
+            unavailable = [s for s in vm_skus if s not in available_skus]
+            self._add_result(
+                "VM SKUs",
+                len(unavailable) == 0,
+                "All required SKUs available"
+                if not unavailable
+                else f"Unavailable: {', '.join(unavailable)}",
+                "Choose a different region" if unavailable else None,
+            )
+        except Exception as e:
+            self._add_result("VM SKUs", False, f"Failed to check: {e}")
+
     def _check_zones(self):
         try:
             import json
@@ -2066,7 +2121,7 @@ class AzurePreflightChecker:
 
             for sku in data.get("value", []):
                 if (
-                    sku.get("name") != "Standard_D4s_v3"
+                    sku.get("name") != "Standard_D4s_v5"
                     or sku.get("resourceType") != "virtualMachines"
                 ):
                     continue
@@ -2081,7 +2136,7 @@ class AzurePreflightChecker:
 
             if not available_zones:
                 self._add_result(
-                    "Availability Zones", False, "No zones available for Standard_D4s_v3"
+                    "Availability Zones", False, "No zones available for Standard_D4s_v5"
                 )
                 return
 
@@ -2102,13 +2157,35 @@ class AzurePreflightChecker:
         import ipaddress
 
         try:
-            target_net = ipaddress.ip_network(self.cidr)
+            aks_net = ipaddress.ip_network(self.cidr)
         except ValueError:
             self._add_result(
                 "VNet CIDR",
                 False,
                 f"Invalid CIDR: {self.cidr}",
                 "Enter a valid CIDR block (e.g., 10.0.0.0/16)",
+            )
+            return
+
+        # derive subnets the same way vnet.py does
+        db_net = ipaddress.ip_network(
+            f"{aks_net.network_address + aks_net.num_addresses}/{aks_net.prefixlen}"
+        )
+        pls_net = ipaddress.ip_network(f"{db_net.network_address + db_net.num_addresses}/27")
+        aks_service_cidr = ipaddress.ip_network("112.0.0.0/16")
+
+        # check derived subnets don't overlap AKS service CIDR
+        all_nets = [("AKS subnet", aks_net), ("DB subnet", db_net), ("PLS subnet", pls_net)]
+        service_conflicts = []
+        for label, net in all_nets:
+            if net.overlaps(aks_service_cidr):
+                service_conflicts.append(f"{label} ({net})")
+        if service_conflicts:
+            self._add_result(
+                "VNet CIDR",
+                False,
+                f"Overlaps AKS service CIDR 112.0.0.0/16: {', '.join(service_conflicts)}",
+                "Choose a CIDR that doesn't overlap 112.0.0.0/16",
             )
             return
 
@@ -2125,13 +2202,16 @@ class AzurePreflightChecker:
             if not isinstance(vnets, list):
                 vnets = []
 
+            # check all derived subnets against existing VNets
+            check_nets = [aks_net, db_net, pls_net]
             conflicts = []
             for vnet in vnets:
                 for prefix in vnet.get("addressSpace", {}).get("addressPrefixes", []):
                     try:
                         existing_net = ipaddress.ip_network(prefix)
-                        if target_net.overlaps(existing_net):
-                            conflicts.append(prefix)
+                        for net in check_nets:
+                            if net.overlaps(existing_net):
+                                conflicts.append(f"{net} overlaps {prefix}")
                     except ValueError:
                         continue
 
@@ -2139,7 +2219,7 @@ class AzurePreflightChecker:
                 self._add_result(
                     "VNet CIDR",
                     False,
-                    f"{self.cidr} conflicts with existing VNets: {', '.join(conflicts)}",
+                    f"Conflicts with existing VNets: {', '.join(conflicts)}",
                     "Choose a non-overlapping CIDR block",
                 )
             else:

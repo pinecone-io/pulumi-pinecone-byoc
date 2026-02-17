@@ -206,6 +206,8 @@ class AKS(pulumi.ComponentResource):
         disk_size_gb = np_config.disk_size_gb if np_config else 100
 
         labels = {"nodepool_name": np_config.name} if np_config else {}
+        if np_config and np_config.labels:
+            labels.update(np_config.labels)
         taints = (
             [f"{t.key}={t.value}:{t.effect}" for t in np_config.taints]
             if np_config and np_config.taints
