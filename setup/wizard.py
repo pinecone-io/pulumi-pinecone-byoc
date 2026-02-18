@@ -20,6 +20,8 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
+PINECONE_VERSION = "main-818794e"
+
 console = Console()
 
 
@@ -1022,7 +1024,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         config_content = f"""config:
   aws:region: {region}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-818794e
+  {project_name}:pinecone-version: {PINECONE_VERSION}
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
@@ -1471,7 +1473,7 @@ class GCPSetupWizard(BaseSetupWizard):
 
         project_id = self._get_project_id(project_id)
         region = self._get_region()
-        zones = self._get_zones(region)
+        zones = self._get_zones(project_id, region)
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
@@ -1589,13 +1591,40 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print()
         return self._prompt("Enter GCP region", "us-central1")
 
-    def _get_zones(self, region: str) -> list[str]:
+    def _fetch_zones(self, project_id: str, region: str) -> list[str]:
+        try:
+            result = subprocess.run(
+                [
+                    "gcloud",
+                    "compute",
+                    "zones",
+                    "list",
+                    "--format=value(name)",
+                    f"--project={project_id}",
+                    f"--filter=region:{region} AND status:UP",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                zones = sorted([z for z in result.stdout.strip().split("\n") if z])
+                if zones:
+                    return zones
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch zones from GCP: {e}")
+        return [f"{region}-a", f"{region}-b", f"{region}-c"]
+
+    def _get_zones(self, project_id: str, region: str) -> list[str]:
         console.print()
         console.print(f"  {self._step('GCP Zones')}")
         console.print()
 
-        default_zones = [f"{region}-a", f"{region}-b"]
-        console.print(f"  [dim]Default zones for {region}:[/] {', '.join(default_zones)}")
+        with Status("  [dim]Fetching availability zones...[/]", console=console, spinner="dots"):
+            available = self._fetch_zones(project_id, region)
+
+        console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
+        default_zones = available[:2]
 
         zones_input = self._prompt("Enter zones (comma-separated)", ",".join(default_zones))
         zones = [zone.strip() for zone in zones_input.split(",")]
@@ -1709,7 +1738,7 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         config_content = f"""config:
   gcp:project: {project_id}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-818794e
+  {project_name}:pinecone-version: {PINECONE_VERSION}
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
@@ -2116,27 +2145,41 @@ class AzurePreflightChecker:
                 return
 
             data = json.loads(result.stdout)
-            available_zones: set[str] = set()
-            restricted_zones: set[str] = set()
-
+            required_skus = [
+                "Standard_D4s_v5",
+                "Standard_L2aos_v4",
+                "Standard_L2s_v4",
+                "Standard_L4s_v4",
+            ]
+            per_sku_zones: dict[str, set[str]] = {}
             for sku in data.get("value", []):
                 if (
-                    sku.get("name") != "Standard_D4s_v5"
-                    or sku.get("resourceType") != "virtualMachines"
+                    sku.get("resourceType") != "virtualMachines"
+                    or sku.get("name") not in required_skus
                 ):
                     continue
+                sku_name = sku["name"]
+                zones_for_sku = per_sku_zones.setdefault(sku_name, set())
                 for loc in sku.get("locationInfo", []):
-                    available_zones.update(loc.get("zones", []))
+                    zones_for_sku.update(loc.get("zones", []))
                 for restriction in sku.get("restrictions", []):
                     if restriction.get("type") == "Zone":
-                        zones = restriction.get("restrictionInfo", {}).get("zones", [])
-                        restricted_zones.update(zones)
+                        rz = restriction.get("restrictionInfo", {}).get("zones", [])
+                        zones_for_sku -= set(rz)
 
-            available_zones -= restricted_zones
+            available_zones = None
+            for sku_zones in per_sku_zones.values():
+                available_zones = (
+                    sku_zones if available_zones is None else available_zones & sku_zones
+                )
 
             if not available_zones:
+                missing = [s for s in required_skus if s not in per_sku_zones]
                 self._add_result(
-                    "Availability Zones", False, "No zones available for Standard_D4s_v5"
+                    "Availability Zones",
+                    False,
+                    "No zones available for all required SKUs"
+                    + (f" (missing: {', '.join(missing)})" if missing else ""),
                 )
                 return
 
@@ -2269,7 +2312,7 @@ class AzureSetupWizard(BaseSetupWizard):
 
         subscription_id = self._get_subscription_id(subscription_id)
         region = self._get_region()
-        zones = self._get_zones(region)
+        zones = self._get_zones(subscription_id, region)
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
@@ -2380,13 +2423,70 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print()
         return self._prompt("Enter Azure region", "eastus")
 
-    def _get_zones(self, region: str) -> list[str]:
+    def _fetch_zones(self, subscription_id: str, region: str) -> list[str]:
+        import json as _json
+
+        try:
+            result = subprocess.run(
+                [
+                    "az",
+                    "rest",
+                    "--method",
+                    "get",
+                    "--url",
+                    f"https://management.azure.com/subscriptions/{subscription_id}"
+                    f"/providers/Microsoft.Compute/skus?api-version=2021-07-01"
+                    f"&$filter=location eq '{region}'",
+                    "--output",
+                    "json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            if result.returncode == 0:
+                data = _json.loads(result.stdout)
+                required_skus = [
+                    "Standard_D4s_v5",
+                    "Standard_L2aos_v4",
+                    "Standard_L2s_v4",
+                    "Standard_L4s_v4",
+                ]
+                per_sku_zones: dict[str, set[str]] = {}
+                for sku in data.get("value", []):
+                    if (
+                        sku.get("resourceType") != "virtualMachines"
+                        or sku.get("name") not in required_skus
+                    ):
+                        continue
+                    sku_name = sku["name"]
+                    zones_for_sku = per_sku_zones.setdefault(sku_name, set())
+                    for loc in sku.get("locationInfo", []):
+                        zones_for_sku.update(loc.get("zones", []))
+                    for restriction in sku.get("restrictions", []):
+                        if restriction.get("type") == "Zone":
+                            rz = restriction.get("restrictionInfo", {}).get("zones", [])
+                            zones_for_sku -= set(rz)
+                # intersect: only zones where ALL required SKUs are available
+                available = None
+                for sku_zones in per_sku_zones.values():
+                    available = sku_zones if available is None else available & sku_zones
+                if available:
+                    return sorted(available)
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch zones from Azure: {e}")
+        return ["1", "2", "3"]
+
+    def _get_zones(self, subscription_id: str, region: str) -> list[str]:
         console.print()
         console.print(f"  {self._step('Availability Zones')}")
         console.print()
 
-        default_zones = ["1", "2"]
-        console.print(f"  [dim]Default zones for {region}:[/] {', '.join(default_zones)}")
+        with Status("  [dim]Fetching availability zones...[/]", console=console, spinner="dots"):
+            available = self._fetch_zones(subscription_id, region)
+
+        console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
+        default_zones = available[:2]
 
         zones_input = self._prompt("Enter zones (comma-separated)", ",".join(default_zones))
         zones = [zone.strip() for zone in zones_input.split(",")]
@@ -2496,7 +2596,7 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
         config_content = f"""config:
   {project_name}:subscription-id: {subscription_id}
   {project_name}:region: {region}
-  {project_name}:pinecone-version: main-818794e
+  {project_name}:pinecone-version: {PINECONE_VERSION}
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
