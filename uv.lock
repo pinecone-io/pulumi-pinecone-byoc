@@ -435,6 +435,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pulumi-azure-native"
+version = "2.92.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "parver" },
+    { name = "pulumi" },
+    { name = "semver" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/7c/49/b1788729d5619962311d22cbd976f01e89dc6eedc12f00d122b19f514322/pulumi_azure_native-2.92.0.tar.gz", hash = "sha256:b92c70a11f8bf8bb14b10f46772e7531082957fb9f73957410ad563c8becfca3", size = 67373679, upload-time = "2025-12-04T01:13:30.636Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/95/07/c922e2b0b44168c696189bc46b086598c92385d7a7e0fb978cdc08ab2211/pulumi_azure_native-2.92.0-py3-none-any.whl", hash = "sha256:bf26d8cd26eddf154befe1048997af0d5f3a38a0b089f18f9587284c608bd7c1", size = 108835496, upload-time = "2025-12-04T01:13:24.325Z" },
+]
+
+[[package]]
 name = "pulumi-eks"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -497,6 +511,9 @@ aws = [
     { name = "pulumi-aws" },
     { name = "pulumi-eks" },
 ]
+azure = [
+    { name = "pulumi-azure-native" },
+]
 gcp = [
     { name = "google-auth" },
     { name = "google-cloud-compute" },
@@ -519,6 +536,7 @@ requires-dist = [
     { name = "kubernetes", specifier = ">=32.0.0,<34.0.0" },
     { name = "pulumi", specifier = ">=3.216.0,<4.0.0" },
     { name = "pulumi-aws", marker = "extra == 'aws'", specifier = ">=7.14.0,<8.0.0" },
+    { name = "pulumi-azure-native", marker = "extra == 'azure'", specifier = ">=2.0.0,<3.0.0" },
     { name = "pulumi-eks", marker = "extra == 'aws'", specifier = ">=4.2.0,<5.0.0" },
     { name = "pulumi-gcp", marker = "extra == 'gcp'", specifier = ">=8.10.0,<9.0.0" },
     { name = "pulumi-kubernetes", specifier = ">=4.25.0,<5.0.0" },
@@ -526,7 +544,7 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.12.0,<3.0.0" },
     { name = "requests", specifier = ">=2.32.0,<3.0.0" },
 ]
-provides-extras = ["aws", "gcp"]
+provides-extras = ["aws", "azure", "gcp"]
 
 [package.metadata.requires-dev]
 dev = [

@@ -32,6 +32,7 @@ class K8sSecrets(pulumi.ComponentResource):
         dd_api_key: pulumi.Input[str] | None = None,
         control_db: Any | None = None,
         system_db: Any | None = None,
+        azure_storage_access_key: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
@@ -96,6 +97,20 @@ class K8sSecrets(pulumi.ComponentResource):
                 ),
                 data={
                     "api-key": b64(dd_api_key),
+                },
+                type="Opaque",
+                opts=ns_opts,
+            )
+
+        if azure_storage_access_key is not None:
+            k8s.core.v1.Secret(
+                f"{name}-azure-storage-key",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name="azure-storage-account-access-key",
+                    namespace="external-secrets",
+                ),
+                data={
+                    "key": b64(azure_storage_access_key),
                 },
                 type="Opaque",
                 opts=ns_opts,

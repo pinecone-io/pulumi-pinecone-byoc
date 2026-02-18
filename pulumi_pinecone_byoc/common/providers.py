@@ -380,7 +380,7 @@ class ApiKeyProvider(ResourceProvider):
         )
 
     def delete(self, _id: str, _props: dict[str, Any]) -> None:
-        from .api import Auth0Config
+        from .api import Auth0Config, PineconeApiError
 
         # skip delete if missing required props (state corruption)
         if not all(
@@ -398,14 +398,19 @@ class ApiKeyProvider(ResourceProvider):
             client_id=_props["auth0_client_id"],
             client_secret=_props["auth0_client_secret"],
         )
-        asyncio.run(
-            asyncio.to_thread(
-                delete_api_key,
-                project_id=_id,
-                api_url=_props["api_url"],
-                auth0=auth0,
+        try:
+            asyncio.run(
+                asyncio.to_thread(
+                    delete_api_key,
+                    project_id=_id,
+                    api_url=_props["api_url"],
+                    auth0=auth0,
+                )
             )
-        )
+        except PineconeApiError as e:
+            if e.code == 404:
+                return
+            raise
 
 
 class ApiKey(Resource):

@@ -41,47 +41,37 @@ class S3Buckets(pulumi.ComponentResource):
         child_opts = pulumi.ResourceOptions(parent=self)
 
         # bucket naming follows reference pattern: pc-{type}-{cell_name}
-        # Data bucket - main vector storage
         self.data_bucket = self._create_bucket(
             name=f"{name}-data",
             bucket_type="data",
-            enable_versioning=True,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
         )
 
-        # Index backups bucket
         self.index_backups_bucket = self._create_bucket(
             name=f"{name}-index-backups",
             bucket_type="index-backups",
-            enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
         )
 
-        # WAL bucket - write-ahead logs
         self.wal_bucket = self._create_bucket(
             name=f"{name}-wal",
             bucket_type="wal",
-            enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
         )
 
-        # Janitor bucket - cleanup operations
         self.janitor_bucket = self._create_bucket(
             name=f"{name}-janitor",
             bucket_type="janitor",
-            enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
         )
 
-        # Internal bucket - operational data
         self.internal_bucket = self._create_bucket(
             name=f"{name}-internal",
             bucket_type="internal",
-            enable_versioning=False,
             kms_key_arn=kms_key_arn,
             opts=child_opts,
         )
@@ -101,7 +91,6 @@ class S3Buckets(pulumi.ComponentResource):
         self,
         name: str,
         bucket_type: str,
-        enable_versioning: bool,
         kms_key_arn: pulumi.Output[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ) -> aws.s3.Bucket:
@@ -113,6 +102,7 @@ class S3Buckets(pulumi.ComponentResource):
             name,
             bucket=full_bucket_name,
             force_destroy=self._force_destroy,
+            versioning=aws.s3.BucketVersioningArgs(enabled=True),
             tags=full_bucket_name.apply(lambda bn: self.config.tags(Name=bn)),
             opts=opts,
         )
@@ -156,16 +146,6 @@ class S3Buckets(pulumi.ComponentResource):
                 opts=opts,
             )
 
-        if enable_versioning:
-            aws.s3.BucketVersioning(
-                f"{name}-versioning",
-                bucket=bucket.id,
-                versioning_configuration=aws.s3.BucketVersioningVersioningConfigurationArgs(
-                    status="Enabled",
-                ),
-                opts=opts,
-            )
-
         aws.s3.BucketLifecycleConfiguration(
             f"{name}-lifecycle",
             bucket=bucket.id,
@@ -175,6 +155,34 @@ class S3Buckets(pulumi.ComponentResource):
                     status="Enabled",
                     abort_incomplete_multipart_upload=aws.s3.BucketLifecycleConfigurationRuleAbortIncompleteMultipartUploadArgs(
                         days_after_initiation=2,
+                    ),
+                    expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(
+                        expired_object_delete_marker=True,
+                    ),
+                    noncurrent_version_expiration=aws.s3.BucketLifecycleConfigurationRuleNoncurrentVersionExpirationArgs(
+                        noncurrent_days=3,
+                    ),
+                ),
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
+                    id="delete-activity-scrapes",
+                    status="Enabled",
+                    expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(days=30),
+                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(
+                        prefix="activity-scrapes/"
+                    ),
+                ),
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
+                    id="delete-janitor",
+                    status="Enabled",
+                    expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(days=7),
+                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(prefix="janitor/"),
+                ),
+                aws.s3.BucketLifecycleConfigurationRuleArgs(
+                    id="delete-lag-reporter",
+                    status="Enabled",
+                    expiration=aws.s3.BucketLifecycleConfigurationRuleExpirationArgs(days=14),
+                    filter=aws.s3.BucketLifecycleConfigurationRuleFilterArgs(
+                        prefix="lag-reporter/"
                     ),
                 ),
             ],

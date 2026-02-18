@@ -1,4 +1,5 @@
 from .aws import AWSConfig, DatabaseConfig, DatabaseInstanceConfig
+from .azure import AzureConfig, FlexibleServerConfig, FlexibleServerInstanceConfig
 from .base import BaseConfig, NodePoolConfig, NodePoolTaint
 from .gcp import AlloyDBConfig, AlloyDBInstanceConfig, GCPConfig
 
@@ -12,4 +13,7 @@ __all__ = [
     "GCPConfig",
     "AlloyDBConfig",
     "AlloyDBInstanceConfig",
+    "AzureConfig",
+    "FlexibleServerConfig",
+    "FlexibleServerInstanceConfig",
 ]

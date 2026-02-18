@@ -74,6 +74,12 @@ class ClusterUninstallerProvider(ResourceProvider):
 
         batch_v1 = client.BatchV1Api()
         core_v1 = client.CoreV1Api()
+        policy_v1 = client.PolicyV1Api()
+
+        # aks doesn't gracefully handle PDBs during node pool drain (unlike EKS/GKE),
+        # so delete all PDBs first to unblock node drain during infrastructure teardown
+        if _props.get("cloud") == "azure":
+            self._delete_all_pdbs(policy_v1)
 
         namespace = "pc-control-plane"
         job_name = f"pinetools-uninstall-{uuid.uuid4().hex[:8]}"
@@ -187,6 +193,24 @@ class ClusterUninstallerProvider(ResourceProvider):
             f"Uninstall job {job_name} timed out after {timeout_seconds}s. "
             f"Run 'pulumi destroy' again to retry."
         )
+
+    @staticmethod
+    def _delete_all_pdbs(policy_v1: Any) -> None:
+        from kubernetes.client.rest import ApiException
+
+        try:
+            pdbs = policy_v1.list_pod_disruption_budget_for_all_namespaces()
+            for pdb in pdbs.items:
+                ns = pdb.metadata.namespace
+                name = pdb.metadata.name
+                try:
+                    policy_v1.delete_namespaced_pod_disruption_budget(name, ns)
+                    pulumi.log.info(f"Deleted PDB {ns}/{name}")
+                except ApiException as e:
+                    if e.status != 404:
+                        pulumi.log.warn(f"Failed to delete PDB {ns}/{name}: {e}")
+        except ApiException as e:
+            pulumi.log.warn(f"Failed to list PDBs: {e}")
 
 
 class ClusterUninstaller(Resource):

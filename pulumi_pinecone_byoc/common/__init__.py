@@ -30,7 +30,7 @@ from .providers import (
     ServiceAccount,
     ServiceAccountProvider,
 )
-from .registry import AWS_REGISTRY, GCP_REGISTRY, ContainerRegistry
+from .registry import AWS_REGISTRY, AZURE_REGISTRY, GCP_REGISTRY, ContainerRegistry
 from .uninstaller import ClusterUninstaller
 
 __all__ = [
@@ -65,4 +65,5 @@ __all__ = [
     "ContainerRegistry",
     "AWS_REGISTRY",
     "GCP_REGISTRY",
+    "AZURE_REGISTRY",
 ]

@@ -25,35 +25,30 @@ class GCSBuckets(pulumi.ComponentResource):
         self.data_bucket = self._create_bucket(
             name=f"{name}-data",
             bucket_type="data",
-            enable_versioning=True,
             opts=child_opts,
         )
 
         self.index_backups_bucket = self._create_bucket(
             name=f"{name}-index-backups",
             bucket_type="index-backups",
-            enable_versioning=False,
             opts=child_opts,
         )
 
         self.wal_bucket = self._create_bucket(
             name=f"{name}-wal",
             bucket_type="wal",
-            enable_versioning=False,
             opts=child_opts,
         )
 
         self.janitor_bucket = self._create_bucket(
             name=f"{name}-janitor",
             bucket_type="janitor",
-            enable_versioning=False,
             opts=child_opts,
         )
 
         self.internal_bucket = self._create_bucket(
             name=f"{name}-internal",
             bucket_type="internal",
-            enable_versioning=False,
             opts=child_opts,
         )
 
@@ -71,7 +66,6 @@ class GCSBuckets(pulumi.ComponentResource):
         self,
         name: str,
         bucket_type: str,
-        enable_versioning: bool,
         opts: pulumi.ResourceOptions | None = None,
     ) -> gcp.storage.Bucket:
         full_bucket_name = self._cell_name.apply(lambda cn: f"pc-{bucket_type}-{cn}")
@@ -83,16 +77,39 @@ class GCSBuckets(pulumi.ComponentResource):
             location=self.config.region,
             force_destroy=self._force_destroy,
             uniform_bucket_level_access=True,
-            versioning=gcp.storage.BucketVersioningArgs(
-                enabled=enable_versioning,
-            ),
+            versioning=gcp.storage.BucketVersioningArgs(enabled=True),
             lifecycle_rules=[
                 gcp.storage.BucketLifecycleRuleArgs(
                     action=gcp.storage.BucketLifecycleRuleActionArgs(
                         type="AbortIncompleteMultipartUpload",
                     ),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(age=1),
+                ),
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
                     condition=gcp.storage.BucketLifecycleRuleConditionArgs(
-                        age=2,
+                        days_since_noncurrent_time=3,
+                    ),
+                ),
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(
+                        age=30,
+                        matches_prefixes=["activity-scrapes/"],
+                    ),
+                ),
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(
+                        age=7,
+                        matches_prefixes=["janitor/"],
+                    ),
+                ),
+                gcp.storage.BucketLifecycleRuleArgs(
+                    action=gcp.storage.BucketLifecycleRuleActionArgs(type="Delete"),
+                    condition=gcp.storage.BucketLifecycleRuleConditionArgs(
+                        age=14,
+                        matches_prefixes=["lag-reporter/"],
                     ),
                 ),
             ],

@@ -1,4 +1,4 @@
-"""Registry credential refresher cronjob. Supports ECR and GCR."""
+"""Registry credential refresher cronjob. Supports ECR, GCR, and ACR."""
 
 import pulumi
 import pulumi_kubernetes as k8s
@@ -13,6 +13,10 @@ REGISTRY_CONFIG = {
     "gcr": {
         "username": "oauth2accesstoken",
         "password_extraction": 'echo "$TOKEN_B64" | sed "s/^Bearer //"',
+    },
+    "acr": {
+        "username": "00000000-0000-0000-0000-000000000000",
+        "password_extraction": 'echo "$TOKEN_B64"',
     },
 }
 
