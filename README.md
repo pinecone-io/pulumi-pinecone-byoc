@@ -67,7 +67,7 @@ Provisioning takes approximately 25-30 minutes.
 │  Control Plane       │                    │  ┌─────────────┐  ┌─────────────────────────┐ │
 │                      │◀───────────────────│  │  Control    │  │                         │ │
 │                      │   cluster state    │  │  Plane      │  │    Cluster Manager      │ │
-└──────────────────────┘                    │  └─────────────┘  │     (EKS/GKE/AKS)      │ │
+└──────────────────────┘                    │  └─────────────┘  │     (EKS/GKE/AKS)       │ │
                                             │  ┌─────────────┐  └─────────────────────────┘ │
                                             │  │  Heartbeat  │                              │
                                             │  └─────────────┘                              │
@@ -76,11 +76,11 @@ Provisioning takes approximately 25-30 minutes.
 │  Pinecone            │   metrics &        │  │              Data Plane                   ││
 │  Observability (DD)  │   traces           │  │                                           ││
 │                      │                    │  └───────────────────────────────────────────┘│
-└──────────────────────┘                    │  ┌──────────┐  ┌──────────┐  ┌─────────────┐  │
-                                            │  │ S3/GCS/  │  | RDS/Allo|  │ Route53/    │  │
-        No customer data                    │  │  Blob    │  │ yDB/Flex│  | CloudDNS/  |  │
-        leaves the cluster                  │  └──────────┘  └──────────┘  | Azure DNS  |  │
-                                            │                              └─────────────┘  │
+└──────────────────────┘                    │  ┌──────────┐  ┌───────────┐  ┌─────────────┐ │
+                                            │  │ S3/GCS/  │  |RDS/AlloyDB|  │ Route53/    │ │
+        No customer data                    │  │ AzureBlob│  │/AzurePGSQL|  | CloudDNS/   | │
+        leaves the cluster                  │  └──────────┘  └───────────┘  | Azure DNS   | │
+                                            │                               └─────────────┘ │
                                             └───────────────────────────────────────────────┘
 ```
 
