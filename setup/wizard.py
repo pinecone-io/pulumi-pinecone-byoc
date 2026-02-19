@@ -20,7 +20,7 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-2a089f3"
+PINECONE_VERSION = "main-be2712e"
 
 console = Console()
 
@@ -1582,12 +1582,15 @@ class GCPSetupWizard(BaseSetupWizard):
                 return None
 
         # check for gke-gcloud-auth-plugin (required for kubectl/Pulumi to auth to GKE)
-        plugin_check = subprocess.run(
-            ["gke-gcloud-auth-plugin", "--version"],
-            capture_output=True,
-            text=True,
-        )
-        if plugin_check.returncode != 0:
+        try:
+            plugin_check = subprocess.run(
+                ["gke-gcloud-auth-plugin", "--version"],
+                capture_output=True,
+                text=True,
+            )
+            if plugin_check.returncode != 0:
+                raise FileNotFoundError
+        except FileNotFoundError:
             console.print("  [red]✗[/] gke-gcloud-auth-plugin not found")
             console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
             return None

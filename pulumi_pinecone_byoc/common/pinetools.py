@@ -39,7 +39,7 @@ class Pinetools(pulumi.ComponentResource):
         namespace = "pc-control-plane"
         self._pinetools_image = pinetools_image
 
-        ns = k8s.core.v1.Namespace(
+        self.ns = k8s.core.v1.Namespace(
             f"{name}-namespace",
             metadata=k8s.meta.v1.ObjectMetaArgs(
                 name=namespace,
@@ -50,7 +50,7 @@ class Pinetools(pulumi.ComponentResource):
         ns_opts = pulumi.ResourceOptions(
             parent=self,
             provider=k8s_provider,
-            depends_on=[ns],
+            depends_on=[self.ns],
         )
 
         sa = k8s.core.v1.ServiceAccount(

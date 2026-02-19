@@ -319,7 +319,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "public_access_enabled": args.public_access_enabled,
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
-            "aws_amp_region": self._amp_access.amp_region if self._amp_access else "",
+            "aws_amp_region": self._amp_access.amp_region,
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": "",
@@ -367,6 +367,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
+                    self._pinetools.ns,
                     self._k8s_addons,
                     self._k8s_secrets,
                     self._k8s_configmaps,

@@ -342,6 +342,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
+                    self._pinetools.ns,
                     self._k8s_addons,
                     self._k8s_secrets,
                     self._k8s_configmaps,
