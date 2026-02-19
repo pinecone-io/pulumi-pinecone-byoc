@@ -29,14 +29,12 @@ class ServiceAccounts:
         writer_sa: gcp.serviceaccount.Account,
         dns_sa: gcp.serviceaccount.Account,
         pulumi_sa: gcp.serviceaccount.Account,
-        prometheus_sa: gcp.serviceaccount.Account,
     ):
         self.nodepool_sa = nodepool_sa
         self.reader_sa = reader_sa
         self.writer_sa = writer_sa
         self.dns_sa = dns_sa
         self.pulumi_sa = pulumi_sa
-        self.prometheus_sa = prometheus_sa
 
 
 class GKEResult:
@@ -158,13 +156,6 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        prometheus_sa = gcp.serviceaccount.Account(
-            f"{name}-prometheus-sa",
-            account_id=self._cell_name.apply(lambda cn: _sa_id("prom", cn)),
-            display_name=self._cell_name.apply(lambda cn: f"Prometheus service account for {cn}"),
-            opts=pulumi.ResourceOptions(parent=self),
-        )
-
         gcp.projects.IAMMember(
             f"{name}-np-sa-iam",
             project=config.project,
@@ -279,21 +270,6 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[reader_sa]),
         )
 
-        # prometheus K8s SA -> prometheus GCP SA for AWS STS token exchange
-        gcp.serviceaccount.IAMBinding(
-            f"{name}-prometheus-sa-workload-identity",
-            service_account_id=prometheus_sa.name,
-            role="roles/iam.workloadIdentityUser",
-            members=[
-                pulumi.Output.all(config.project).apply(
-                    lambda args: (
-                        f"serviceAccount:{args[0]}.svc.id.goog[prometheus/prometheus-server]"
-                    )
-                )
-            ],
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[prometheus_sa]),
-        )
-
         node_pools = []
         for np_config in config.node_pools:
             node_pool = self._create_node_pool(
@@ -349,7 +325,6 @@ users:
             writer_sa=writer_sa,
             dns_sa=dns_sa,
             pulumi_sa=pulumi_sa,
-            prometheus_sa=prometheus_sa,
         )
 
         self._result = GKEResult(

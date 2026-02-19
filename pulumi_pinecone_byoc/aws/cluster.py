@@ -296,6 +296,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             k8s_provider=self._eks.provider,
             cluster_security_group_id=self._eks.cluster_security_group_id,
             cell_name=self._cell_name,
+            public_access_enabled=args.public_access_enabled,
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[self._vpc, self._dns, self._eks, self._k8s_addons],
@@ -466,6 +467,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "amp_remote_write_endpoint": self._amp_access.amp_remote_write_endpoint,
                 "amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
                 "amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
+                "vpc_endpoint_service_name": self._nlb.vpc_endpoint_service.service_name,
             }
         )
 
@@ -721,3 +723,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
     @property
     def amp_ingest_role_arn(self) -> pulumi.Output[str]:
         return self._k8s_addons.amp_ingest_role.arn
+
+    @property
+    def vpc_endpoint_service_name(self) -> pulumi.Output[str]:
+        return self._nlb.vpc_endpoint_service.service_name

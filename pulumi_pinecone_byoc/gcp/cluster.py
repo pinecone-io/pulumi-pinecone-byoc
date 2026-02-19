@@ -262,7 +262,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
         self._amp_access = AmpAccess(
             f"{config.resource_prefix}-amp-access",
             AmpAccessArgs(
-                workload_role_arn=f"arn:aws:iam::{args.amp_aws_account_id}:role/pinecone-gcp-byoc-amp-federation",
+                workload_role_arn=f"arn:aws:iam::{args.amp_aws_account_id}:user/AmpCpgwIamManagerUser",
                 api_url=args.api_url,
                 cpgw_api_key=self._cpgw_api_key.key,
             ),
@@ -277,6 +277,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "global_env": config.global_env,
             "subdomain": self._subdomain,
             "availability_zones": config.availability_zones,
+            "api_url": args.api_url,
             "dns_zone_name": self._dns.dns_zone.name,
             "gcp_k8s_version": args.kubernetes_version,
             "gcp_project": config.project,
@@ -295,13 +296,9 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "gcp_write_sa_email": self._gke.service_accounts.writer_sa.email,
             "gcp_dns_sa_email": self._gke.service_accounts.dns_sa.email,
             "gcp_pulumi_sa_email": self._gke.service_accounts.pulumi_sa.email,
-            "gcp_prometheus_sa_email": self._gke.service_accounts.prometheus_sa.email,
             "gcp_write_sa_id": self._gke.service_accounts.writer_sa.account_id,
             "gcp_read_sa_id": self._gke.service_accounts.reader_sa.account_id,
             "gcp_dns_sa_id": self._gke.service_accounts.dns_sa.account_id,
-            "gcp_amp_aws_account_id": self._amp_access.pinecone_role_arn.apply(
-                lambda arn: arn.split(":")[4]
-            ),
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -381,6 +378,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 "customer_tags": config.custom_tags,
                 "pulumi_backend_url": self._pulumi_operator.backend_url,
                 "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
+                "psc_service_attachment": self._nlb.service_attachment.self_link,
             }
         )
 
@@ -483,3 +481,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
     @property
     def data_bucket(self) -> pulumi.Output[str]:
         return self._gcs.data_bucket.name
+
+    @property
+    def psc_service_attachment(self) -> pulumi.Output[str]:
+        return self._nlb.service_attachment.self_link

@@ -248,12 +248,14 @@ class InternalLoadBalancer(pulumi.ComponentResource):
             private_cname_records.append(private_cname)
 
         self._lb_ip = lb_ip
+        self._pls_name = self._cell_name.apply(lambda cn: f"{cn}-pls")
         self._private_a_record = private_a_record
         self._private_cname_records = private_cname_records
 
         self.register_outputs(
             {
                 "lb_ip": lb_ip,
+                "pls_name": self._pls_name,
             }
         )
 
@@ -264,3 +266,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
     @property
     def lb_ip(self) -> pulumi.Output[str]:
         return self._lb_ip
+
+    @property
+    def pls_name(self) -> pulumi.Output[str]:
+        return self._pls_name

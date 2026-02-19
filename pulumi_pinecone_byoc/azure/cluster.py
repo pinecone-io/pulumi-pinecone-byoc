@@ -77,8 +77,8 @@ class PineconeAzureClusterArgs:
     global_env: str = "prod"
     auth0_domain: str = "https://login.pinecone.io"
 
-    # cross-cloud: AWS account for AMP federation (empty = skip AMP setup)
-    amp_aws_account_id: str = ""
+    # cross-cloud: AWS account for AMP federation
+    amp_aws_account_id: str = "713131977538"
 
     # cross-cloud: gcp project for helmfile templates
     gcp_project: str = "production-pinecone"
@@ -281,17 +281,15 @@ class PineconeAzureCluster(pulumi.ComponentResource):
 
         # AMP: CPGW acts as credential broker for Azure (no direct OIDC federation)
         # the per-customer role trusts the CPGW IAM user, which assumes it via STS
-        self._amp_access = None
-        if args.amp_aws_account_id:
-            self._amp_access = AmpAccess(
-                f"{config.resource_prefix}-amp-access",
-                AmpAccessArgs(
-                    workload_role_arn=f"arn:aws:iam::{args.amp_aws_account_id}:user/AmpCpgwIamManagerUser",
-                    api_url=args.api_url,
-                    cpgw_api_key=self._cpgw_api_key.key,
-                ),
-                opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
-            )
+        self._amp_access = AmpAccess(
+            f"{config.resource_prefix}-amp-access",
+            AmpAccessArgs(
+                workload_role_arn=f"arn:aws:iam::{args.amp_aws_account_id}:user/AmpCpgwIamManagerUser",
+                api_url=args.api_url,
+                cpgw_api_key=self._cpgw_api_key.key,
+            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
+        )
 
         pulumi_outputs = {
             "cell_name": self._cell_name,
@@ -314,7 +312,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "image_registry": AZURE_REGISTRY.base_url,
             "sli_checkers_project_id": self._api_key.project_id,
             "gcp_project": args.gcp_project,
-            "cpgw_api_key": self._cpgw_api_key.key,
             "cpgw_admin_api_key_id": self._cpgw_api_key.key_id,
             "api_url": args.api_url,
             "auth0_domain": args.auth0_domain,
@@ -323,12 +320,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "pulumi_backend_url": self._pulumi_operator.backend_url,
             "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
             "aws_amp_region": self._amp_access.amp_region if self._amp_access else "",
-            "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint
-            if self._amp_access
-            else "",
-            "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn
-            if self._amp_access
-            else "",
+            "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
+            "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": "",
         }
 
@@ -409,6 +402,10 @@ class PineconeAzureCluster(pulumi.ComponentResource):
                 "customer_tags": config.custom_tags,
                 "pulumi_backend_url": self._pulumi_operator.backend_url,
                 "pulumi_secrets_provider": self._pulumi_operator.secrets_provider,
+                "private_link_service_name": self._nlb.pls_name,
+                "private_link_service_resource_group": self._vnet.resource_group_name.apply(
+                    lambda rg: f"{rg}-nodepool"
+                ),
             }
         )
 
@@ -484,3 +481,11 @@ class PineconeAzureCluster(pulumi.ComponentResource):
     @property
     def dns(self) -> DNS:
         return self._dns
+
+    @property
+    def private_link_service_name(self) -> pulumi.Output[str]:
+        return self._nlb.pls_name
+
+    @property
+    def private_link_service_resource_group(self) -> pulumi.Output[str]:
+        return self._vnet.resource_group_name.apply(lambda rg: f"{rg}-nodepool")

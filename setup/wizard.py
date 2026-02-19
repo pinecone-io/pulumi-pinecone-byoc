@@ -20,7 +20,7 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-818794e"
+PINECONE_VERSION = "main-2a089f3"
 
 console = Console()
 
@@ -998,6 +998,8 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")
@@ -1579,6 +1581,18 @@ class GCPSetupWizard(BaseSetupWizard):
                 console.print("    [dim]· gcloud config set project PROJECT_ID[/]")
                 return None
 
+        # check for gke-gcloud-auth-plugin (required for kubectl/Pulumi to auth to GKE)
+        plugin_check = subprocess.run(
+            ["gke-gcloud-auth-plugin", "--version"],
+            capture_output=True,
+            text=True,
+        )
+        if plugin_check.returncode != 0:
+            console.print("  [red]✗[/] gke-gcloud-auth-plugin not found")
+            console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
+            return None
+        console.print("  [green]✓[/] gke-gcloud-auth-plugin installed")
+
     def _get_project_id(self, detected_project: str) -> str:
         console.print()
         console.print(f"  {self._step('GCP Project ID')}")
@@ -1712,6 +1726,8 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment.env_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")
@@ -2572,6 +2588,9 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment.env_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("private_link_service_name", cluster.private_link_service_name)
+    pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")

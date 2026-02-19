@@ -26,6 +26,10 @@ def _alb_name(subdomain: str) -> str:
     return f"{subdomain.split('.')[0]}-priv-alb"[:AWS_ALB_NAME_LIMIT].strip("-")
 
 
+def _public_alb_name(subdomain: str) -> str:
+    return f"{subdomain.split('.')[0]}-alb"[:AWS_ALB_NAME_LIMIT].strip("-")
+
+
 class NLB(pulumi.ComponentResource):
     """
     Creates a Network Load Balancer with:
@@ -43,6 +47,7 @@ class NLB(pulumi.ComponentResource):
         k8s_provider: pulumi.ProviderResource,
         cluster_security_group_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
+        public_access_enabled: bool = True,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:NLB", name, None, opts)
@@ -440,6 +445,199 @@ class NLB(pulumi.ComponentResource):
                 custom_timeouts=pulumi.CustomTimeouts(create="15m"),
             ),
         )
+
+        # public ALB for internet-facing access (when public access is enabled)
+        if public_access_enabled:
+
+            def build_public_http2_annotations(cert_arn: str, subdomain: str) -> dict:
+                return {
+                    "kubernetes.io/ingress.class": "alb",
+                    "alb.ingress.kubernetes.io/group.name": "pinecone",
+                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(
+                        subdomain
+                    ),
+                    "alb.ingress.kubernetes.io/scheme": "internet-facing",
+                    "alb.ingress.kubernetes.io/target-type": "ip",
+                    "alb.ingress.kubernetes.io/healthcheck-path": "/",
+                    "alb.ingress.kubernetes.io/healthcheck-protocol": "HTTPS",
+                    "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP2",
+                    "alb.ingress.kubernetes.io/backend-protocol": "HTTPS",
+                    "alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS": 443}]',
+                    "alb.ingress.kubernetes.io/conditions.gateway-proxy": '[{"field":"http-header","httpHeaderConfig":{"httpHeaderName": "Content-Type", "values":["application/grpc"]}}]',
+                    "alb.ingress.kubernetes.io/certificate-arn": cert_arn,
+                    "alb.ingress.kubernetes.io/tags": tags_str,
+                    "alb.ingress.kubernetes.io/group.order": "1",
+                    "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
+                }
+
+            public_http2_annotations = pulumi.Output.all(
+                dns.certificate_arn, dns.subdomain
+            ).apply(lambda args: build_public_http2_annotations(*args))
+
+            public_lb_http2 = k8s.networking.v1.Ingress(
+                f"{name}-public-gloo-lb",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name="gloo-lb",
+                    namespace="gloo-system",
+                    annotations=public_http2_annotations,
+                ),
+                spec=k8s.networking.v1.IngressSpecArgs(
+                    rules=[
+                        k8s.networking.v1.IngressRuleArgs(
+                            host="*.pinecone.io",
+                            http=k8s.networking.v1.HTTPIngressRuleValueArgs(
+                                paths=[
+                                    k8s.networking.v1.HTTPIngressPathArgs(
+                                        path="/",
+                                        path_type="Prefix",
+                                        backend=k8s.networking.v1.IngressBackendArgs(
+                                            service=k8s.networking.v1.IngressServiceBackendArgs(
+                                                name="gateway-proxy",
+                                                port=k8s.networking.v1.ServiceBackendPortArgs(
+                                                    number=443,
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                    tls=[
+                        k8s.networking.v1.IngressTLSArgs(
+                            hosts=[
+                                dns.fqdn.apply(lambda f: f"*.svc.{f}"),
+                                dns.fqdn.apply(lambda f: f"ingress.{f}"),
+                                dns.fqdn.apply(lambda f: f"prometheus.{f}"),
+                                dns.fqdn.apply(lambda f: f"metrics.{f}"),
+                            ],
+                            secret_name=tls_secret_name,
+                        ),
+                    ],
+                ),
+                opts=pulumi.ResourceOptions(
+                    parent=self,
+                    provider=k8s_provider,
+                    delete_before_replace=True,
+                ),
+            )
+
+            def build_public_http1_annotations(cert_arn: str, subdomain: str) -> dict:
+                return {
+                    "kubernetes.io/ingress.class": "alb",
+                    "alb.ingress.kubernetes.io/group.name": "pinecone",
+                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(
+                        subdomain
+                    ),
+                    "alb.ingress.kubernetes.io/scheme": "internet-facing",
+                    "alb.ingress.kubernetes.io/target-type": "ip",
+                    "alb.ingress.kubernetes.io/healthcheck-path": "/",
+                    "alb.ingress.kubernetes.io/healthcheck-protocol": "HTTPS",
+                    "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP1",
+                    "alb.ingress.kubernetes.io/backend-protocol": "HTTPS",
+                    "alb.ingress.kubernetes.io/listen-ports": '[{"HTTPS": 443}]',
+                    "alb.ingress.kubernetes.io/certificate-arn": cert_arn,
+                    "alb.ingress.kubernetes.io/tags": tags_str,
+                    "alb.ingress.kubernetes.io/group.order": "2",
+                    "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
+                }
+
+            public_http1_annotations = pulumi.Output.all(
+                dns.certificate_arn, dns.subdomain
+            ).apply(lambda args: build_public_http1_annotations(*args))
+
+            public_lb_http1 = k8s.networking.v1.Ingress(
+                f"{name}-public-gloo-lb-http1",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name="gloo-lb-http1",
+                    namespace="gloo-system",
+                    annotations=public_http1_annotations,
+                ),
+                spec=k8s.networking.v1.IngressSpecArgs(
+                    rules=[
+                        k8s.networking.v1.IngressRuleArgs(
+                            host="*.pinecone.io",
+                            http=k8s.networking.v1.HTTPIngressRuleValueArgs(
+                                paths=[
+                                    k8s.networking.v1.HTTPIngressPathArgs(
+                                        path="/",
+                                        path_type="Prefix",
+                                        backend=k8s.networking.v1.IngressBackendArgs(
+                                            service=k8s.networking.v1.IngressServiceBackendArgs(
+                                                name="gateway-proxy",
+                                                port=k8s.networking.v1.ServiceBackendPortArgs(
+                                                    number=443,
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ],
+                            ),
+                        ),
+                    ],
+                    tls=[
+                        k8s.networking.v1.IngressTLSArgs(
+                            hosts=[
+                                dns.fqdn.apply(lambda f: f"*.svc.{f}"),
+                                dns.fqdn.apply(lambda f: f"ingress.{f}"),
+                                dns.fqdn.apply(lambda f: f"prometheus.{f}"),
+                                dns.fqdn.apply(lambda f: f"metrics.{f}"),
+                            ],
+                            secret_name=tls_secret_name,
+                        ),
+                    ],
+                ),
+                opts=pulumi.ResourceOptions(
+                    parent=self,
+                    provider=k8s_provider,
+                    delete_before_replace=True,
+                    depends_on=[public_lb_http2],
+                ),
+            )
+
+            def get_public_alb_info(_ingress_status, subdomain: str):
+                """Wait for public ALB and return its DNS name and hosted zone ID."""
+                import boto3
+
+                elbv2 = boto3.client("elbv2", region_name=config.region)
+                alb_name = _public_alb_name(subdomain)
+                for _ in range(30):
+                    try:
+                        resp = elbv2.describe_load_balancers(Names=[alb_name])
+                        albs = resp.get("LoadBalancers", [])
+                        if albs:
+                            return (
+                                albs[0]["DNSName"],
+                                albs[0]["CanonicalHostedZoneId"],
+                            )
+                    except Exception:
+                        pass
+                    pulumi.log.info(f"Waiting for public ALB {alb_name}...")
+                    time.sleep(10)
+                raise Exception(f"Failed to find public ALB {alb_name}")
+
+            public_alb_info = pulumi.Output.all(
+                public_lb_http2.status, public_lb_http1.status, dns.subdomain
+            ).apply(lambda args: get_public_alb_info(args[0], args[2]))
+
+            public_alb_dns = public_alb_info.apply(lambda info: info[0])
+            public_alb_zone_id = public_alb_info.apply(lambda info: info[1])
+
+            # Route53 ALIAS record: ingress.{fqdn} -> public ALB
+            aws.route53.Record(
+                f"{name}-public-alb-alias",
+                zone_id=dns.zone_id,
+                name=dns.fqdn.apply(lambda f: f"ingress.{f}"),
+                type="A",
+                aliases=[
+                    aws.route53.RecordAliasArgs(
+                        name=public_alb_dns,
+                        zone_id=public_alb_zone_id,
+                        evaluate_target_health=True,
+                    ),
+                ],
+                opts=child_opts,
+            )
 
         self.register_outputs(
             {
