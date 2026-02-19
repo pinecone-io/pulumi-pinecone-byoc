@@ -20,7 +20,7 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-818794e"
+PINECONE_VERSION = "main-be2712e"
 
 console = Console()
 
@@ -998,6 +998,8 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")
@@ -1541,6 +1543,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('GCP Credentials')}")
         console.print()
 
+        project_id = None
         with Status("  [dim]Validating GCP credentials...[/]", console=console, spinner="dots"):
             try:
                 try:
@@ -1551,23 +1554,22 @@ class GCPSetupWizard(BaseSetupWizard):
                         console.print(
                             f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
                         )
-                        return project_id
                 except ImportError:
                     pass
 
-                result = subprocess.run(
-                    ["gcloud", "config", "get-value", "project"],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    project_id = result.stdout.strip()
-                    console.print(
-                        f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                if not project_id:
+                    result = subprocess.run(
+                        ["gcloud", "config", "get-value", "project"],
+                        capture_output=True,
+                        text=True,
                     )
-                    return project_id
-                else:
-                    raise Exception("Could not determine GCP project")
+                    if result.returncode == 0 and result.stdout.strip():
+                        project_id = result.stdout.strip()
+                        console.print(
+                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                        )
+                    else:
+                        raise Exception("Could not determine GCP project")
 
             except Exception as e:
                 console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
@@ -1578,6 +1580,23 @@ class GCPSetupWizard(BaseSetupWizard):
                 console.print("    [dim]· GOOGLE_APPLICATION_CREDENTIALS environment variable[/]")
                 console.print("    [dim]· gcloud config set project PROJECT_ID[/]")
                 return None
+
+        # check for gke-gcloud-auth-plugin (required for kubectl/Pulumi to auth to GKE)
+        try:
+            plugin_check = subprocess.run(
+                ["gke-gcloud-auth-plugin", "--version"],
+                capture_output=True,
+                text=True,
+            )
+            if plugin_check.returncode != 0:
+                raise FileNotFoundError
+        except FileNotFoundError:
+            console.print("  [red]✗[/] gke-gcloud-auth-plugin not found")
+            console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
+            return None
+        console.print("  [green]✓[/] gke-gcloud-auth-plugin installed")
+
+        return project_id
 
     def _get_project_id(self, detected_project: str) -> str:
         console.print()
@@ -1712,6 +1731,8 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment.env_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")
@@ -2572,6 +2593,9 @@ update_kubeconfig_command = cluster.name.apply(
 )
 pulumi.export("environment", cluster.environment.env_name)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("private_link_service_name", cluster.private_link_service_name)
+    pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
 '''
 
         main_py_path = os.path.join(output_dir, "__main__.py")

@@ -102,8 +102,16 @@ class S3Buckets(pulumi.ComponentResource):
             name,
             bucket=full_bucket_name,
             force_destroy=self._force_destroy,
-            versioning=aws.s3.BucketVersioningArgs(enabled=True),
             tags=full_bucket_name.apply(lambda bn: self.config.tags(Name=bn)),
+            opts=opts,
+        )
+
+        aws.s3.BucketVersioning(
+            f"{name}-versioning",
+            bucket=bucket.id,
+            versioning_configuration=aws.s3.BucketVersioningVersioningConfigurationArgs(
+                status="Enabled",
+            ),
             opts=opts,
         )
 
