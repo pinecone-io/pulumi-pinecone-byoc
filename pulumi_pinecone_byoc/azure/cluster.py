@@ -368,6 +368,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
                 parent=self,
                 depends_on=[
                     self._pinetools.ns,
+                    self._pinetools.sa,
+                    self._pinetools.crb,
                     self._k8s_addons,
                     self._k8s_secrets,
                     self._k8s_configmaps,

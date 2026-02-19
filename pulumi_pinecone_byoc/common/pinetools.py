@@ -53,7 +53,7 @@ class Pinetools(pulumi.ComponentResource):
             depends_on=[self.ns],
         )
 
-        sa = k8s.core.v1.ServiceAccount(
+        self.sa = k8s.core.v1.ServiceAccount(
             f"{name}-sa",
             metadata=k8s.meta.v1.ObjectMetaArgs(
                 name="pinetools",
@@ -65,7 +65,7 @@ class Pinetools(pulumi.ComponentResource):
             opts=ns_opts,
         )
 
-        k8s.rbac.v1.ClusterRoleBinding(
+        self.crb = k8s.rbac.v1.ClusterRoleBinding(
             f"{name}-cluster-admin",
             metadata=k8s.meta.v1.ObjectMetaArgs(
                 name="pinetools-cluster-admin",
@@ -160,7 +160,7 @@ class Pinetools(pulumi.ComponentResource):
                 concurrency_policy="Forbid",
                 job_template=k8s.batch.v1.JobTemplateSpecArgs(spec=make_cronjob_spec()),
             ),
-            opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider, depends_on=[sa]),
+            opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider, depends_on=[self.sa]),
         )
 
         # job name includes version suffix: same version = skip, new version = replace
@@ -173,7 +173,7 @@ class Pinetools(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 provider=k8s_provider,
-                depends_on=[sa, cronjob],
+                depends_on=[self.sa, cronjob],
             ),
         )
         self.install_job_name = install_job.metadata.name
