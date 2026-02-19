@@ -453,9 +453,7 @@ class NLB(pulumi.ComponentResource):
                 return {
                     "kubernetes.io/ingress.class": "alb",
                     "alb.ingress.kubernetes.io/group.name": "pinecone",
-                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(
-                        subdomain
-                    ),
+                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(subdomain),
                     "alb.ingress.kubernetes.io/scheme": "internet-facing",
                     "alb.ingress.kubernetes.io/target-type": "ip",
                     "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -470,9 +468,9 @@ class NLB(pulumi.ComponentResource):
                     "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
                 }
 
-            public_http2_annotations = pulumi.Output.all(
-                dns.certificate_arn, dns.subdomain
-            ).apply(lambda args: build_public_http2_annotations(*args))
+            public_http2_annotations = pulumi.Output.all(dns.certificate_arn, dns.subdomain).apply(
+                lambda args: build_public_http2_annotations(*args)
+            )
 
             public_lb_http2 = k8s.networking.v1.Ingress(
                 f"{name}-public-gloo-lb",
@@ -526,9 +524,7 @@ class NLB(pulumi.ComponentResource):
                 return {
                     "kubernetes.io/ingress.class": "alb",
                     "alb.ingress.kubernetes.io/group.name": "pinecone",
-                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(
-                        subdomain
-                    ),
+                    "alb.ingress.kubernetes.io/load-balancer-name": _public_alb_name(subdomain),
                     "alb.ingress.kubernetes.io/scheme": "internet-facing",
                     "alb.ingress.kubernetes.io/target-type": "ip",
                     "alb.ingress.kubernetes.io/healthcheck-path": "/",
@@ -542,9 +538,9 @@ class NLB(pulumi.ComponentResource):
                     "external-dns.alpha.kubernetes.io/ingress-hostname-source": "annotation-only",
                 }
 
-            public_http1_annotations = pulumi.Output.all(
-                dns.certificate_arn, dns.subdomain
-            ).apply(lambda args: build_public_http1_annotations(*args))
+            public_http1_annotations = pulumi.Output.all(dns.certificate_arn, dns.subdomain).apply(
+                lambda args: build_public_http1_annotations(*args)
+            )
 
             public_lb_http1 = k8s.networking.v1.Ingress(
                 f"{name}-public-gloo-lb-http1",
