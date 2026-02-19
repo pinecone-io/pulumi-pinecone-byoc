@@ -1543,6 +1543,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('GCP Credentials')}")
         console.print()
 
+        project_id = None
         with Status("  [dim]Validating GCP credentials...[/]", console=console, spinner="dots"):
             try:
                 try:
@@ -1553,23 +1554,22 @@ class GCPSetupWizard(BaseSetupWizard):
                         console.print(
                             f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
                         )
-                        return project_id
                 except ImportError:
                     pass
 
-                result = subprocess.run(
-                    ["gcloud", "config", "get-value", "project"],
-                    capture_output=True,
-                    text=True,
-                )
-                if result.returncode == 0 and result.stdout.strip():
-                    project_id = result.stdout.strip()
-                    console.print(
-                        f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                if not project_id:
+                    result = subprocess.run(
+                        ["gcloud", "config", "get-value", "project"],
+                        capture_output=True,
+                        text=True,
                     )
-                    return project_id
-                else:
-                    raise Exception("Could not determine GCP project")
+                    if result.returncode == 0 and result.stdout.strip():
+                        project_id = result.stdout.strip()
+                        console.print(
+                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                        )
+                    else:
+                        raise Exception("Could not determine GCP project")
 
             except Exception as e:
                 console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
@@ -1592,6 +1592,8 @@ class GCPSetupWizard(BaseSetupWizard):
             console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
             return None
         console.print("  [green]✓[/] gke-gcloud-auth-plugin installed")
+
+        return project_id
 
     def _get_project_id(self, detected_project: str) -> str:
         console.print()
