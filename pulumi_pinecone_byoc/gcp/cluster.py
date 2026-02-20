@@ -238,6 +238,11 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             dd_api_key=self._datadog_api_key.api_key,
             control_db=self._alloydb.control_db,
             system_db=self._alloydb.system_db,
+            storage_integration_credentials=(
+                {"key-json": self._gke.service_accounts.storage_integration_key_json}
+                if self._gke.service_accounts.storage_integration_key_json is not None
+                else None
+            ),
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[

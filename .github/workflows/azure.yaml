@@ -48,6 +48,11 @@ jobs:
       - name: Install Pulumi CLI
         uses: pulumi/actions@v6
 
+      - name: Set default Pulumi org
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi org set-default pinecone
+
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
@@ -161,6 +166,11 @@ jobs:
 
       - name: Install Pulumi CLI
         uses: pulumi/actions@v6
+
+      - name: Set default Pulumi org
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: pulumi org set-default pinecone
 
       - name: Run wizard (headless)
         env:

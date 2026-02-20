@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 
 import pulumi
 import pulumi_azure_native as azure_native
+import pulumi_azuread as azuread
 
 from ..common.cred_refresher import RegistryCredentialRefresher
 from ..common.k8s_configmaps import K8sConfigMaps
@@ -245,6 +246,38 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             ),
         )
 
+        # storage integration: Azure AD app for data-importer blob access
+        storage_integration_app = azuread.Application(
+            f"{config.resource_prefix}-storage-integration-app",
+            display_name=self._cell_name.apply(lambda cn: f"{cn}-storage-integration"),
+            opts=child_opts,
+        )
+        storage_integration_sp = azuread.ServicePrincipal(
+            f"{config.resource_prefix}-storage-integration-sp",
+            client_id=storage_integration_app.client_id,
+            opts=child_opts,
+        )
+        storage_integration_password = azuread.ServicePrincipalPassword(
+            f"{config.resource_prefix}-storage-integration-password",
+            service_principal_id=storage_integration_sp.id,
+            opts=child_opts,
+        )
+        # Storage Blob Data Contributor built-in role
+        STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE = "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+        azure_native.authorization.RoleAssignment(
+            f"{config.resource_prefix}-storage-integration-role",
+            principal_id=storage_integration_sp.id,
+            principal_type="ServicePrincipal",
+            role_definition_id=pulumi.Output.from_input(config.subscription_id).apply(
+                lambda sid: (
+                    f"/subscriptions/{sid}/providers/Microsoft.Authorization"
+                    f"/roleDefinitions/{STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE}"
+                )
+            ),
+            scope=self._storage.storage_account.id,
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._storage]),
+        )
+
         # phase 4: k8s configuration
         self._k8s_secrets = K8sSecrets(
             f"{config.resource_prefix}-k8s-secrets",
@@ -255,6 +288,9 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             control_db=self._database.control_db,
             system_db=self._database.system_db,
             azure_storage_access_key=self._storage.access_key,
+            storage_integration_credentials={
+                "client-secret": storage_integration_password.value,
+            },
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
@@ -323,6 +359,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "aws_amp_remote_write_url": self._amp_access.amp_remote_write_endpoint,
             "aws_amp_sigv4_role_arn": self._amp_access.pinecone_role_arn,
             "aws_amp_ingest_role_arn": "",
+            "azure_storage_integration_tenant_id": tenant_id,
+            "azure_storage_integration_client_id": storage_integration_app.client_id,
         }
 
         self._k8s_configmaps = K8sConfigMaps(

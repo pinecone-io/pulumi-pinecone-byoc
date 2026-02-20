@@ -30,6 +30,7 @@ gcp = [
 
 azure = [
     "pulumi-azure-native>=2.0.0,<3.0.0",
+    "pulumi-azuread>=6.0.0,<7.0.0",
 ]
 
 [dependency-groups]

@@ -449,6 +449,20 @@ wheels = [
 ]
 
 [[package]]
+name = "pulumi-azuread"
+version = "6.8.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "parver" },
+    { name = "pulumi" },
+    { name = "semver" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/33/73/7f82ab76eee7c1a5ceffd1d1784587af8c15a568c116bd722ac4fad5267d/pulumi_azuread-6.8.0.tar.gz", hash = "sha256:4c462e7a181761268bb9f161c4be6d591b0e005c9260b66ee80be0b57278da18", size = 218291, upload-time = "2025-12-24T17:42:07.165Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5e/9e/f0e961906f168967531a2c8bc645aa08be09d8ff012ca7491a82d0a6ba74/pulumi_azuread-6.8.0-py3-none-any.whl", hash = "sha256:c934fa87a8b9193d830de66460f758c29d6eb07ee70391f9dbd37a9c1ea59a75", size = 315848, upload-time = "2025-12-24T17:42:05.469Z" },
+]
+
+[[package]]
 name = "pulumi-eks"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -513,6 +527,7 @@ aws = [
 ]
 azure = [
     { name = "pulumi-azure-native" },
+    { name = "pulumi-azuread" },
 ]
 gcp = [
     { name = "google-auth" },
@@ -537,6 +552,7 @@ requires-dist = [
     { name = "pulumi", specifier = ">=3.216.0,<4.0.0" },
     { name = "pulumi-aws", marker = "extra == 'aws'", specifier = ">=7.14.0,<8.0.0" },
     { name = "pulumi-azure-native", marker = "extra == 'azure'", specifier = ">=2.0.0,<3.0.0" },
+    { name = "pulumi-azuread", marker = "extra == 'azure'", specifier = ">=6.0.0,<7.0.0" },
     { name = "pulumi-eks", marker = "extra == 'aws'", specifier = ">=4.2.0,<5.0.0" },
     { name = "pulumi-gcp", marker = "extra == 'gcp'", specifier = ">=8.10.0,<9.0.0" },
     { name = "pulumi-kubernetes", specifier = ">=4.25.0,<5.0.0" },
