@@ -203,10 +203,24 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             tags=config.tags(Name=f"{config.resource_prefix}-storage-integration"),
             opts=child_opts,
         )
-        aws.iam.RolePolicyAttachment(
+        aws.iam.RolePolicy(
             f"{config.resource_prefix}-storage-integration-policy",
             role=self._storage_integration_role.id,
-            policy_arn="arn:aws:iam::aws:policy/AmazonS3FullAccess",
+            policy=json.dumps(
+                {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "s3:ListBucket",
+                                "s3:GetObject",
+                            ],
+                            "Resource": "*",
+                        }
+                    ],
+                }
+            ),
             opts=child_opts,
         )
         # allow ec2 node role to assume storage integration role (for data-importer)

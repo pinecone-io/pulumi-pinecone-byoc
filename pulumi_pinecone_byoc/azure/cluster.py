@@ -262,8 +262,9 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             service_principal_id=storage_integration_sp.id,
             opts=child_opts,
         )
-        # Storage Blob Data Contributor built-in role
-        STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE = "ba92f5b4-2d11-453d-a403-e96b0029c9fe"
+        # Storage Blob Data Reader at subscription scope so the data-importer
+        # can read from any storage account the customer points their import URI at.
+        STORAGE_BLOB_DATA_READER_ROLE = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"
         azure_native.authorization.RoleAssignment(
             f"{config.resource_prefix}-storage-integration-role",
             principal_id=storage_integration_sp.id,
@@ -271,11 +272,13 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             role_definition_id=pulumi.Output.from_input(config.subscription_id).apply(
                 lambda sid: (
                     f"/subscriptions/{sid}/providers/Microsoft.Authorization"
-                    f"/roleDefinitions/{STORAGE_BLOB_DATA_CONTRIBUTOR_ROLE}"
+                    f"/roleDefinitions/{STORAGE_BLOB_DATA_READER_ROLE}"
                 )
             ),
-            scope=self._storage.storage_account.id,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._storage]),
+            scope=pulumi.Output.from_input(config.subscription_id).apply(
+                lambda sid: f"/subscriptions/{sid}"
+            ),
+            opts=child_opts,
         )
 
         # phase 4: k8s configuration

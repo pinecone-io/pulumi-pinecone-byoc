@@ -94,6 +94,26 @@ class InternalLoadBalancer(pulumi.ComponentResource):
         )
 
         if public_access_enabled:
+            ssl_policy = gcp.compute.SSLPolicy(
+                f"{name}-ssl-policy",
+                name=self._cell_name.apply(lambda cn: f"ssl-policy-{cn}"),
+                profile="MODERN",
+                min_tls_version="TLS_1_2",
+                opts=pulumi.ResourceOptions(parent=self),
+            )
+
+            frontend_config = k8s.apiextensions.CustomResource(
+                f"{name}-frontend-config",
+                api_version="networking.gke.io/v1beta1",
+                kind="FrontendConfig",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name=subdomain.apply(lambda s: f"ssl-policy-config-{s.split('.')[0]}"),
+                    namespace="gloo-system",
+                ),
+                spec={"sslPolicy": ssl_policy.name},
+                opts=pulumi.ResourceOptions(parent=self, provider=k8s_provider),
+            )
+
             k8s.networking.v1.Ingress(
                 f"{name}-public-ingress",
                 metadata=k8s.meta.v1.ObjectMetaArgs(
@@ -148,7 +168,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
                     parent=self,
                     provider=k8s_provider,
                     delete_before_replace=True,
-                    depends_on=[placeholder_tls_secret],
+                    depends_on=[placeholder_tls_secret, frontend_config],
                     custom_timeouts=pulumi.CustomTimeouts(create="20m", update="20m"),
                 ),
             )

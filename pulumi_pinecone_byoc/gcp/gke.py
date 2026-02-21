@@ -246,19 +246,19 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access
-        gcp.serviceaccount.IAMBinding(
-            f"{name}-writer-sa-workload-identity",
-            service_account_id=writer_sa.name,
-            role="roles/iam.workloadIdentityUser",
-            members=pulumi.Output.all(config.project).apply(
-                lambda args: [
-                    f"serviceAccount:{args[0]}.svc.id.goog[{sa}]"
-                    for sa in config.writer_k8s_service_accounts
-                ]
-            ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[writer_sa]),
-        )
+        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access (non-authoritative
+        # so operator-added dynamic bindings are always kept in sync)
+        for sa in config.writer_k8s_service_accounts:
+            sanitized = sa.replace("/", "-")
+            gcp.serviceaccount.IAMMember(
+                f"{name}-writer-wi-{sanitized}",
+                service_account_id=writer_sa.name,
+                role="roles/iam.workloadIdentityUser",
+                member=pulumi.Output.all(config.project).apply(
+                    lambda args, sa=sa: f"serviceAccount:{args[0]}.svc.id.goog[{sa}]"
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[writer_sa]),
+            )
 
         # reader K8s SAs -> read GCP SA for GCS read-only access
         gcp.serviceaccount.IAMBinding(
@@ -288,7 +288,7 @@ class GKE(pulumi.ComponentResource):
             f"{name}-storage-integration-sa-storage",
             project=config.project,
             member=storage_integration_sa.email.apply(lambda email: f"serviceAccount:{email}"),
-            role="roles/storage.admin",
+            role="roles/storage.objectViewer",
             opts=pulumi.ResourceOptions(parent=self),
         )
 
