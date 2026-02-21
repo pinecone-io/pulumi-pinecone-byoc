@@ -267,7 +267,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         STORAGE_BLOB_DATA_READER_ROLE = "2a2b9908-6ea1-4ae2-8e65-a410df84e7d1"
         azure_native.authorization.RoleAssignment(
             f"{config.resource_prefix}-storage-integration-role",
-            principal_id=storage_integration_sp.id,
+            principal_id=storage_integration_sp.object_id,
             principal_type="ServicePrincipal",
             role_definition_id=pulumi.Output.from_input(config.subscription_id).apply(
                 lambda sid: (
