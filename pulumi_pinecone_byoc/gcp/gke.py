@@ -1,5 +1,7 @@
 """GKE cluster infrastructure with Workload Identity."""
 
+import base64
+
 import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
@@ -29,12 +31,14 @@ class ServiceAccounts:
         writer_sa: gcp.serviceaccount.Account,
         dns_sa: gcp.serviceaccount.Account,
         pulumi_sa: gcp.serviceaccount.Account,
+        storage_integration_key_json: pulumi.Output[str] | None = None,
     ):
         self.nodepool_sa = nodepool_sa
         self.reader_sa = reader_sa
         self.writer_sa = writer_sa
         self.dns_sa = dns_sa
         self.pulumi_sa = pulumi_sa
+        self.storage_integration_key_json = storage_integration_key_json
 
 
 class GKEResult:
@@ -242,19 +246,19 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access
-        gcp.serviceaccount.IAMBinding(
-            f"{name}-writer-sa-workload-identity",
-            service_account_id=writer_sa.name,
-            role="roles/iam.workloadIdentityUser",
-            members=pulumi.Output.all(config.project).apply(
-                lambda args: [
-                    f"serviceAccount:{args[0]}.svc.id.goog[{sa}]"
-                    for sa in config.writer_k8s_service_accounts
-                ]
-            ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[writer_sa]),
-        )
+        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access (non-authoritative
+        # so operator-added dynamic bindings are always kept in sync)
+        for sa in config.writer_k8s_service_accounts:
+            sanitized = sa.replace("/", "-")
+            gcp.serviceaccount.IAMMember(
+                f"{name}-writer-wi-{sanitized}",
+                service_account_id=writer_sa.name,
+                role="roles/iam.workloadIdentityUser",
+                member=pulumi.Output.all(config.project).apply(
+                    lambda args, sa=sa: f"serviceAccount:{args[0]}.svc.id.goog[{sa}]"
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[writer_sa]),
+            )
 
         # reader K8s SAs -> read GCP SA for GCS read-only access
         gcp.serviceaccount.IAMBinding(
@@ -268,6 +272,34 @@ class GKE(pulumi.ComponentResource):
                 ]
             ),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[reader_sa]),
+        )
+
+        # storage integration SA for data-importer GCS access
+        storage_integration_sa = gcp.serviceaccount.Account(
+            f"{name}-storage-integration-sa",
+            account_id=self._cell_name.apply(lambda cn: _sa_id("si", cn)),
+            display_name=self._cell_name.apply(
+                lambda cn: f"Storage integration service account for {cn}"
+            ),
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+
+        gcp.projects.IAMMember(
+            f"{name}-storage-integration-sa-storage",
+            project=config.project,
+            member=storage_integration_sa.email.apply(lambda email: f"serviceAccount:{email}"),
+            role="roles/storage.objectViewer",
+            opts=pulumi.ResourceOptions(parent=self),
+        )
+
+        storage_integration_key = gcp.serviceaccount.Key(
+            f"{name}-storage-integration-key",
+            service_account_id=storage_integration_sa.name,
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[storage_integration_sa]),
+        )
+
+        storage_integration_key_json = storage_integration_key.private_key.apply(
+            lambda k: base64.b64decode(k).decode()
         )
 
         node_pools = []
@@ -325,6 +357,7 @@ users:
             writer_sa=writer_sa,
             dns_sa=dns_sa,
             pulumi_sa=pulumi_sa,
+            storage_integration_key_json=storage_integration_key_json,
         )
 
         self._result = GKEResult(

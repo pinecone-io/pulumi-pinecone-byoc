@@ -33,6 +33,7 @@ class K8sSecrets(pulumi.ComponentResource):
         control_db: Any | None = None,
         system_db: Any | None = None,
         azure_storage_access_key: pulumi.Input[str] | None = None,
+        storage_integration_credentials: dict[str, pulumi.Input[str]] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
@@ -112,6 +113,18 @@ class K8sSecrets(pulumi.ComponentResource):
                 data={
                     "key": b64(azure_storage_access_key),
                 },
+                type="Opaque",
+                opts=ns_opts,
+            )
+
+        if storage_integration_credentials is not None:
+            k8s.core.v1.Secret(
+                f"{name}-storage-integration-credentials",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name="storage-integration-credentials",
+                    namespace="external-secrets",
+                ),
+                data={k: b64(v) for k, v in storage_integration_credentials.items()},
                 type="Opaque",
                 opts=ns_opts,
             )
