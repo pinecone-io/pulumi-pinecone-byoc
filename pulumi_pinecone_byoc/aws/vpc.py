@@ -4,10 +4,18 @@ VPC component for Pinecone BYOC infrastructure.
 Creates a production-ready VPC with public and private subnets across multiple AZs.
 """
 
+import ipaddress
+
 import pulumi
 import pulumi_aws as aws
 
 from config.aws import AWSConfig
+
+RFC1918_RANGES = [
+    ipaddress.IPv4Network("10.0.0.0/8"),
+    ipaddress.IPv4Network("172.16.0.0/12"),
+    ipaddress.IPv4Network("192.168.0.0/16"),
+]
 
 
 class VPC(pulumi.ComponentResource):
@@ -28,6 +36,12 @@ class VPC(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
         self.config = config
+        self._validate_cidr(config.vpc_cidr)
+        if len(config.availability_zones) > 3:
+            raise ValueError(
+                f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
+                "Subnet layout does not fit more than 3 AZs in a /16 VPC."
+            )
         child_opts = pulumi.ResourceOptions(parent=self)
 
         self.vpc = aws.ec2.Vpc(
@@ -108,6 +122,26 @@ class VPC(pulumi.ComponentResource):
                 "private_subnet_ids": [s.id for s in self.private_subnets],
             }
         )
+
+    @staticmethod
+    def _validate_cidr(cidr: str) -> None:
+        try:
+            network = ipaddress.IPv4Network(cidr)
+        except (ValueError, ipaddress.AddressValueError) as e:
+            raise ValueError(f"Invalid VPC CIDR '{cidr}': {e}") from e
+
+        if network.prefixlen != 16:
+            raise ValueError(
+                f"VPC CIDR must be a /16 (got /{network.prefixlen}). "
+                "Subnet calculation requires a /16 network."
+            )
+
+        if not any(network.subnet_of(rfc1918) for rfc1918 in RFC1918_RANGES):
+            raise ValueError(
+                f"VPC CIDR '{cidr}' is not in an RFC 1918 private range. "
+                "Use a /16 block like 10.0.0.0/16, 172.16.0.0/16, or 192.168.0.0/16. "
+                "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html"
+            )
 
     def _calculate_cidr(self, index: int, is_public: bool) -> str:
         base = self.config.vpc_cidr.split("/")[0]

@@ -352,7 +352,7 @@ class BaseSetupWizard:
     def _get_cidr(self) -> str:
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
-        console.print("  [dim]The IP range for your VPC (must not conflict with existing VPCs)[/]")
+        console.print("  [dim]The IP range for your VPC (/16 from an RFC 1918 private range, must not conflict with existing VPCs)[/]")
         console.print()
         return self._prompt("Enter CIDR block", self.DEFAULT_CIDR)
 
@@ -720,7 +720,6 @@ class AWSPreflightChecker:
             self._add_result("Instance Types", False, "Failed to check", str(e))
 
     def _check_cidr_conflicts(self):
-        # check if selected CIDR conflicts with existing VPCs
         import ipaddress
 
         try:
@@ -734,6 +733,33 @@ class AWSPreflightChecker:
             )
             return
 
+        # must be /16 for subnet calculation
+        if target_net.prefixlen != 16:
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"CIDR must be a /16 (got /{target_net.prefixlen})",
+                "Subnet calculation requires a /16 network (e.g., 10.0.0.0/16)",
+            )
+            return
+
+        # must be RFC 1918 private range (AWS rejects CIDRs in 100.64.0.0/10 and other reserved ranges)
+        rfc1918_ranges = [
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+        ]
+        if not any(target_net.subnet_of(r) for r in rfc1918_ranges):
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"{self.cidr} is not in an RFC 1918 private range",
+                "Use a /16 block like 10.0.0.0/16, 172.16.0.0/16, or 192.168.0.0/16. "
+                "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html",
+            )
+            return
+
+        # check overlap with existing VPCs
         try:
             response = self.ec2.describe_vpcs()
             conflicts = []
@@ -743,7 +769,6 @@ class AWSPreflightChecker:
                     continue
                 try:
                     existing_net = ipaddress.ip_network(vpc_cidr)
-                    # check for actual overlap
                     if target_net.overlaps(existing_net):
                         conflicts.append(vpc_cidr)
                 except ValueError:
