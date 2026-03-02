@@ -20,7 +20,7 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-60abe36"
+PINECONE_VERSION = "main-bacc333"
 
 console = Console()
 
@@ -265,6 +265,7 @@ class BaseSetupWizard:
     HEADER_TITLE: str = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE: str = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR: str = "10.0.0.0/16"
+    CIDR_DESC: str = "The IP range for your VPC (must not conflict with existing VPCs)"
     DELETION_PROTECTION_DESC: str = ""
     PRIVATE_ACCESS_DESC: str = ""
     METADATA_NAME: str = "tags"
@@ -352,7 +353,7 @@ class BaseSetupWizard:
     def _get_cidr(self) -> str:
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
-        console.print("  [dim]The IP range for your VPC (/16 from an RFC 1918 private range, must not conflict with existing VPCs)[/]")
+        console.print(f"  [dim]{self.CIDR_DESC}[/]")
         console.print()
         return self._prompt("Enter CIDR block", self.DEFAULT_CIDR)
 
@@ -791,6 +792,7 @@ class AWSSetupWizard(BaseSetupWizard):
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
+    CIDR_DESC = "The IP range for your VPC (/16 from an RFC 1918 private range, must not conflict with existing VPCs)"
     DELETION_PROTECTION_DESC = "Protect RDS databases and S3 buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
