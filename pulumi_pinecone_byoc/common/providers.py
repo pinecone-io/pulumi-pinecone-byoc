@@ -51,6 +51,7 @@ class EnvironmentArgs:
     global_env: pulumi.Input[str]
     api_url: pulumi.Input[str]
     secret: pulumi.Input[str]
+    is_public_endpoint_enabled: pulumi.Input[bool]
 
     def __init__(
         self,
@@ -59,12 +60,14 @@ class EnvironmentArgs:
         global_env: pulumi.Input[str],
         api_url: pulumi.Input[str],
         secret: pulumi.Input[str],
+        is_public_endpoint_enabled: pulumi.Input[bool] = True,
     ):
         self.cloud = cloud
         self.region = region
         self.global_env = global_env
         self.api_url = api_url
         self.secret = secret
+        self.is_public_endpoint_enabled = is_public_endpoint_enabled
 
 
 class EnvironmentProvider(ResourceProvider):
@@ -78,6 +81,7 @@ class EnvironmentProvider(ResourceProvider):
             props["api_url"],
             props["secret"],
         )
+        is_public_endpoint_enabled = props.get("is_public_endpoint_enabled", True)
         environment = asyncio.run(
             asyncio.to_thread(
                 create_environment,
@@ -86,6 +90,7 @@ class EnvironmentProvider(ResourceProvider):
                 global_env=global_env,
                 api_url=api_url,
                 secret=secret,
+                is_public_endpoint_enabled=is_public_endpoint_enabled,
             )
         )
 
@@ -114,6 +119,10 @@ class EnvironmentProvider(ResourceProvider):
             replaces.append("region")
         if _olds.get("global_env") != _news.get("global_env"):
             replaces.append("global_env")
+        if _olds.get("is_public_endpoint_enabled", True) != _news.get(
+            "is_public_endpoint_enabled", True
+        ):
+            replaces.append("is_public_endpoint_enabled")
         return DiffResult(
             changes=len(replaces) > 0 or _olds.get("cloud") != _news.get("cloud"),
             replaces=replaces,
@@ -174,6 +183,7 @@ class Environment(Resource):
             "global_env": args.global_env,
             "api_url": args.api_url,
             "secret": args.secret,
+            "is_public_endpoint_enabled": args.is_public_endpoint_enabled,
         }
         super().__init__(
             EnvironmentProvider(),

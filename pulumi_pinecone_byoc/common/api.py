@@ -152,11 +152,13 @@ def create_environment(
     global_env: str,
     api_url: str,
     secret: str,
+    is_public_endpoint_enabled: bool = True,
 ) -> CreateEnvironmentResponse:
     body = {
         "cloud": cloud,
         "region": region,
         "global_env": global_env,
+        "is_public_endpoint_enabled": is_public_endpoint_enabled,
     }
     resp = request(
         "POST",
