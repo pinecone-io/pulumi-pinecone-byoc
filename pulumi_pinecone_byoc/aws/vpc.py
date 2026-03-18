@@ -180,6 +180,8 @@ class VPC(pulumi.ComponentResource):
                 opts=opts,
             )
 
+        private_route_table_ids = []
+
         for i, (subnet, nat) in enumerate(
             zip(self.private_subnets, self.nat_gateways, strict=True)
         ):
@@ -190,6 +192,7 @@ class VPC(pulumi.ComponentResource):
                 tags=self.config.tags(Name=f"{self.config.resource_prefix}-private-rt-{az}"),
                 opts=opts,
             )
+            private_route_table_ids.append(private_rt.id)
 
             aws.ec2.Route(
                 f"{name}-private-route-{az}",
@@ -205,6 +208,17 @@ class VPC(pulumi.ComponentResource):
                 route_table_id=private_rt.id,
                 opts=opts,
             )
+
+        # S3 gateway endpoint routes traffic directly over the AWS network,
+        aws.ec2.VpcEndpoint(
+            f"{name}-s3-endpoint",
+            vpc_id=self.vpc.id,
+            service_name=f"com.amazonaws.{self.config.region}.s3",
+            vpc_endpoint_type="Gateway",
+            route_table_ids=private_route_table_ids,
+            tags=self.config.tags(Name=f"{self.config.resource_prefix}-s3-endpoint"),
+            opts=opts,
+        )
 
     @property
     def vpc_id(self) -> pulumi.Output[str]:
