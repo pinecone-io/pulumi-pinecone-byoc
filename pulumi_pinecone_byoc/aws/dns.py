@@ -19,7 +19,7 @@ class DNS(pulumi.ComponentResource):
 
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        tags = {"pinecone:managed-by": "pulumi"}
+        tags = {"pinecone:managed-by": "pulumi", "pinecone:managed-by-tim-c": "true"}
 
         def build_fqdn(sub: str) -> str:
             return f"{sub}.{parent_zone_name}"

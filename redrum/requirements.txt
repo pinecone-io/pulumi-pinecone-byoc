@@ -1,0 +1,6 @@
+boto3
+rich
+python-dotenv
+pinecone
+numpy
+scikit-learn

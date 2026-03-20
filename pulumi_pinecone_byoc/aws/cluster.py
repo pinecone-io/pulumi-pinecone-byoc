@@ -86,6 +86,9 @@ class PineconeAWSClusterArgs:
     # tags
     tags: dict[str, str] | None = None
 
+    # resource naming prefix (shows up as the Name prefix for all AWS resources)
+    resource_prefix: str = "pc"
+
 
 class PineconeAWSCluster(pulumi.ComponentResource):
     def __init__(
@@ -535,6 +538,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             database=DatabaseConfig(deletion_protection=args.deletion_protection),
             custom_ami_id=args.custom_ami_id,
             custom_tags=args.tags or {},
+            resource_prefix=args.resource_prefix,
         )
 
     @property

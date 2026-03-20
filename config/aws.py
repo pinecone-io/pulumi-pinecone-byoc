@@ -69,5 +69,6 @@ class AWSConfig(BaseConfig):
         """Generate consistent resource tags, including user-provided custom tags."""
         base_tags = {
             "pinecone:managed-by": "pulumi",
+            "pinecone:managed-by-tim-c": "true",
         }
         return {**base_tags, **self.custom_tags, **extra}

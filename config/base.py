@@ -40,6 +40,4 @@ class BaseConfig(BaseModel):
     node_pools: list[NodePoolConfig] = Field(default_factory=list)
     parent_zone_name: str = "pinecone.io"
 
-    @property
-    def resource_prefix(self) -> str:
-        return "pc"
+    resource_prefix: str = "pc"

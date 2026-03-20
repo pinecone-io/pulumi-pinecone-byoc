@@ -354,6 +354,7 @@ class NLB(pulumi.ComponentResource):
             private_dns_name=pulumi.Output.from_input(subdomain).apply(
                 lambda s: f"*.private.{s}.byoc.pinecone.io"
             ),
+            tags=config.tags(Name=f"{config.resource_prefix}-vpces"),
             opts=child_opts,
         )
 
@@ -439,6 +440,7 @@ class NLB(pulumi.ComponentResource):
             subnet_ids=vpc.private_subnet_ids,
             security_group_ids=[cluster_security_group_id],
             private_dns_enabled=True,
+            tags=config.tags(Name=f"{config.resource_prefix}-vpce-internal"),
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[self.vpc_endpoint_service],

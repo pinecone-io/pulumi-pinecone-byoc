@@ -67,7 +67,7 @@ class EKS(pulumi.ComponentResource):
                 "controllerManager",
                 "scheduler",
             ],
-            tags=config.tags(),
+            tags=config.tags(Name=f"{config.resource_prefix}-eks-cluster"),
             opts=child_opts,
         )
 

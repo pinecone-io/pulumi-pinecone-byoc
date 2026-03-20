@@ -1,0 +1,4 @@
+pinecone
+boto3
+numpy
+scikit-learn
