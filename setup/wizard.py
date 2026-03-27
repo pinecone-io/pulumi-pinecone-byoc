@@ -275,12 +275,14 @@ class BaseSetupWizard:
         headless: bool = False,
         stack_name: str = "prod",
         skip_install: bool = False,
+        fast_mode: bool = False,
     ):
         self.results: list[PreflightResult] = []
         self._current_step = 0
         self._headless = headless
         self._stack_name = stack_name
         self._skip_install = skip_install
+        self._fast_mode = fast_mode
 
     def _step(self, title: str) -> str:
         self._current_step += 1
@@ -316,7 +318,7 @@ class BaseSetupWizard:
 
         api_key = self._prompt("Enter your Pinecone API key", password=True)
         if not api_key:
-            console.print("\n  [red]✗[/] API key is required")
+            console.print("\n  [red]x[/] API key is required")
             return None
 
         return api_key
@@ -338,16 +340,16 @@ class BaseSetupWizard:
                 with urllib.request.urlopen(req, timeout=10) as response:
                     response.read()
 
-                console.print("  [green]✓[/] API key is valid")
+                console.print("  [green]v[/] API key is valid")
                 return True
             except urllib.error.HTTPError as e:
                 if e.code == 401:
-                    console.print("  [red]✗[/] Invalid API key")
+                    console.print("  [red]x[/] Invalid API key")
                 else:
-                    console.print(f"  [red]✗[/] API error: {e.code}")
+                    console.print(f"  [red]x[/] API error: {e.code}")
                 return False
             except Exception as e:
-                console.print(f"  [red]✗[/] Failed to validate API key: {e}")
+                console.print(f"  [red]x[/] Failed to validate API key: {e}")
                 return False
 
     def _get_cidr(self) -> str:
@@ -421,7 +423,7 @@ class BaseSetupWizard:
             console.print("  [dim]Enter a passphrase to encrypt secrets (remember this!)[/]")
             passphrase = self._prompt("Passphrase", password=True)
             if not passphrase:
-                console.print("  [red]✗[/] Passphrase is required for local backend")
+                console.print("  [red]x[/] Passphrase is required for local backend")
                 return False
 
             os.environ["PULUMI_CONFIG_PASSPHRASE"] = passphrase
@@ -432,10 +434,10 @@ class BaseSetupWizard:
                 text=True,
             )
             if result.returncode == 0:
-                console.print("  [green]✓[/] Using local backend (~/.pulumi)")
+                console.print("  [green]v[/] Using local backend (~/.pulumi)")
             else:
                 console.print(
-                    f"  [red]✗[/] Failed to set up local backend: {result.stderr.strip()}"
+                    f"  [red]x[/] Failed to set up local backend: {result.stderr.strip()}"
                 )
                 return False
         else:
@@ -449,7 +451,7 @@ class BaseSetupWizard:
                 console.print("  [yellow]![/] Not logged in to Pulumi Cloud")
                 console.print("  [dim]Run:[/] pulumi login")
                 return False
-            console.print(f"  [green]✓[/] Using Pulumi Cloud ({result.stdout.strip()})")
+            console.print(f"  [green]v[/] Using Pulumi Cloud ({result.stdout.strip()})")
 
         return True
 
@@ -481,12 +483,13 @@ class BaseSetupWizard:
 
 
 class AWSPreflightChecker:
-    def __init__(self, region: str, azs: list[str], cidr: str):
+    def __init__(self, region: str, azs: list[str], cidr: str, fast_mode: bool = False):
         import boto3
 
         self.region = region
         self.azs = azs
         self.cidr = cidr
+        self.fast_mode = fast_mode
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -494,25 +497,39 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
+        # Always run basic validation checks
         checks = [
-            ("VPC Quota", self._check_vpc_quota),
-            ("Elastic IPs", self._check_eip_quota),
-            ("NAT Gateways", self._check_nat_gateway_quota),
-            ("Internet Gateways", self._check_igw_quota),
-            ("EKS Clusters", self._check_eks_cluster_quota),
-            ("Network Load Balancers", self._check_nlb_quota),
             ("Availability Zones", self._check_az_availability),
-            ("Instance Types", self._check_instance_types),
             ("VPC CIDR", self._check_cidr_conflicts),
         ]
+        
+        # Only add heavy checks if NOT in fast mode
+        if not self.fast_mode:
+            checks.extend([
+                ("VPC Quota", self._check_vpc_quota),
+                ("Elastic IPs", self._check_eip_quota),
+                ("NAT Gateways", self._check_nat_gateway_quota),
+                ("Internet Gateways", self._check_igw_quota),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Instance Types", self._check_instance_types),
+            ])
+        else:
+            # Show clear warning that fast mode is active
+            console.print()
+            console.print("  [yellow]FAST MODE ENABLED[/]")
+            console.print("  [dim]Skipping heavy quota and network validation checks[/]")
+            console.print("  [dim]Use this mode for development/testing only[/]")
+            console.print()
 
+        # Execute all checks
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
                 check_fn()
 
             # print the result that was just added
             r = self.results[-1]
-            status = "✓" if r.passed else "✗"
+            status = "v" if r.passed else "x"
             color = "green" if r.passed else "red"
             console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
             if r.details and not r.passed:
@@ -848,7 +865,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         api_key = os.environ.get("PINECONE_API_KEY")
         if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
+            console.print("  [red]x[/] PINECONE_API_KEY environment variable is required")
             return False
 
         region = os.environ.get("PINECONE_REGION", "us-east-1")
@@ -888,7 +905,7 @@ class AWSSetupWizard(BaseSetupWizard):
                 identity = sts.get_caller_identity()
                 account_id = identity["Account"]
             except Exception as e:
-                console.print(f"  [red]✗[/] AWS credentials invalid: {e}")
+                console.print(f"  [red]x[/] AWS credentials invalid: {e}")
                 console.print()
                 console.print("  [dim]Make sure you have valid AWS credentials configured.[/]")
                 console.print("  [dim]You can set them via:[/]")
@@ -897,7 +914,7 @@ class AWSSetupWizard(BaseSetupWizard):
                 console.print("    [dim]· AWS_PROFILE environment variable[/]")
                 return False
 
-        console.print(f"  [green]✓[/] AWS credentials valid [dim](Account: {account_id})[/]")
+        console.print(f"  [green]v[/] AWS credentials valid [dim](Account: {account_id})[/]")
         return True
 
     def _get_region(self) -> str:
@@ -916,7 +933,7 @@ class AWSSetupWizard(BaseSetupWizard):
             )
             return sorted([az["ZoneName"] for az in response["AvailabilityZones"]])
         except Exception as e:
-            console.print(f"  [yellow]⚠[/] Could not fetch AZs from AWS: {e}")
+            console.print(f"  [yellow]![/] Could not fetch AZs from AWS: {e}")
             return [f"{region}a", f"{region}b", f"{region}c"]
 
     def _get_azs(self, region: str) -> list[str]:
@@ -949,7 +966,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AWSPreflightChecker(region, azs, cidr)
+        checker = AWSPreflightChecker(region, azs, cidr, fast_mode=self._fast_mode)
         if not checker.run_checks():
             console.print()
             console.print(
@@ -978,7 +995,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
 
         if not self._check_pulumi_installed():
-            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print("  [red]x[/] Pulumi CLI not found")
             console.print("  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/")
             return False
 
@@ -995,7 +1012,7 @@ class AWSSetupWizard(BaseSetupWizard):
         pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
         with open(pulumi_yaml_path, "w") as f:
             yaml.dump(pulumi_yaml, f, default_flow_style=False)
-        console.print("  [green]✓[/] Created Pulumi.yaml")
+        console.print("  [green]v[/] Created Pulumi.yaml")
 
         # create __main__.py
         main_py = '''"""Pinecone BYOC deployment (AWS)."""
@@ -1032,7 +1049,7 @@ if config.get_bool("public-access-enabled") is False:
         main_py_path = os.path.join(output_dir, "__main__.py")
         with open(main_py_path, "w") as f:
             f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        console.print("  [green]v[/] Created __main__.py")
 
         # create pyproject.toml for uv toolchain to install dependencies
         pyproject_content = """[project]
@@ -1044,7 +1061,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        console.print("  [green]v[/] Created pyproject.toml")
 
         # create stack config
         stack_name = self._stack_name
@@ -1075,7 +1092,7 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
             f.write(config_content)
-        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+        console.print(f"  [green]v[/] Created Pulumi.{stack_name}.yaml")
 
         if self._skip_install:
             return True
@@ -1103,10 +1120,10 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
                     pkg_version = line.split(":", 1)[1].strip()
                     break
             console.print(
-                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+                f"  [green]v[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
             )
         else:
-            console.print(f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to install dependencies: {result.stderr.strip()}")
             console.print("  [dim]Run manually:[/] uv sync")
             return False
 
@@ -1127,9 +1144,9 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
             )
 
         if result.returncode == 0:
-            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+            console.print(f"  [green]v[/] Stack {stack_name} ready")
         else:
-            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+            console.print(f"  [yellow]![/] Stack init: {result.stderr.strip()}")
 
         # set api key as secret
         with Status("  [dim]Storing API key securely...[/]", console=console, spinner="dots"):
@@ -1151,13 +1168,13 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
             )
 
         if result.returncode != 0:
-            console.print(f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to store API key: {result.stderr.strip()}")
             console.print(
                 "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
             )
             return False
 
-        console.print("  [green]✓[/] API key stored securely")
+        console.print("  [green]v[/] API key stored securely")
 
         self._print_success(output_dir)
         return True
@@ -1169,31 +1186,46 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
 
 
 class GCPPreflightChecker:
-    def __init__(self, project_id: str, region: str, zones: list[str], cidr: str):
+    def __init__(self, project_id: str, region: str, zones: list[str], cidr: str, fast_mode: bool = False):
         self.project_id = project_id
         self.region = region
         self.zones = zones
         self.cidr = cidr
+        self.fast_mode = fast_mode
         self.results: list[PreflightResult] = []
 
     def run_checks(self) -> bool:
+        # Always run basic validation checks
         checks = [
-            ("GCP APIs", self._check_apis_enabled),
-            ("VPC Networks", self._check_vpc_quota),
-            ("External IPs", self._check_external_ip_quota),
-            ("GKE Clusters", self._check_gke_quota),
-            ("Machine Types", self._check_machine_types),
             ("Availability Zones", self._check_zones),
             ("VPC CIDR", self._check_cidr_conflicts),
         ]
+        
+        # Only add heavy checks if NOT in fast mode
+        if not self.fast_mode:
+            checks.extend([
+                ("GCP APIs", self._check_apis_enabled),
+                ("VPC Networks", self._check_vpc_quota),
+                ("External IPs", self._check_external_ip_quota),
+                ("GKE Clusters", self._check_gke_quota),
+                ("Machine Types", self._check_machine_types),
+            ])
+        else:
+            # Show clear warning that fast mode is active
+            console.print()
+            console.print("  [yellow]FAST MODE ENABLED[/]")
+            console.print("  [dim]Skipping heavy quota and network validation checks[/]")
+            console.print("  [dim]Use this mode for development/testing only[/]")
+            console.print()
 
+        # Execute all checks
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
                 check_fn()
 
             # print the result that was just added
             r = self.results[-1]
-            status = "✓" if r.passed else "✗"
+            status = "v" if r.passed else "x"
             color = "green" if r.passed else "red"
             console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
             if r.details and not r.passed:
@@ -1534,12 +1566,12 @@ class GCPSetupWizard(BaseSetupWizard):
 
         api_key = os.environ.get("PINECONE_API_KEY")
         if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
+            console.print("  [red]x[/] PINECONE_API_KEY environment variable is required")
             return False
 
         project_id = os.environ.get("GCP_PROJECT")
         if not project_id:
-            console.print("  [red]✗[/] GCP_PROJECT environment variable is required")
+            console.print("  [red]x[/] GCP_PROJECT environment variable is required")
             return False
 
         region = os.environ.get("PINECONE_REGION", "us-central1")
@@ -1579,7 +1611,7 @@ class GCPSetupWizard(BaseSetupWizard):
                     credentials, project_id = default()
                     if credentials and project_id:
                         console.print(
-                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                            f"  [green]v[/] GCP credentials valid [dim](Project: {project_id})[/]"
                         )
                 except ImportError:
                     pass
@@ -1593,13 +1625,13 @@ class GCPSetupWizard(BaseSetupWizard):
                     if result.returncode == 0 and result.stdout.strip():
                         project_id = result.stdout.strip()
                         console.print(
-                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
+                            f"  [green]v[/] GCP credentials valid [dim](Project: {project_id})[/]"
                         )
                     else:
                         raise Exception("Could not determine GCP project")
 
             except Exception as e:
-                console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
+                console.print(f"  [red]x[/] GCP credentials invalid: {e}")
                 console.print()
                 console.print("  [dim]Make sure you have valid GCP credentials configured.[/]")
                 console.print("  [dim]You can set them via:[/]")
@@ -1618,10 +1650,10 @@ class GCPSetupWizard(BaseSetupWizard):
             if plugin_check.returncode != 0:
                 raise FileNotFoundError
         except FileNotFoundError:
-            console.print("  [red]✗[/] gke-gcloud-auth-plugin not found")
+            console.print("  [red]x[/] gke-gcloud-auth-plugin not found")
             console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
             return None
-        console.print("  [green]✓[/] gke-gcloud-auth-plugin installed")
+        console.print("  [green]v[/] gke-gcloud-auth-plugin installed")
 
         return project_id
 
@@ -1658,7 +1690,7 @@ class GCPSetupWizard(BaseSetupWizard):
                 if zones:
                     return zones
         except Exception as e:
-            console.print(f"  [yellow]⚠[/] Could not fetch zones from GCP: {e}")
+            console.print(f"  [yellow]![/] Could not fetch zones from GCP: {e}")
         return [f"{region}-a", f"{region}-b", f"{region}-c"]
 
     def _get_zones(self, project_id: str, region: str) -> list[str]:
@@ -1683,7 +1715,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = GCPPreflightChecker(project_id, region, zones, cidr)
+        checker = GCPPreflightChecker(project_id, region, zones, cidr, fast_mode=self._fast_mode)
         if not checker.run_checks():
             console.print()
             console.print(
@@ -1709,7 +1741,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print()
 
         if not self._check_pulumi_installed():
-            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print("  [red]x[/] Pulumi CLI not found")
             console.print("  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/")
             return False
 
@@ -1727,7 +1759,7 @@ class GCPSetupWizard(BaseSetupWizard):
         pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
         with open(pulumi_yaml_path, "w") as f:
             yaml.dump(pulumi_yaml, f, default_flow_style=False)
-        console.print("  [green]✓[/] Created Pulumi.yaml")
+        console.print("  [green]v[/] Created Pulumi.yaml")
 
         # create __main__.py
         main_py = '''"""Pinecone BYOC deployment on GCP."""
@@ -1765,7 +1797,7 @@ if config.get_bool("public-access-enabled") is False:
         main_py_path = os.path.join(output_dir, "__main__.py")
         with open(main_py_path, "w") as f:
             f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        console.print("  [green]v[/] Created __main__.py")
 
         # create pyproject.toml for uv toolchain to install dependencies
         pyproject_content = """[project]
@@ -1777,7 +1809,7 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        console.print("  [green]v[/] Created pyproject.toml")
 
         # create stack config
         stack_name = self._stack_name
@@ -1804,7 +1836,7 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
             f.write(config_content)
-        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+        console.print(f"  [green]v[/] Created Pulumi.{stack_name}.yaml")
 
         if self._skip_install:
             return True
@@ -1832,10 +1864,10 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
                     pkg_version = line.split(":", 1)[1].strip()
                     break
             console.print(
-                f"  [green]✓[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
+                f"  [green]v[/] Dependencies installed [dim](pulumi-pinecone-byoc v{pkg_version})[/]"
             )
         else:
-            console.print(f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to install dependencies: {result.stderr.strip()}")
             console.print("  [dim]Run manually:[/] uv sync")
             return False
 
@@ -1856,9 +1888,9 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
             )
 
         if result.returncode == 0:
-            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+            console.print(f"  [green]v[/] Stack {stack_name} ready")
         else:
-            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+            console.print(f"  [yellow]![/] Stack init: {result.stderr.strip()}")
 
         # set api key as secret
         with Status("  [dim]Storing API key securely...[/]", console=console, spinner="dots"):
@@ -1880,13 +1912,13 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
             )
 
         if result.returncode != 0:
-            console.print(f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to store API key: {result.stderr.strip()}")
             console.print(
                 "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
             )
             return False
 
-        console.print("  [green]✓[/] API key stored securely")
+        console.print("  [green]v[/] API key stored securely")
 
         self._print_success(output_dir)
         return True
@@ -1898,30 +1930,45 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
 
 
 class AzurePreflightChecker:
-    def __init__(self, subscription_id: str, region: str, zones: list[str], cidr: str):
+    def __init__(self, subscription_id: str, region: str, zones: list[str], cidr: str, fast_mode: bool = False):
         self.subscription_id = subscription_id
         self.region = region
         self.zones = zones
         self.cidr = cidr
+        self.fast_mode = fast_mode
         self.results: list[PreflightResult] = []
 
     def run_checks(self) -> bool:
+        # Always run basic validation checks
         checks = [
-            ("Resource Providers", self._check_resource_providers),
-            ("PostgreSQL Flexible Server", self._check_postgres_availability),
-            ("vCPU Quota", self._check_vcpu_quota),
-            ("AKS Clusters", self._check_aks_quota),
-            ("VM SKUs", self._check_vm_skus),
             ("Availability Zones", self._check_zones),
             ("VNet CIDR", self._check_cidr_conflicts),
         ]
+        
+        # Only add heavy checks if NOT in fast mode
+        if not self.fast_mode:
+            checks.extend([
+                ("Resource Providers", self._check_resource_providers),
+                ("PostgreSQL Flexible Server", self._check_postgres_availability),
+                ("vCPU Quota", self._check_vcpu_quota),
+                ("AKS Clusters", self._check_aks_quota),
+                ("VM SKUs", self._check_vm_skus),
+            ])
+        else:
+            # Show clear warning that fast mode is active
+            console.print()
+            console.print("  [yellow]FAST MODE ENABLED[/]")
+            console.print("  [dim]Skipping heavy quota and network validation checks[/]")
+            console.print("  [dim]Use this mode for development/testing only[/]")
+            console.print()
 
+        # Execute all checks
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
                 check_fn()
 
             r = self.results[-1]
-            status = "✓" if r.passed else "✗"
+            status = "v" if r.passed else "x"
             color = "green" if r.passed else "red"
             console.print(f"  [{color}]{status}[/] {r.name}: {r.message}")
             if r.details and not r.passed:
@@ -2392,12 +2439,12 @@ class AzureSetupWizard(BaseSetupWizard):
 
         api_key = os.environ.get("PINECONE_API_KEY")
         if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
+            console.print("  [red]x[/] PINECONE_API_KEY environment variable is required")
             return False
 
         subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
         if not subscription_id:
-            console.print("  [red]✗[/] AZURE_SUBSCRIPTION_ID environment variable is required")
+            console.print("  [red]x[/] AZURE_SUBSCRIPTION_ID environment variable is required")
             return False
 
         region = os.environ.get("PINECONE_REGION", "eastus")
@@ -2442,7 +2489,7 @@ class AzureSetupWizard(BaseSetupWizard):
                     subscription_id = account.get("id", "")
                     subscription_name = account.get("name", "")
                     console.print(
-                        f"  [green]✓[/] Azure credentials valid "
+                        f"  [green]v[/] Azure credentials valid "
                         f"[dim](Subscription: {subscription_name} / {subscription_id})[/]"
                     )
                     return subscription_id
@@ -2450,7 +2497,7 @@ class AzureSetupWizard(BaseSetupWizard):
                     raise Exception("Could not determine Azure subscription")
 
             except Exception as e:
-                console.print(f"  [red]✗[/] Azure credentials invalid: {e}")
+                console.print(f"  [red]x[/] Azure credentials invalid: {e}")
                 console.print()
                 console.print("  [dim]Make sure you have valid Azure credentials configured.[/]")
                 console.print("  [dim]You can set them via:[/]")
@@ -2522,7 +2569,7 @@ class AzureSetupWizard(BaseSetupWizard):
                 if available:
                     return sorted(available)
         except Exception as e:
-            console.print(f"  [yellow]⚠[/] Could not fetch zones from Azure: {e}")
+            console.print(f"  [yellow]![/] Could not fetch zones from Azure: {e}")
         return ["1", "2", "3"]
 
     def _get_zones(self, subscription_id: str, region: str) -> list[str]:
@@ -2547,7 +2594,7 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AzurePreflightChecker(subscription_id, region, zones, cidr)
+        checker = AzurePreflightChecker(subscription_id, region, zones, cidr, fast_mode=self._fast_mode)
         if not checker.run_checks():
             console.print()
             console.print(
@@ -2573,7 +2620,7 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print()
 
         if not self._check_pulumi_installed():
-            console.print("  [red]✗[/] Pulumi CLI not found")
+            console.print("  [red]x[/] Pulumi CLI not found")
             console.print("  [dim]Install Pulumi first:[/] https://www.pulumi.com/docs/install/")
             return False
 
@@ -2590,7 +2637,7 @@ class AzureSetupWizard(BaseSetupWizard):
         pulumi_yaml_path = os.path.join(output_dir, "Pulumi.yaml")
         with open(pulumi_yaml_path, "w") as f:
             yaml.dump(pulumi_yaml, f, default_flow_style=False)
-        console.print("  [green]✓[/] Created Pulumi.yaml")
+        console.print("  [green]v[/] Created Pulumi.yaml")
 
         main_py = '''"""Pinecone BYOC deployment on Azure."""
 
@@ -2628,7 +2675,7 @@ if config.get_bool("public-access-enabled") is False:
         main_py_path = os.path.join(output_dir, "__main__.py")
         with open(main_py_path, "w") as f:
             f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        console.print("  [green]v[/] Created __main__.py")
 
         pyproject_content = """[project]
 name = "pinecone-byoc"
@@ -2639,7 +2686,7 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        console.print("  [green]v[/] Created pyproject.toml")
 
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
@@ -2664,7 +2711,7 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
             f.write(config_content)
-        console.print(f"  [green]✓[/] Created Pulumi.{stack_name}.yaml")
+        console.print(f"  [green]v[/] Created Pulumi.{stack_name}.yaml")
 
         if self._skip_install:
             return True
@@ -2690,11 +2737,11 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
                     pkg_version = line.split(":", 1)[1].strip()
                     break
             console.print(
-                f"  [green]✓[/] Dependencies installed "
+                f"  [green]v[/] Dependencies installed "
                 f"[dim](pulumi-pinecone-byoc v{pkg_version})[/]"
             )
         else:
-            console.print(f"  [red]✗[/] Failed to install dependencies: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to install dependencies: {result.stderr.strip()}")
             console.print("  [dim]Run manually:[/] uv sync")
             return False
 
@@ -2714,9 +2761,9 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
             )
 
         if result.returncode == 0:
-            console.print(f"  [green]✓[/] Stack {stack_name} ready")
+            console.print(f"  [green]v[/] Stack {stack_name} ready")
         else:
-            console.print(f"  [yellow]⚠[/] Stack init: {result.stderr.strip()}")
+            console.print(f"  [yellow]![/] Stack init: {result.stderr.strip()}")
 
         with Status("  [dim]Storing API key securely...[/]", console=console, spinner="dots"):
             result = subprocess.run(
@@ -2737,13 +2784,13 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
             )
 
         if result.returncode != 0:
-            console.print(f"  [red]✗[/] Failed to store API key: {result.stderr.strip()}")
+            console.print(f"  [red]x[/] Failed to store API key: {result.stderr.strip()}")
             console.print(
                 "  [dim]Run manually:[/] pulumi config set --secret pinecone-api-key <key>"
             )
             return False
 
-        console.print("  [green]✓[/] API key stored securely")
+        console.print("  [green]v[/] API key stored securely")
 
         self._print_success(output_dir)
         return True
@@ -2781,7 +2828,7 @@ def select_cloud() -> str:
     elif cloud == "3":
         return "azure"
     else:
-        console.print(f"  [red]✗[/] Invalid choice: {cloud}")
+        console.print(f"  [red]x[/] Invalid choice: {cloud}")
         console.print("  [dim]Please choose 1 (AWS), 2 (GCP), or 3 (Azure)[/]")
         sys.exit(1)
 
@@ -2792,31 +2839,41 @@ def run_setup(
     headless: bool = False,
     stack_name: str = "prod",
     skip_install: bool = False,
+    fast_mode: bool = False,
 ) -> bool:
     try:
         if not cloud:
             if headless:
-                console.print("  [red]✗[/] --cloud is required in headless mode")
+                console.print("  [red]x[/] --cloud is required in headless mode")
                 return False
             cloud = select_cloud()
 
         if cloud == "aws":
             wizard = AWSSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
+                headless=headless,
+                stack_name=stack_name,
+                skip_install=skip_install,
+                fast_mode=fast_mode,
             )
             return wizard.run(output_dir)
         elif cloud == "gcp":
             wizard = GCPSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
+                headless=headless,
+                stack_name=stack_name,
+                skip_install=skip_install,
+                fast_mode=fast_mode,
             )
             return wizard.run(output_dir)
         elif cloud == "azure":
             wizard = AzureSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
+                headless=headless,
+                stack_name=stack_name,
+                skip_install=skip_install,
+                fast_mode=fast_mode,
             )
             return wizard.run(output_dir)
         else:
-            console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
+            console.print(f"  [red]x[/] Unknown cloud provider: {cloud}")
             console.print("  [dim]Valid options: aws, gcp, azure[/]")
             return False
 
@@ -2826,7 +2883,7 @@ def run_setup(
         return False
     except Exception as e:
         console.print()
-        console.print(f"  [red]✗[/] Setup failed: {e}")
+        console.print(f"  [red]x[/] Setup failed: {e}")
         return False
 
 
@@ -2855,6 +2912,11 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip dependency installation and stack initialization.",
     )
+    parser.add_argument(
+        "--fast-mode",
+        action="store_true",
+        help="Skip heavy quota and network validation checks (development use only)",
+    )
     args = parser.parse_args()
 
     success = run_setup(
@@ -2863,5 +2925,6 @@ if __name__ == "__main__":
         headless=args.headless,
         stack_name=args.stack_name,
         skip_install=args.skip_install,
+        fast_mode=args.fast_mode,
     )
     sys.exit(0 if success else 1)
