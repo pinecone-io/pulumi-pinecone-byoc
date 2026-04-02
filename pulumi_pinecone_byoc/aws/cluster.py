@@ -425,14 +425,14 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._eks.provider,
             pinecone_version=args.pinecone_version,
-            pinetools_image=AWS_REGISTRY.pinetools_image,
+            pinetools_image=AWS_REGISTRY.pinetools_image(args.pinecone_version),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks, self._k8s_configmaps]),
         )
 
         self._uninstaller = ClusterUninstaller(
             f"{config.resource_prefix}-uninstaller",
             kubeconfig=self._eks.kubeconfig.apply(json.dumps),
-            pinetools_image=AWS_REGISTRY.pinetools_image,
+            pinetools_image=AWS_REGISTRY.pinetools_image(args.pinecone_version),
             cloud="aws",
             opts=pulumi.ResourceOptions(
                 parent=self,

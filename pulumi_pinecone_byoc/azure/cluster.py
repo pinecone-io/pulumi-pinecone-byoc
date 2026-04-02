@@ -396,7 +396,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._aks.k8s_provider,
             pinecone_version=args.pinecone_version,
-            pinetools_image=AZURE_REGISTRY.pinetools_image,
+            pinetools_image=AZURE_REGISTRY.pinetools_image(args.pinecone_version),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._aks, self._k8s_configmaps]),
         )
 
@@ -404,7 +404,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         self._uninstaller = ClusterUninstaller(
             f"{config.resource_prefix}-uninstaller",
             kubeconfig=self._aks.kubeconfig,
-            pinetools_image=AZURE_REGISTRY.pinetools_image,
+            pinetools_image=AZURE_REGISTRY.pinetools_image(args.pinecone_version),
             cloud="azure",
             opts=pulumi.ResourceOptions(
                 parent=self,

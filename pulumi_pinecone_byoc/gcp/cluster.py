@@ -336,14 +336,14 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-pinetools",
             k8s_provider=self._gke.k8s_provider,
             pinecone_version=args.pinecone_version,
-            pinetools_image=GCP_REGISTRY.pinetools_image,
+            pinetools_image=GCP_REGISTRY.pinetools_image(args.pinecone_version),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke, self._k8s_configmaps]),
         )
 
         self._uninstaller = ClusterUninstaller(
             f"{config.resource_prefix}-uninstaller",
             kubeconfig=self._gke.kubeconfig,
-            pinetools_image=GCP_REGISTRY.pinetools_image,
+            pinetools_image=GCP_REGISTRY.pinetools_image(args.pinecone_version),
             cloud="gcp",
             opts=pulumi.ResourceOptions(
                 parent=self,

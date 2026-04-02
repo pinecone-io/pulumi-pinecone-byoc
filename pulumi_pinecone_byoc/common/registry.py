@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-PINETOOLS_TAG = "latest"
+DEFAULT_PINETOOLS_TAG = "latest"
 
 RegistryType = Literal["ecr", "gcr", "acr"]
 
@@ -13,9 +13,8 @@ class ContainerRegistry:
     base_url: str
     type: RegistryType
 
-    @property
-    def pinetools_image(self) -> str:
-        return f"{self.base_url}/pinetools:{PINETOOLS_TAG}"
+    def pinetools_image(self, tag: str = DEFAULT_PINETOOLS_TAG) -> str:
+        return f"{self.base_url}/pinetools:{tag}"
 
 
 AWS_REGISTRY = ContainerRegistry(
