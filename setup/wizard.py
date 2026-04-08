@@ -788,7 +788,7 @@ class AWSPreflightChecker:
 
 
 class AWSSetupWizard(BaseSetupWizard):
-    TOTAL_STEPS = 14
+    TOTAL_STEPS = 15
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
@@ -817,6 +817,7 @@ class AWSSetupWizard(BaseSetupWizard):
         region = self._get_region()
         azs = self._get_azs(region)
         custom_ami_id = self._get_custom_ami_id()
+        kms_key_arn = self._get_kms_key_arn()
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
@@ -841,6 +842,7 @@ class AWSSetupWizard(BaseSetupWizard):
             public_access,
             tags,
             custom_ami_id=custom_ami_id,
+            kms_key_arn=kms_key_arn,
         )
 
     def _run_headless(self, output_dir: str) -> bool:
@@ -861,6 +863,7 @@ class AWSSetupWizard(BaseSetupWizard):
         public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
         project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
         custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
+        kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
 
         return self._generate_project(
             output_dir,
@@ -873,6 +876,7 @@ class AWSSetupWizard(BaseSetupWizard):
             public_access,
             {},
             custom_ami_id=custom_ami_id,
+            kms_key_arn=kms_key_arn,
         )
 
     def _validate_aws_creds(self) -> bool:
@@ -944,6 +948,19 @@ class AWSSetupWizard(BaseSetupWizard):
         ami_id = self._prompt("Enter AMI ID (or press Enter to skip)", "")
         return ami_id or None
 
+    def _get_kms_key_arn(self) -> str | None:
+        console.print()
+        console.print(f"  {self._step('KMS Key (Optional)')}")
+        console.print(
+            "  [dim]Provide a KMS key ARN to encrypt S3 buckets and RDS with your own key.[/]"
+        )
+        console.print(
+            "  [dim]Leave blank to use default AWS-managed encryption (AES256/default RDS key).[/]"
+        )
+        console.print()
+        arn = self._prompt("Enter KMS key ARN (or press Enter to skip)", "")
+        return arn or None
+
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
@@ -971,6 +988,7 @@ class AWSSetupWizard(BaseSetupWizard):
         public_access: bool,
         tags: dict[str, str],
         custom_ami_id: str | None = None,
+        kms_key_arn: str | None = None,
     ):
         console.print()
 
@@ -1016,6 +1034,7 @@ cluster = PineconeAWSCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         custom_ami_id=config.get("custom-ami-id"),
+        kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
     ),
 )
@@ -1065,6 +1084,10 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
         # add custom AMI ID if provided
         if custom_ami_id:
             config_content += f"  {project_name}:custom-ami-id: {custom_ami_id}\n"
+
+        # add customer KMS key ARN if provided
+        if kms_key_arn:
+            config_content += f"  {project_name}:kms-key-arn: {kms_key_arn}\n"
 
         # add tags if provided (quote values to handle YAML special chars)
         if tags:

@@ -29,7 +29,7 @@ class S3Buckets(pulumi.ComponentResource):
         name: str,
         config: AWSConfig,
         cell_name: pulumi.Input[str],
-        kms_key_arn: pulumi.Output[str] | None = None,
+        kms_key_arn: pulumi.Input[str] | None = None,
         force_destroy: bool = False,
         opts: pulumi.ResourceOptions | None = None,
     ):
@@ -91,7 +91,7 @@ class S3Buckets(pulumi.ComponentResource):
         self,
         name: str,
         bucket_type: str,
-        kms_key_arn: pulumi.Output[str] | None = None,
+        kms_key_arn: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ) -> aws.s3.Bucket:
         """Create an S3 bucket with standard configuration."""

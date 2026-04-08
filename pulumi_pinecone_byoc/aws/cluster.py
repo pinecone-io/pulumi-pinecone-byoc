@@ -83,6 +83,9 @@ class PineconeAWSClusterArgs:
     # custom AMI
     custom_ami_id: str | None = None
 
+    # KMS key ARN for encrypting S3 and RDS
+    kms_key_arn: str | None = None
+
     # tags
     tags: dict[str, str] | None = None
 
@@ -176,6 +179,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-s3",
             config,
             cell_name=self._cell_name,
+            kms_key_arn=args.kms_key_arn,
             force_destroy=not args.deletion_protection,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
         )
@@ -259,6 +263,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             config,
             self._vpc,
             cell_name=self._cell_name,
+            kms_key_arn=args.kms_key_arn,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
         )
 
@@ -365,6 +370,31 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
             opts=child_opts,
         )
+
+        if args.kms_key_arn:
+            aws.iam.RolePolicy(
+                f"{config.resource_prefix}-ec2-allow-customer-kms",
+                role=self._eks.node_role_name,
+                policy=json.dumps(
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [
+                            {
+                                "Effect": "Allow",
+                                "Action": [
+                                    "kms:Encrypt",
+                                    "kms:Decrypt",
+                                    "kms:ReEncrypt*",
+                                    "kms:GenerateDataKey*",
+                                    "kms:DescribeKey",
+                                ],
+                                "Resource": args.kms_key_arn,
+                            }
+                        ],
+                    }
+                ),
+                opts=child_opts,
+            )
 
         pulumi_outputs = {
             "cell_name": self._cell_name,
@@ -534,6 +564,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             parent_zone_name=args.parent_dns_zone_name,
             database=DatabaseConfig(deletion_protection=args.deletion_protection),
             custom_ami_id=args.custom_ami_id,
+            kms_key_arn=args.kms_key_arn,
             custom_tags=args.tags or {},
         )
 
