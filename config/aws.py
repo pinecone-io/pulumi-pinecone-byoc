@@ -62,6 +62,9 @@ class AWSConfig(BaseConfig):
     # Custom AMI
     custom_ami_id: str | None = None
 
+    # KMS key ARN for encrypting S3 and RDS
+    kms_key_arn: str | None = None
+
     # Custom tags from user
     custom_tags: dict[str, str] = Field(default_factory=dict)
 

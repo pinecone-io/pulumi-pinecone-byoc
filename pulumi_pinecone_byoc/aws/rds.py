@@ -31,7 +31,7 @@ class RDSInstance(pulumi.ComponentResource):
         security_group_id: pulumi.Output[str],
         subnet_group_name: pulumi.Output[str],
         resource_suffix: pulumi.Input[str],
-        kms_key_arn: pulumi.Output[str] | None = None,
+        kms_key_arn: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:RDSInstance", name, None, opts)
@@ -203,7 +203,7 @@ class RDS(pulumi.ComponentResource):
         config: AWSConfig,
         vpc: VPC,
         cell_name: pulumi.Input[str],
-        kms_key_arn: pulumi.Output[str] | None = None,
+        kms_key_arn: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:RDS", name, None, opts)
