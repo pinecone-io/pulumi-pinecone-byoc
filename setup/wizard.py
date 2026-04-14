@@ -20,7 +20,7 @@ if not IS_WINDOWS:
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-bacc333"
+PINECONE_VERSION = "main-711db25"
 
 console = Console()
 
