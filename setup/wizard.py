@@ -2281,6 +2281,15 @@ class AzurePreflightChecker:
             )
             return
 
+        if aks_net.prefixlen > 20:
+            self._add_result(
+                "VNet CIDR",
+                False,
+                f"CIDR /{aks_net.prefixlen} is too small (minimum is /20)",
+                "Use a /20 or larger CIDR block (e.g., 10.0.0.0/16) to ensure enough IP addresses for node scaling.",
+            )
+            return
+
         # derive subnets the same way vnet.py does
         try:
             db_net = ipaddress.ip_network(

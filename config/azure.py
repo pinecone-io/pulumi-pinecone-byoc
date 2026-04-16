@@ -1,6 +1,8 @@
 """Azure-specific configuration for BYOC infrastructure."""
 
-from pydantic import BaseModel, Field
+import ipaddress
+
+from pydantic import BaseModel, Field, field_validator
 
 from .base import BaseConfig
 
@@ -31,6 +33,16 @@ class FlexibleServerConfig(BaseModel):
 class AzureConfig(BaseConfig):
     cloud: str = "azure"
     subscription_id: str = ""
+
+    @field_validator("vpc_cidr")
+    @classmethod
+    def _vpc_cidr_minimum_size(cls, v: str) -> str:
+        net = ipaddress.ip_network(v)
+        if net.prefixlen > 20:
+            raise ValueError(
+                f"vpc_cidr /{net.prefixlen} is too small; minimum is /20 to ensure enough IP addresses for node scaling"
+            )
+        return v
 
     database: FlexibleServerConfig = Field(default_factory=FlexibleServerConfig)
     custom_tags: dict[str, str] = Field(default_factory=dict)
