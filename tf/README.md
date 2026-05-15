@@ -152,7 +152,7 @@ The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also 
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `pinecone_version` | Pinecone release version (required) | - |
+| `pinecone_version` | Pinecone release version, used as the `pinetools` container image tag (required, e.g. `main-1b955e2`) | - |
 | `pinecone_api_key` | Pinecone API key (required) | - |
 | `region` | AWS region | `us-east-1` |
 | `availability_zones` | AZs for high availability | `["us-east-1a", "us-east-1b"]` |
@@ -168,7 +168,7 @@ The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also 
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `pinecone_version` | Pinecone release version (required) | - |
+| `pinecone_version` | Pinecone release version, used as the `pinetools` container image tag (required, e.g. `main-1b955e2`) | - |
 | `pinecone_api_key` | Pinecone API key (required) | - |
 | `project` | GCP project ID (required) | - |
 | `region` | GCP region | `us-central1` |
@@ -183,7 +183,7 @@ The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also 
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `pinecone_version` | Pinecone release version (required) | - |
+| `pinecone_version` | Pinecone release version, used as the `pinetools` container image tag (required, e.g. `main-1b955e2`) | - |
 | `pinecone_api_key` | Pinecone API key (required) | - |
 | `subscription_id` | Azure subscription ID (required) | - |
 | `region` | Azure region | `eastus` |

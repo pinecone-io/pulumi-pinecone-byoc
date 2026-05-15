@@ -79,7 +79,7 @@ def build_values(cloud: str) -> dict:
     defaults = DEFAULTS[cloud]
     values = {
         "pinecone_api_key": ask("Pinecone API key"),
-        "pinecone_version": ask("Pinecone version", DEFAULT_PINECONE_VERSION),
+        "pinecone_version": ask("Pinecone version (pinetools image tag)", DEFAULT_PINECONE_VERSION),
         "region": ask("Region", defaults["region"]),
         "availability_zones": ask_list("Availability zones, comma-separated", defaults["availability_zones"]),
         "vpc_cidr": ask("VPC/VNet CIDR", defaults["vpc_cidr"]),
