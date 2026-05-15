@@ -32,14 +32,27 @@ terraform {
 provider "kubernetes" {
   host                   = aws_eks_cluster.this.endpoint
   cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.this.token
+  # `data.aws_eks_cluster_auth` returns a one-shot token that expires after
+  # ~15 minutes. A full BYOC apply takes >30 minutes, so the token is dead
+  # before the pinetools install job runs and Kubernetes calls fail with
+  # "Unauthorized". Use the AWS CLI exec plugin so each call mints a fresh
+  # token.
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    command     = "aws"
+    args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.this.name, "--region", var.region]
+  }
 }
 
 provider "helm" {
   kubernetes {
     host                   = aws_eks_cluster.this.endpoint
     cluster_ca_certificate = base64decode(aws_eks_cluster.this.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.this.token
+    exec {
+      api_version = "client.authentication.k8s.io/v1beta1"
+      command     = "aws"
+      args        = ["eks", "get-token", "--cluster-name", aws_eks_cluster.this.name, "--region", var.region]
+    }
   }
 }
 
