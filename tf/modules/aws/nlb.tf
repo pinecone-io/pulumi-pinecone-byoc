@@ -1,6 +1,9 @@
 locals {
-  private_alb_name = substr("${split(".", local.subdomain)[0]}-priv-alb", 0, 32)
-  public_alb_name  = substr("${split(".", local.subdomain)[0]}-alb", 0, 32)
+  # ALB names are limited to 32 chars and cannot start or end with a hyphen.
+  # The subdomain-derived prefix can push the suffixed name past 32 chars,
+  # producing a trailing hyphen after substr. Strip any trailing hyphens.
+  private_alb_name = trimsuffix(substr("${split(".", local.subdomain)[0]}-priv-alb", 0, 32), "-")
+  public_alb_name  = trimsuffix(substr("${split(".", local.subdomain)[0]}-alb", 0, 32), "-")
   tls_secret_name  = "${split(".", local.subdomain)[0]}-tls"
   alb_tags_string  = join(",", [for k, v in local.tags : "${k}=${v}"])
 }
