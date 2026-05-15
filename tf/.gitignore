@@ -1,0 +1,26 @@
+# Local Terraform data
+.terraform/
+.terraform.lock.hcl
+.terraform.tfstate.lock.info
+terraform.tfstate
+terraform.tfstate.*
+*.tfplan
+tfplan
+
+# Local configuration and secrets
+*.tfvars
+*.tfvars.json
+dev.tfrc.hcl
+kubeconfig
+
+# Terraform override files
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Local build outputs
+provider/pineconebyoc/bin/
+
+# Python caches
+__pycache__/
