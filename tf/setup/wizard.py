@@ -13,6 +13,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "examples"
 
+# Mirrors the hard-coded default in the Pulumi-side wizard
+# (../../setup/wizard.py: PINECONE_VERSION). Bump both together.
+DEFAULT_PINECONE_VERSION = "main-1b955e2"
+
 
 DEFAULTS = {
     "aws": {
@@ -75,7 +79,7 @@ def build_values(cloud: str) -> dict:
     defaults = DEFAULTS[cloud]
     values = {
         "pinecone_api_key": ask("Pinecone API key"),
-        "pinecone_version": ask("Pinecone version"),
+        "pinecone_version": ask("Pinecone version", DEFAULT_PINECONE_VERSION),
         "region": ask("Region", defaults["region"]),
         "availability_zones": ask_list("Availability zones, comma-separated", defaults["availability_zones"]),
         "vpc_cidr": ask("VPC/VNet CIDR", defaults["vpc_cidr"]),
