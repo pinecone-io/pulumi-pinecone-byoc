@@ -21,6 +21,7 @@ override.tf.json
 
 # Local build outputs
 provider/pineconebyoc/bin/
+provider-mirror/
 
 # Python caches
 __pycache__/

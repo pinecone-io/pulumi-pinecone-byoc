@@ -66,6 +66,12 @@ resource "google_container_cluster" "this" {
   ]
 }
 
+resource "time_sleep" "workload_identity_pool_ready" {
+  create_duration = "120s"
+
+  depends_on = [google_container_cluster.this]
+}
+
 resource "google_service_account" "nodepool" {
   account_id   = local.np_sa_account_id
   display_name = "Nodepool service account for ${local.cell_name}"
@@ -160,12 +166,16 @@ resource "google_service_account_iam_binding" "dns_workload_identity" {
   service_account_id = google_service_account.dns.name
   role               = "roles/iam.workloadIdentityUser"
   members            = ["serviceAccount:${var.project}.svc.id.goog[gloo-system/certmanager-certgen]"]
+
+  depends_on = [time_sleep.workload_identity_pool_ready]
 }
 
 resource "google_service_account_iam_binding" "pulumi_workload_identity" {
   service_account_id = google_service_account.pulumi.name
   role               = "roles/iam.workloadIdentityUser"
   members            = ["serviceAccount:${var.project}.svc.id.goog[pulumi-kubernetes-operator/pulumi-k8s-operator]"]
+
+  depends_on = [time_sleep.workload_identity_pool_ready]
 }
 
 resource "google_service_account_iam_member" "writer_workload_identity" {
@@ -173,12 +183,16 @@ resource "google_service_account_iam_member" "writer_workload_identity" {
   service_account_id = google_service_account.writer.name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project}.svc.id.goog[${each.value}]"
+
+  depends_on = [time_sleep.workload_identity_pool_ready]
 }
 
 resource "google_service_account_iam_binding" "reader_workload_identity" {
   service_account_id = google_service_account.reader.name
   role               = "roles/iam.workloadIdentityUser"
   members            = [for sa in var.reader_k8s_service_accounts : "serviceAccount:${var.project}.svc.id.goog[${sa}]"]
+
+  depends_on = [time_sleep.workload_identity_pool_ready]
 }
 
 resource "google_service_account_key" "storage_integration" {
@@ -227,4 +241,13 @@ resource "google_container_node_pool" "this" {
   lifecycle {
     ignore_changes = [initial_node_count, node_count]
   }
+
+  depends_on = [
+    google_project_iam_member.nodepool_service_account_admin,
+    google_project_iam_member.nodepool_storage_admin,
+    google_service_account_iam_binding.dns_workload_identity,
+    google_service_account_iam_binding.pulumi_workload_identity,
+    google_service_account_iam_binding.reader_workload_identity,
+    google_service_account_iam_member.writer_workload_identity,
+  ]
 }

@@ -5,6 +5,8 @@ resource "pineconebyoc_environment" "this" {
   api_url                    = var.api_url
   pinecone_api_key           = var.pinecone_api_key
   is_public_endpoint_enabled = var.public_access_enabled
+
+  depends_on = [terraform_data.gcp_apis_ready]
 }
 
 resource "pineconebyoc_cpgw_api_key" "this" {

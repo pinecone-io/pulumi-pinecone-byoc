@@ -34,20 +34,23 @@ cd provider/pineconebyoc
 go build -o bin/terraform-provider-pineconebyoc
 ```
 
-## Terraform Development Override
+## Terraform Local Mirror
 
-Until the provider is published to a registry, Terraform must be pointed at the local provider binary:
+Until the provider is published to a registry, Terraform installs it from a local filesystem mirror:
 
 ```hcl
 provider_installation {
-  dev_overrides {
-    "pinecone.io/internal/pineconebyoc" = "/absolute/path/to/tf/provider/pineconebyoc/bin"
+  filesystem_mirror {
+    path    = "/absolute/path/to/tf/provider-mirror"
+    include = ["pinecone.io/internal/pineconebyoc"]
   }
-  direct {}
+  direct {
+    exclude = ["pinecone.io/internal/pineconebyoc"]
+  }
 }
 ```
 
-The `make cli-config` target writes this configuration to `tf/dev.tfrc.hcl`. Use it by setting `TF_CLI_CONFIG_FILE` when running Terraform:
+The `make provider-build` target builds the provider into `tf/provider-mirror/`, and `make cli-config` writes this configuration to `tf/dev.tfrc.hcl`. Use it by setting `TF_CLI_CONFIG_FILE` when running Terraform:
 
 ```sh
 TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform init

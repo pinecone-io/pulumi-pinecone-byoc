@@ -152,7 +152,7 @@ resource "pineconebyoc_gcp_forwarding_rule_delete_waiter" "private" {
 
 resource "kubernetes_ingress_v1" "public" {
   count                  = var.public_access_enabled ? 1 : 0
-  wait_for_load_balancer = true
+  wait_for_load_balancer = false
 
   metadata {
     name      = "gloo-lb"
@@ -202,7 +202,7 @@ resource "kubernetes_ingress_v1" "public" {
 }
 
 resource "kubernetes_ingress_v1" "private" {
-  wait_for_load_balancer = true
+  wait_for_load_balancer = false
 
   metadata {
     name      = "private-gloo-lb"
