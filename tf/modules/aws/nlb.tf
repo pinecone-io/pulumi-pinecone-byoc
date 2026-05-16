@@ -168,9 +168,13 @@ resource "kubernetes_ingress_v1" "private_gloo_http1" {
 }
 
 resource "pineconebyoc_aws_alb_waiter" "private" {
-  name       = local.private_alb_name
-  region     = var.region
-  depends_on = [kubernetes_ingress_v1.private_gloo_http1]
+  name   = local.private_alb_name
+  region = var.region
+
+  depends_on = [
+    kubernetes_ingress_v1.private_gloo_http1,
+    module.common,
+  ]
 }
 
 resource "aws_lb_target_group" "private_alb" {
@@ -368,10 +372,14 @@ resource "kubernetes_ingress_v1" "public_gloo_http1" {
 }
 
 resource "pineconebyoc_aws_alb_waiter" "public" {
-  count      = var.public_access_enabled ? 1 : 0
-  name       = local.public_alb_name
-  region     = var.region
-  depends_on = [kubernetes_ingress_v1.public_gloo_http1]
+  count  = var.public_access_enabled ? 1 : 0
+  name   = local.public_alb_name
+  region = var.region
+
+  depends_on = [
+    kubernetes_ingress_v1.public_gloo_http1,
+    module.common,
+  ]
 }
 
 resource "aws_route53_record" "public_alb_alias" {

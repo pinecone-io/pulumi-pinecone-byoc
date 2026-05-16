@@ -386,6 +386,28 @@ az account show
 
 Terraform may warn that `pineconebyoc` is installed from an unauthenticated local mirror or that the lock file only contains checksums for your platform. That is expected while using the locally built provider through `dev.tfrc.hcl`.
 
+If `terraform init` fails because the local `pineconebyoc` package does not match the dependency lock file checksums, remove the generated provider mirror, CLI config, and per-example initialization files, then rebuild the local provider:
+
+```bash
+cd tf
+rm -rf provider-mirror dev.tfrc.hcl
+find examples -mindepth 2 -maxdepth 2 \( -name .terraform -o -name .terraform.lock.hcl \) -exec rm -rf {} +
+make provider-build cli-config
+cd examples/<cloud>
+TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform init
+```
+
+This does not remove Terraform state. Only delete `terraform.tfstate` files after the old environment has been destroyed or if you intentionally want to abandon that state.
+
+### GCP AlloyDB internal errors
+
+GCP may occasionally return `Error code 13, message: an internal error has occurred` while creating an AlloyDB instance. If the corresponding AlloyDB cluster is `READY` and Terraform state is otherwise healthy, rerun `terraform apply`; Terraform will create the missing instance and continue with the downstream resources.
+
+```bash
+cd tf/examples/gcp
+TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform apply
+```
+
 ### No configuration files
 
 If `terraform init` says `Terraform initialized in an empty directory` or `terraform plan` says `No configuration files`, you are running Terraform from `tf/`. Change into an example root module first:

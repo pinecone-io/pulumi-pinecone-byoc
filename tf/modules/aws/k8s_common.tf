@@ -71,8 +71,6 @@ module "common" {
     terraform_data.cloud_support_ready,
     terraform_data.dns_bootstrap_ready,
     aws_eks_node_group.this,
-    aws_route53_record.public_alb_alias,
-    aws_vpc_endpoint.internal,
     aws_rds_cluster_instance.db,
     aws_s3_bucket_lifecycle_configuration.pinecone,
   ]

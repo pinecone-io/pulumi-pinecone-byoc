@@ -37,6 +37,8 @@ resource "azurerm_federated_identity_credential" "pulumi_operator" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = azurerm_kubernetes_cluster.this.oidc_issuer_url
   subject             = "system:serviceaccount:pulumi-kubernetes-operator:pulumi-k8s-operator"
+
+  depends_on = [time_sleep.workload_identity_ready]
 }
 
 resource "azurerm_role_assignment" "operator_storage" {

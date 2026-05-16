@@ -28,6 +28,8 @@ resource "azurerm_federated_identity_credential" "external_dns" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = azurerm_kubernetes_cluster.this.oidc_issuer_url
   subject             = "system:serviceaccount:gloo-system:external-dns"
+
+  depends_on = [time_sleep.workload_identity_ready]
 }
 
 resource "azurerm_role_assignment" "external_dns" {
@@ -83,6 +85,8 @@ resource "azurerm_federated_identity_credential" "certmanager" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = azurerm_kubernetes_cluster.this.oidc_issuer_url
   subject             = "system:serviceaccount:gloo-system:certmanager-certgen"
+
+  depends_on = [time_sleep.workload_identity_ready]
 }
 
 resource "azurerm_role_assignment" "certmanager_dns" {
@@ -106,4 +110,6 @@ resource "azurerm_federated_identity_credential" "prometheus" {
   audience            = ["api://AzureADTokenExchange"]
   issuer              = azurerm_kubernetes_cluster.this.oidc_issuer_url
   subject             = "system:serviceaccount:prometheus:amp-iamproxy-ingest-service-account"
+
+  depends_on = [time_sleep.workload_identity_ready]
 }

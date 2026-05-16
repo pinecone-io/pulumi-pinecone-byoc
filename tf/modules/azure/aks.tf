@@ -123,3 +123,9 @@ resource "azurerm_kubernetes_cluster_node_pool" "this" {
 resource "pineconebyoc_aks_api_server_waiter" "this" {
   kubeconfig = azurerm_kubernetes_cluster.this.kube_config_raw
 }
+
+resource "time_sleep" "workload_identity_ready" {
+  create_duration = "120s"
+
+  depends_on = [pineconebyoc_aks_api_server_waiter.this]
+}

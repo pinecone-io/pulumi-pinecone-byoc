@@ -267,10 +267,14 @@ resource "kubernetes_ingress_v1" "private" {
 }
 
 resource "pineconebyoc_gcp_forwarding_rule_waiter" "private" {
-  project    = var.project
-  region     = var.region
-  cell_name  = local.cell_name
-  depends_on = [kubernetes_ingress_v1.private]
+  project   = var.project
+  region    = var.region
+  cell_name = local.cell_name
+
+  depends_on = [
+    kubernetes_ingress_v1.private,
+    module.common,
+  ]
 }
 
 resource "google_compute_service_attachment" "this" {

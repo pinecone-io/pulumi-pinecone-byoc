@@ -35,7 +35,7 @@ func waitAWSALB(ctx context.Context, d *schema.ResourceData, meta any) diag.Diag
 	name := d.Get("name").(string)
 	region := d.Get("region").(string)
 	var last string
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 120; i++ {
 		out, err := exec.CommandContext(ctx, "aws", "elbv2", "describe-load-balancers", "--names", name, "--region", region, "--output", "json").CombinedOutput()
 		last = string(out)
 		if err == nil {
@@ -78,7 +78,7 @@ func waitAWSVPCEndpointDNS(ctx context.Context, d *schema.ResourceData, meta any
 	serviceID := d.Get("service_id").(string)
 	region := d.Get("region").(string)
 	time.Sleep(60 * time.Second)
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 120; i++ {
 		if i%3 == 0 {
 			_ = exec.CommandContext(ctx, "aws", "ec2", "start-vpc-endpoint-service-private-dns-verification", "--service-id", serviceID, "--region", region).Run()
 		}
@@ -127,7 +127,7 @@ func waitGCPForwardingRule(ctx context.Context, d *schema.ResourceData, meta any
 	project := d.Get("project").(string)
 	region := d.Get("region").(string)
 	cellName := d.Get("cell_name").(string)
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 120; i++ {
 		out, err := gcloudJSONOutput(ctx, "compute", "forwarding-rules", "list", "--regions", region, "--project", project, "--format=json")
 		if err == nil {
 			var rules []struct {
@@ -173,7 +173,7 @@ func waitGCPForwardingRuleDeleted(ctx context.Context, d *schema.ResourceData, m
 	project := d.Get("project").(string)
 	region := d.Get("region").(string)
 	cellName := d.Get("cell_name").(string)
-	for i := 0; i < 90; i++ {
+	for i := 0; i < 120; i++ {
 		out, err := gcloudJSONOutput(ctx, "compute", "forwarding-rules", "list", "--regions", region, "--project", project, "--format=json")
 		if err != nil {
 			return diag.Errorf("failed listing GCP forwarding rules while waiting for %s deletion: %v\n%s", cellName, err, out)
@@ -227,12 +227,12 @@ func resourceAKSAPIWaiter() *schema.Resource {
 
 func waitAKSAPI(ctx context.Context, d *schema.ResourceData, meta any) diag.Diagnostics {
 	host := serverHost(d.Get("kubeconfig").(string))
-	for i := 0; i < 12; i++ {
+	for i := 0; i < 120; i++ {
 		if _, err := net.LookupHost(host); err == nil {
 			d.SetId(host)
 			return nil
 		}
-		time.Sleep(5 * time.Second)
+		time.Sleep(10 * time.Second)
 	}
 	return diag.Errorf("timeout waiting for AKS API server DNS %s", host)
 }
