@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 
 from .base import BaseConfig
 
+APN_TAG_PROD_BYOC = ("aws-apn-id", "pc:5eldspisdx06ewzohqetnxufm")
+APN_TAG_NONPROD_BYOC = ("aws-test-apn-id", "pc:00000000000000000000-byoc")
+
 
 class DatabaseInstanceConfig(BaseModel):
     """Configuration for a single RDS instance."""
@@ -70,7 +73,11 @@ class AWSConfig(BaseConfig):
 
     def tags(self, **extra: str) -> dict[str, str]:
         """Generate consistent resource tags, including user-provided custom tags."""
+        apn_key, apn_value = (
+            APN_TAG_PROD_BYOC if self.global_env == "prod" else APN_TAG_NONPROD_BYOC
+        )
         base_tags = {
             "pinecone:managed-by": "pulumi",
+            apn_key: apn_value,
         }
         return {**base_tags, **self.custom_tags, **extra}
