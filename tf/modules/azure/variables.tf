@@ -65,11 +65,6 @@ variable "public_access_enabled" {
   default = true
 }
 
-variable "deletion_protection" {
-  type    = bool
-  default = true
-}
-
 variable "api_url" {
   type    = string
   default = "https://api.pinecone.io"

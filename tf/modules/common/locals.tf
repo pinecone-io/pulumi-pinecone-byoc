@@ -1,5 +1,4 @@
 locals {
-  dns_cnames       = ["*.svc", "metrics", "prometheus"]
   external_ns      = "external-secrets"
   control_plane_ns = "pc-control-plane"
 

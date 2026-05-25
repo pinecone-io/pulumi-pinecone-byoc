@@ -94,13 +94,97 @@ module "common" {
   ]
 }
 
+resource "terraform_data" "cluster_uninstaller_dependencies" {
+  input = module.common.cluster_uninstaller_dependency_ids
+}
+
+resource "terraform_data" "cluster_uninstaller_cloud_dependencies" {
+  input = {
+    aks_subnet_id             = azurerm_subnet.aks.id
+    cluster_id                = azurerm_kubernetes_cluster.this.id
+    dns_zone_id               = azurerm_dns_zone.this.id
+    external_public_ip_id     = azurerm_public_ip.external.id
+    key_vault_id              = azurerm_key_vault.pulumi.id
+    nat_gateway_id            = azurerm_nat_gateway.this.id
+    nat_public_ip_id          = azurerm_public_ip.nat.id
+    pls_subnet_id             = azurerm_subnet.pls.id
+    private_dns_zone_id       = azurerm_private_dns_zone.postgres.id
+    resource_group_id         = azurerm_resource_group.this.id
+    storage_account_id        = azurerm_storage_account.this.id
+    virtual_network_id        = azurerm_virtual_network.this.id
+    load_balancer_cleanup_id  = terraform_data.load_balancer_cleanup.id
+    private_dns_record_id     = azurerm_dns_a_record.private.id
+    public_dns_record_id      = azurerm_dns_a_record.ingress.id
+    private_link_service_name = "${local.cell_name}-pls"
+    node_pool_ids = {
+      for name, pool in azurerm_kubernetes_cluster_node_pool.this : name => pool.id
+    }
+    postgres_server_ids = {
+      for name, server in azurerm_postgresql_flexible_server.this : name => server.id
+    }
+  }
+
+  depends_on = [
+    azuread_service_principal_password.storage_integration,
+    azurerm_dns_a_record.ingress,
+    azurerm_dns_a_record.private,
+    azurerm_dns_cname_record.private_cnames,
+    azurerm_dns_cname_record.public_cnames,
+    azurerm_federated_identity_credential.certmanager,
+    azurerm_federated_identity_credential.external_dns,
+    azurerm_federated_identity_credential.prometheus,
+    azurerm_federated_identity_credential.pulumi_operator,
+    azurerm_key_vault_key.pulumi,
+    azurerm_kubernetes_cluster.this,
+    azurerm_kubernetes_cluster_node_pool.this,
+    azurerm_nat_gateway.this,
+    azurerm_nat_gateway_public_ip_association.this,
+    azurerm_postgresql_flexible_server_database.this,
+    azurerm_private_dns_zone_virtual_network_link.postgres,
+    azurerm_public_ip.external,
+    azurerm_public_ip.nat,
+    azurerm_role_assignment.certmanager_dns,
+    azurerm_role_assignment.external_dns,
+    azurerm_role_assignment.mi_operator,
+    azurerm_role_assignment.network_contributor_rg,
+    azurerm_role_assignment.network_contributor_subnet,
+    azurerm_role_assignment.operator_keyvault,
+    azurerm_role_assignment.operator_rg_contributor,
+    azurerm_role_assignment.operator_storage,
+    azurerm_role_assignment.storage_integration_reader,
+    azurerm_storage_container.pulumi_state,
+    azurerm_storage_container.this,
+    azurerm_storage_management_policy.this,
+    azurerm_subnet.aks,
+    azurerm_subnet.db,
+    azurerm_subnet.pls,
+    azurerm_subnet_nat_gateway_association.aks,
+    azurerm_user_assigned_identity.certmanager,
+    azurerm_user_assigned_identity.cluster,
+    azurerm_user_assigned_identity.external_dns,
+    azurerm_user_assigned_identity.kubelet,
+    azurerm_user_assigned_identity.prometheus,
+    azurerm_user_assigned_identity.pulumi_operator,
+    azurerm_virtual_network.this,
+    kubernetes_ingress_v1.private,
+    kubernetes_secret_v1.external_dns_azure,
+    kubernetes_secret_v1.placeholder_tls,
+    kubernetes_service_account_v1.external_dns,
+    kubernetes_service_v1.internal_lb,
+    kubernetes_service_v1.public_lb,
+    pineconebyoc_aks_api_server_waiter.this,
+    terraform_data.load_balancer_cleanup,
+  ]
+}
+
 resource "pineconebyoc_cluster_uninstaller" "this" {
   kubeconfig      = azurerm_kubernetes_cluster.this.kube_config_raw
   pinetools_image = local.pinetools_image
   cloud           = "azure"
 
   depends_on = [
-    module.common,
+    terraform_data.cluster_uninstaller_cloud_dependencies,
+    terraform_data.cluster_uninstaller_dependencies,
     terraform_data.cloud_support_ready,
     terraform_data.dns_bootstrap_ready,
     azurerm_dns_a_record.ingress,

@@ -73,51 +73,81 @@ resource "aws_iam_role" "pulumi_operator" {
   tags = merge(local.tags, { Name = "${local.resource_prefix}-pulumi-operator" })
 }
 
-resource "aws_iam_role_policy" "pulumi_operator" {
-  role = aws_iam_role.pulumi_operator.name
+resource "aws_iam_policy" "pulumi_operator_s3" {
+  name_prefix = "${local.resource_prefix}-pulumi-operator-operator-s3-policy-"
+  description = "Pulumi operator S3 state bucket access"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
-        Resource = [aws_s3_bucket.pulumi_state.arn, "${aws_s3_bucket.pulumi_state.arn}/*"]
-      },
-      {
-        Effect   = "Allow"
-        Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
-        Resource = aws_kms_key.pulumi_secrets.arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "eks:Describe*",
-          "eks:CreateNodegroup",
-          "eks:DeleteNodegroup",
-          "eks:ListNodegroups",
-          "eks:UpdateNodegroupConfig",
-          "eks:UpdateNodegroupVersion",
-          "eks:TagResource",
-          "eks:UntagResource",
-          "ec2:Describe*",
-          "ec2:CreateLaunchTemplate",
-          "ec2:CreateLaunchTemplateVersion",
-          "ec2:ModifyLaunchTemplate",
-          "ec2:DeleteLaunchTemplate",
-          "ec2:RunInstances",
-          "ec2:CreateTags",
-          "ec2:DeleteTags",
-          "autoscaling:CreateOrUpdateTags",
-          "autoscaling:DescribeTags",
-          "autoscaling:DeleteTags",
-          "iam:PassRole",
-          "iam:GetRole",
-          "iam:ListAttachedRolePolicies"
-        ]
-        Resource = "*"
-      }
-    ]
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject", "s3:ListBucket", "s3:GetBucketLocation"]
+      Resource = [aws_s3_bucket.pulumi_state.arn, "${aws_s3_bucket.pulumi_state.arn}/*"]
+    }]
   })
+}
+
+resource "aws_iam_role_policy_attachment" "pulumi_operator_s3" {
+  role       = aws_iam_role.pulumi_operator.name
+  policy_arn = aws_iam_policy.pulumi_operator_s3.arn
+}
+
+resource "aws_iam_policy" "pulumi_operator_kms" {
+  name_prefix = "${local.resource_prefix}-pulumi-operator-operator-kms-policy-"
+  description = "Pulumi operator KMS secrets encryption"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey", "kms:DescribeKey"]
+      Resource = aws_kms_key.pulumi_secrets.arn
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "pulumi_operator_kms" {
+  role       = aws_iam_role.pulumi_operator.name
+  policy_arn = aws_iam_policy.pulumi_operator_kms.arn
+}
+
+resource "aws_iam_policy" "pulumi_operator_eks" {
+  name_prefix = "${local.resource_prefix}-pulumi-operator-operator-eks-policy-"
+  description = "Pulumi operator EKS nodepool management"
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = [
+        "eks:Describe*",
+        "eks:CreateNodegroup",
+        "eks:DeleteNodegroup",
+        "eks:ListNodegroups",
+        "eks:UpdateNodegroupConfig",
+        "eks:UpdateNodegroupVersion",
+        "eks:TagResource",
+        "eks:UntagResource",
+        "ec2:Describe*",
+        "ec2:CreateLaunchTemplate",
+        "ec2:CreateLaunchTemplateVersion",
+        "ec2:ModifyLaunchTemplate",
+        "ec2:DeleteLaunchTemplate",
+        "ec2:RunInstances",
+        "ec2:CreateTags",
+        "ec2:DeleteTags",
+        "autoscaling:CreateOrUpdateTags",
+        "autoscaling:DescribeTags",
+        "autoscaling:DeleteTags",
+        "iam:PassRole",
+        "iam:GetRole",
+        "iam:ListAttachedRolePolicies",
+      ]
+      Resource = "*"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "pulumi_operator_eks" {
+  role       = aws_iam_role.pulumi_operator.name
+  policy_arn = aws_iam_policy.pulumi_operator_eks.arn
 }
 
 resource "aws_iam_role_policy" "node_allow_pulumi_kms" {
@@ -144,4 +174,3 @@ resource "aws_iam_role_policy" "node_allow_customer_kms" {
     }]
   })
 }
-

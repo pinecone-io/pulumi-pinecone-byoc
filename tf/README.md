@@ -239,7 +239,6 @@ The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also 
 | `availability_zones` | Zones for high availability | `["1", "2"]` |
 | `vpc_cidr` | VNet IP range | `10.0.0.0/16` |
 | `kubernetes_version` | AKS Kubernetes version | `1.33` |
-| `deletion_protection` | Protect databases/storage from accidental deletion | `true` |
 | `public_access_enabled` | Enable public endpoint (false = Private Link only) | `true` |
 | `tags` | Custom tags to apply to resources | `{}` |
 
@@ -427,7 +426,7 @@ cd tf/examples/<cloud>
 TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform destroy
 ```
 
-If `deletion_protection` is enabled (default), disable it first and apply the change before destroying:
+For AWS and GCP, if `deletion_protection` is enabled (default), disable it first and apply the change before destroying:
 
 ```bash
 cd tf/examples/<cloud>

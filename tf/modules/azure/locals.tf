@@ -1,6 +1,5 @@
 locals {
-  resource_prefix = "pc"
-  dns_cnames      = ["*.svc", "metrics", "prometheus"]
+  dns_cnames = ["*.svc", "metrics", "prometheus"]
 
   org_slug        = substr(replace(lower(pineconebyoc_environment.this.org_name), "/[^a-z0-9]/", ""), 0, 16)
   env_first_label = split(".", pineconebyoc_environment.this.env_name)[0]
@@ -8,7 +7,6 @@ locals {
   cell_name       = "${local.org_slug}-byoc-${local.env_suffix}"
   cell_org        = split("-byoc-", local.cell_name)[0]
   cell_sa_suffix  = "-byoc-${local.env_suffix}"
-  resource_suffix = substr(local.cell_name, length(local.cell_name) - 4, 4)
   subdomain       = trimsuffix(pineconebyoc_environment.this.env_name, ".byoc")
   fqdn            = "${local.subdomain}.${var.parent_dns_zone_name}"
 

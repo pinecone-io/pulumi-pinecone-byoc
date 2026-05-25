@@ -316,7 +316,7 @@ metadata:
   name: %s
   namespace: pc-control-plane
 spec:
-  backoffLimit: 0
+  backoffLimit: 1
   activeDeadlineSeconds: 1800
   ttlSecondsAfterFinished: 3600
   template:
@@ -348,8 +348,7 @@ spec:
 		return diag.Errorf("failed creating uninstall job: %v\n%s", err, out)
 	}
 	if err := waitForUninstallJob(ctx, kubeconfigPath, jobName); err != nil {
-		logs, _ := kubectl(ctx, kubeconfigPath, "logs", "-n", "pc-control-plane", "job/"+jobName, "--all-containers=true").CombinedOutput()
-		return diag.Errorf("%v\nlogs:\n%s", err, logs)
+		return diag.Errorf("%v\n%s", err, uninstallJobDiagnostics(ctx, kubeconfigPath, jobName))
 	}
 
 	cleanupClusterAdmission(ctx, kubeconfigPath)
@@ -412,12 +411,44 @@ func waitForUninstallJob(ctx context.Context, kubeconfigPath, jobName string) er
 		if doc.Status.Succeeded > 0 {
 			return nil
 		}
-		if doc.Status.Failed > 0 {
-			return fmt.Errorf("uninstall job %s failed after %d failed pod(s)", jobName, doc.Status.Failed)
-		}
 		time.Sleep(10 * time.Second)
 	}
 	return fmt.Errorf("uninstall job %s timed out after 1800s", jobName)
+}
+
+func uninstallJobDiagnostics(ctx context.Context, kubeconfigPath, jobName string) string {
+	commands := []struct {
+		title string
+		args  []string
+	}{
+		{
+			title: "job logs",
+			args:  []string{"logs", "-n", "pc-control-plane", "job/" + jobName, "--all-containers=true", "--tail=-1"},
+		},
+		{
+			title: "job describe",
+			args:  []string{"describe", "job", "-n", "pc-control-plane", jobName},
+		},
+		{
+			title: "job pods",
+			args:  []string{"get", "pods", "-n", "pc-control-plane", "-l", "job-name=" + jobName, "-o", "wide"},
+		},
+		{
+			title: "pod describe",
+			args:  []string{"describe", "pods", "-n", "pc-control-plane", "-l", "job-name=" + jobName},
+		},
+	}
+
+	var diagnostics []string
+	for _, command := range commands {
+		out, err := kubectl(ctx, kubeconfigPath, command.args...).CombinedOutput()
+		if err != nil {
+			diagnostics = append(diagnostics, fmt.Sprintf("%s failed: %v\n%s", command.title, err, strings.TrimSpace(string(out))))
+			continue
+		}
+		diagnostics = append(diagnostics, fmt.Sprintf("%s:\n%s", command.title, strings.TrimSpace(string(out))))
+	}
+	return strings.Join(diagnostics, "\n\n")
 }
 
 func kubectl(ctx context.Context, kubeconfig string, args ...string) *exec.Cmd {

@@ -14,9 +14,11 @@ Most infrastructure is managed by standard Terraform providers such as `aws`, `g
 - `pineconebyoc_datadog_api_key`
 - `pineconebyoc_amp_access`
 - `pineconebyoc_cluster_uninstaller`
+- `pineconebyoc_kubernetes_retained_namespace`
 - `pineconebyoc_aws_alb_waiter`
 - `pineconebyoc_aws_vpc_endpoint_dns_verification`
 - `pineconebyoc_gcp_forwarding_rule_waiter`
+- `pineconebyoc_gcp_forwarding_rule_delete_waiter`
 - `pineconebyoc_aks_api_server_waiter`
 
 ## Build

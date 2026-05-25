@@ -1,8 +1,30 @@
 locals {
-  private_alb_name = substr("${split(".", local.subdomain)[0]}-priv-alb", 0, 32)
+  private_alb_name = substr("${split(".", local.subdomain)[0]}-priv", 0, 32)
   public_alb_name  = substr("${split(".", local.subdomain)[0]}-alb", 0, 32)
   tls_secret_name  = "${split(".", local.subdomain)[0]}-tls"
   alb_tags_string  = join(",", [for k, v in local.tags : "${k}=${v}"])
+
+  alb_ingress_names = concat(
+    ["private-gloo-lb", "private-gloo-lb-http1"],
+    var.public_access_enabled ? ["gloo-lb", "gloo-lb-http1"] : [],
+  )
+}
+
+resource "terraform_data" "load_balancer_network_ready" {
+  input = {
+    vpc_id = aws_vpc.this.id
+  }
+
+  depends_on = [
+    aws_internet_gateway.this,
+    aws_nat_gateway.this,
+    aws_route.private,
+    aws_route.public,
+    aws_route_table_association.private,
+    aws_route_table_association.public,
+    aws_subnet.private,
+    aws_subnet.public,
+  ]
 }
 
 resource "aws_security_group" "nlb" {
@@ -102,6 +124,7 @@ resource "kubernetes_ingress_v1" "private_gloo_http2" {
   depends_on = [
     helm_release.aws_load_balancer_controller,
     aws_acm_certificate_validation.private,
+    terraform_data.alb_ingress_group_delete,
     terraform_data.cloud_support_ready,
     terraform_data.dns_bootstrap_ready,
   ]
@@ -164,7 +187,13 @@ resource "kubernetes_ingress_v1" "private_gloo_http1" {
       secret_name = local.tls_secret_name
     }
   }
-  depends_on = [kubernetes_ingress_v1.private_gloo_http2]
+  depends_on = [
+    helm_release.aws_load_balancer_controller,
+    aws_acm_certificate_validation.private,
+    terraform_data.alb_ingress_group_delete,
+    terraform_data.cloud_support_ready,
+    terraform_data.dns_bootstrap_ready,
+  ]
 }
 
 resource "pineconebyoc_aws_alb_waiter" "private" {
@@ -173,7 +202,6 @@ resource "pineconebyoc_aws_alb_waiter" "private" {
 
   depends_on = [
     kubernetes_ingress_v1.private_gloo_http1,
-    module.common,
   ]
 }
 
@@ -315,6 +343,7 @@ resource "kubernetes_ingress_v1" "public_gloo_http2" {
   depends_on = [
     helm_release.aws_load_balancer_controller,
     aws_acm_certificate_validation.public,
+    terraform_data.alb_ingress_group_delete,
     terraform_data.cloud_support_ready,
     terraform_data.dns_bootstrap_ready,
   ]
@@ -368,7 +397,64 @@ resource "kubernetes_ingress_v1" "public_gloo_http1" {
       secret_name = local.tls_secret_name
     }
   }
-  depends_on = [kubernetes_ingress_v1.public_gloo_http2]
+  depends_on = [
+    helm_release.aws_load_balancer_controller,
+    aws_acm_certificate_validation.public,
+    terraform_data.alb_ingress_group_delete,
+    terraform_data.cloud_support_ready,
+    terraform_data.dns_bootstrap_ready,
+  ]
+}
+
+resource "terraform_data" "alb_ingress_group_delete" {
+  input = {
+    alb_names     = var.public_access_enabled ? "${local.private_alb_name} ${local.public_alb_name}" : local.private_alb_name
+    cluster_name  = aws_eks_cluster.this.name
+    ingress_names = join(" ", local.alb_ingress_names)
+    namespace     = kubernetes_namespace_v1.gloo_system.metadata[0].name
+    region        = var.region
+    vpc_id        = aws_vpc.this.id
+  }
+
+  depends_on = [
+    helm_release.aws_load_balancer_controller,
+    terraform_data.load_balancer_network_ready,
+  ]
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["/bin/sh", "-c"]
+    command     = <<-EOT
+      set -eu
+      kubeconfig="$(mktemp)"
+      trap 'rm -f "$kubeconfig"' EXIT
+      aws eks update-kubeconfig --region '${self.input.region}' --name '${self.input.cluster_name}' --kubeconfig "$kubeconfig" >/dev/null
+      KUBECONFIG="$kubeconfig" kubectl delete ingress -n '${self.input.namespace}' ${self.input.ingress_names} --ignore-not-found=true --wait=false
+      deadline=$((SECONDS + 900))
+      while :; do
+        remaining_lbs=""
+        for lb_name in ${self.input.alb_names}; do
+          if aws elbv2 describe-load-balancers --region '${self.input.region}' --names "$lb_name" >/dev/null 2>&1; then
+            remaining_lbs="$remaining_lbs $lb_name"
+          fi
+        done
+        sg_count="$(aws ec2 describe-security-groups \
+          --region '${self.input.region}' \
+          --filters Name=vpc-id,Values='${self.input.vpc_id}' Name=tag:elbv2.k8s.aws/cluster,Values='${self.input.cluster_name}' \
+          --query 'length(SecurityGroups)' \
+          --output text 2>/dev/null || printf '0')"
+        if [ -z "$remaining_lbs" ] && [ "$sg_count" = "0" ]; then
+          exit 0
+        fi
+        if [ "$SECONDS" -gt "$deadline" ]; then
+          echo "Timed out waiting for ALB controller cleanup. Remaining LBs:$remaining_lbs, elbv2 security groups:$sg_count" >&2
+          exit 1
+        fi
+        echo "Waiting for ALB controller cleanup. Remaining LBs:$remaining_lbs, elbv2 security groups:$sg_count"
+        sleep 15
+      done
+    EOT
+  }
 }
 
 resource "pineconebyoc_aws_alb_waiter" "public" {
@@ -378,7 +464,6 @@ resource "pineconebyoc_aws_alb_waiter" "public" {
 
   depends_on = [
     kubernetes_ingress_v1.public_gloo_http1,
-    module.common,
   ]
 }
 

@@ -15,6 +15,8 @@ resource "terraform_data" "cloud_support_ready" {
 
   depends_on = [
     aws_eks_addon.ebs_csi,
+    aws_eks_addon.kube_proxy,
+    aws_eks_addon.vpc_cni,
     aws_eks_node_group.this,
     aws_iam_role_policy.alb_controller,
     aws_iam_role_policy.amp_assume_pinecone,
@@ -24,7 +26,9 @@ resource "terraform_data" "cloud_support_ready" {
     aws_iam_role_policy.node_allow_customer_kms,
     aws_iam_role_policy.node_allow_pulumi_kms,
     aws_iam_role_policy.node_assume_storage_integration,
-    aws_iam_role_policy.pulumi_operator,
+    aws_iam_role_policy_attachment.pulumi_operator_eks,
+    aws_iam_role_policy_attachment.pulumi_operator_kms,
+    aws_iam_role_policy_attachment.pulumi_operator_s3,
     aws_iam_role_policy.storage_integration,
     aws_kms_alias.pulumi_secrets,
     aws_kms_key.pulumi_secrets,

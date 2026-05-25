@@ -111,11 +111,15 @@ def build_values(cloud: str) -> dict:
         "kubernetes_version": ask("Kubernetes version", "1.33"),
         "parent_dns_zone_name": ask("Parent DNS zone", "byoc.pinecone.io"),
         "public_access_enabled": ask_bool("Enable public access", True),
-        "deletion_protection": ask_bool("Enable deletion protection", True),
+    }
+    if cloud in {"aws", "gcp"}:
+        values["deletion_protection"] = ask_bool("Enable deletion protection", True)
+
+    values.update({
         "api_url": ask("Pinecone API URL", "https://api.pinecone.io"),
         "global_env": ask("Global environment", "prod"),
         "auth0_domain": ask("Auth0 domain", "https://login.pinecone.io"),
-    }
+    })
 
     if cloud == "gcp":
         values["project"] = ask("GCP project ID (not display name)")

@@ -35,7 +35,7 @@ module "common" {
     }
   }
 
-  pulumi_outputs = {
+  pulumi_outputs = merge({
     cell_name                        = local.cell_name
     org_name                         = pineconebyoc_environment.this.org_name
     cloud                            = "aws"
@@ -63,9 +63,10 @@ module "common" {
     aws_amp_remote_write_url         = pineconebyoc_amp_access.this.amp_remote_write_endpoint
     aws_amp_sigv4_role_arn           = pineconebyoc_amp_access.this.pinecone_role_arn
     aws_amp_ingest_role_arn          = aws_iam_role.amp_ingest.arn
-    base64_encoded_user_data         = local.node_user_data
-    custom_ami_id                    = var.custom_ami_id
-  }
+    }, var.custom_ami_id == null ? {} : {
+    base64_encoded_user_data = local.node_user_data
+    custom_ami_id            = var.custom_ami_id
+  })
 
   depends_on = [
     terraform_data.cloud_support_ready,
@@ -73,6 +74,42 @@ module "common" {
     aws_eks_node_group.this,
     aws_rds_cluster_instance.db,
     aws_s3_bucket_lifecycle_configuration.pinecone,
+  ]
+}
+
+resource "terraform_data" "cluster_uninstaller_dependencies" {
+  input = module.common.cluster_uninstaller_dependency_ids
+}
+
+resource "terraform_data" "cluster_uninstaller_cloud_dependencies" {
+  input = {
+    vpc_id = aws_vpc.this.id
+    public_subnet_ids = {
+      for az, subnet in aws_subnet.public : az => subnet.id
+    }
+    private_subnet_ids = {
+      for az, subnet in aws_subnet.private : az => subnet.id
+    }
+    nat_gateway_ids = {
+      for az, nat in aws_nat_gateway.this : az => nat.id
+    }
+    s3_vpc_endpoint_id = aws_vpc_endpoint.s3.id
+  }
+
+  depends_on = [
+    aws_eip.nat,
+    aws_internet_gateway.this,
+    aws_nat_gateway.this,
+    aws_route.private,
+    aws_route.public,
+    aws_route_table.private,
+    aws_route_table.public,
+    aws_route_table_association.private,
+    aws_route_table_association.public,
+    aws_subnet.private,
+    aws_subnet.public,
+    aws_vpc.this,
+    aws_vpc_endpoint.s3,
   ]
 }
 
@@ -110,12 +147,15 @@ resource "pineconebyoc_cluster_uninstaller" "this" {
   cloud           = "aws"
 
   depends_on = [
-    module.common,
+    terraform_data.cluster_uninstaller_cloud_dependencies,
+    terraform_data.cluster_uninstaller_dependencies,
     terraform_data.cloud_support_ready,
     terraform_data.dns_bootstrap_ready,
     aws_acm_certificate_validation.private,
     aws_acm_certificate_validation.public,
     aws_eks_addon.ebs_csi,
+    aws_eks_addon.kube_proxy,
+    aws_eks_addon.vpc_cni,
     aws_eks_cluster.this,
     aws_eks_node_group.this,
     aws_iam_role_policy.alb_controller,
@@ -124,7 +164,9 @@ resource "pineconebyoc_cluster_uninstaller" "this" {
     aws_iam_role_policy.cluster_autoscaler,
     aws_iam_role_policy.external_dns,
     aws_iam_role_policy.node_allow_pulumi_kms,
-    aws_iam_role_policy.pulumi_operator,
+    aws_iam_role_policy_attachment.pulumi_operator_eks,
+    aws_iam_role_policy_attachment.pulumi_operator_kms,
+    aws_iam_role_policy_attachment.pulumi_operator_s3,
     aws_iam_role_policy.storage_integration,
     aws_kms_key.pulumi_secrets,
     aws_lb.nlb,
@@ -144,6 +186,5 @@ resource "pineconebyoc_cluster_uninstaller" "this" {
     aws_route53_record.public_alb_alias,
     aws_s3_bucket.pinecone,
     aws_s3_bucket.pulumi_state,
-    aws_iam_role_policy.pulumi_operator,
   ]
 }
