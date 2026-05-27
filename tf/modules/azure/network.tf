@@ -32,7 +32,7 @@ resource "azurerm_virtual_network" "this" {
   name                = "vnet-${local.cell_name}"
   resource_group_name = azurerm_resource_group.this.name
   location            = var.region
-  address_space       = [var.vpc_cidr, local.db_cidr, local.pls_cidr]
+  address_space       = local.vnet_address_space
   tags                = local.tags
 }
 

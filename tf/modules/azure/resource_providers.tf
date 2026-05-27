@@ -11,16 +11,8 @@ locals {
   ])
 }
 
-resource "azurerm_resource_provider_registration" "required" {
-  for_each = local.required_resource_providers
-
-  name = each.value
-}
-
 resource "terraform_data" "azure_resource_providers_ready" {
   input = {
-    providers = sort([for provider in azurerm_resource_provider_registration.required : provider.name])
+    providers = sort(tolist(local.required_resource_providers))
   }
-
-  depends_on = [azurerm_resource_provider_registration.required]
 }

@@ -39,21 +39,22 @@ locals {
 module "common" {
   source = "../common"
 
-  cloud                    = "azure"
-  cell_name                = local.cell_name
-  environment              = var.global_env
-  is_prod                  = var.global_env == "prod"
-  domain                   = pineconebyoc_environment.this.env_name
-  region                   = var.region
-  public_access_enabled    = var.public_access_enabled
-  api_url                  = var.api_url
-  registry_type            = "acr"
-  pinetools_image          = local.pinetools_image
-  pinecone_version         = var.pinecone_version
-  cpgw_api_key             = pineconebyoc_cpgw_api_key.this.key
-  gcps_api_key             = pineconebyoc_project_api_key.sli.value
-  datadog_api_key          = pineconebyoc_datadog_api_key.this.api_key
-  azure_storage_access_key = azurerm_storage_account.this.primary_access_key
+  cloud                           = "azure"
+  cell_name                       = local.cell_name
+  environment                     = var.global_env
+  is_prod                         = var.global_env == "prod"
+  domain                          = pineconebyoc_environment.this.env_name
+  region                          = var.region
+  public_access_enabled           = var.public_access_enabled
+  api_url                         = var.api_url
+  registry_type                   = "acr"
+  pinetools_image                 = local.pinetools_image
+  pinecone_version                = var.pinecone_version
+  cpgw_api_key                    = pineconebyoc_cpgw_api_key.this.key
+  gcps_api_key                    = pineconebyoc_project_api_key.sli.value
+  datadog_api_key                 = pineconebyoc_datadog_api_key.this.api_key
+  azure_storage_access_key        = azurerm_storage_account.this.primary_access_key
+  create_azure_storage_key_secret = true
 
   storage_integration_credentials = {
     client-secret = azuread_service_principal_password.storage_integration.value
@@ -134,7 +135,7 @@ resource "terraform_data" "cluster_uninstaller_cloud_dependencies" {
     azurerm_federated_identity_credential.external_dns,
     azurerm_federated_identity_credential.prometheus,
     azurerm_federated_identity_credential.pulumi_operator,
-    azurerm_key_vault_key.pulumi,
+    terraform_data.pulumi_key,
     azurerm_kubernetes_cluster.this,
     azurerm_kubernetes_cluster_node_pool.this,
     azurerm_nat_gateway.this,
@@ -194,7 +195,7 @@ resource "pineconebyoc_cluster_uninstaller" "this" {
     azurerm_dns_a_record.private,
     azurerm_dns_cname_record.private_cnames,
     azurerm_dns_cname_record.public_cnames,
-    azurerm_key_vault_key.pulumi,
+    terraform_data.pulumi_key,
     azurerm_kubernetes_cluster.this,
     azurerm_kubernetes_cluster_node_pool.this,
     azurerm_postgresql_flexible_server_database.this,

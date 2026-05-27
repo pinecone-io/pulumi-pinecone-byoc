@@ -17,7 +17,7 @@ resource "terraform_data" "cloud_support_ready" {
     azurerm_federated_identity_credential.external_dns,
     azurerm_federated_identity_credential.prometheus,
     azurerm_federated_identity_credential.pulumi_operator,
-    azurerm_key_vault_key.pulumi,
+    terraform_data.pulumi_key,
     azurerm_kubernetes_cluster_node_pool.this,
     azurerm_postgresql_flexible_server_database.this,
     azurerm_private_dns_zone_virtual_network_link.postgres,

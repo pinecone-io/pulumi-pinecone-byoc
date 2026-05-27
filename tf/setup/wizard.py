@@ -248,7 +248,7 @@ def validate_azure(values: dict) -> int:
     if providers.returncode != 0:
         print("warning: could not list Azure resource provider registrations", file=sys.stderr)
         print(providers.stderr.strip(), file=sys.stderr)
-        print("Terraform will try to register the required providers.", file=sys.stderr)
+        print("Terraform requires the Azure resource providers to be registered before apply.", file=sys.stderr)
         return 0
 
     try:
@@ -258,7 +258,7 @@ def validate_azure(values: dict) -> int:
         }
     except json.JSONDecodeError:
         print("warning: could not parse Azure provider registration list", file=sys.stderr)
-        print("Terraform will try to register the required providers.", file=sys.stderr)
+        print("Terraform requires the Azure resource providers to be registered before apply.", file=sys.stderr)
         return 0
 
     missing = [
@@ -267,7 +267,7 @@ def validate_azure(values: dict) -> int:
         if provider_states.get(namespace) != "Registered"
     ]
     if missing:
-        print("warning: required Azure resource providers are not registered yet; Terraform will try to register them", file=sys.stderr)
+        print("warning: required Azure resource providers are not registered yet; register them before running terraform apply", file=sys.stderr)
         print("manual command:", file=sys.stderr)
         print(f"for ns in {' '.join(missing)}; do az provider register --namespace \"$ns\" --subscription {subscription_id}; done", file=sys.stderr)
 

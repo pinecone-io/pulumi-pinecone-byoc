@@ -64,6 +64,10 @@ locals {
     local.aks_octet_2 + (2 * local.third_octet_increment),
   )
 
+  vnet_collapsed_aks_db_cidr = cidrsubnet(var.vpc_cidr, -1, 0)
+  vnet_can_collapse_aks_db   = cidrsubnet(local.vnet_collapsed_aks_db_cidr, 1, 0) == var.vpc_cidr
+  vnet_address_space         = local.vnet_can_collapse_aks_db ? [local.vnet_collapsed_aks_db_cidr, local.pls_cidr] : [var.vpc_cidr, local.db_cidr, local.pls_cidr]
+
   flat_cell_name         = replace(local.cell_name, "-", "")
   flat_byoc_suffix       = "byoc${local.env_suffix}"
   flat_org               = split("byoc", local.flat_cell_name)[0]

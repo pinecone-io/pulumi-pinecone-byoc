@@ -2,15 +2,44 @@ resource "azurerm_private_dns_zone" "postgres" {
   name                = "pinecone.postgres.database.azure.com"
   resource_group_name = azurerm_resource_group.this.name
   tags                = local.tags
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["/bin/sh", "-c"]
+    command     = <<-EOT
+      set -eu
+      subscription_id="$(printf '%s' '${self.id}' | cut -d/ -f3)"
+      az account set --subscription "$subscription_id" >/dev/null
+
+      deadline=$((SECONDS + 300))
+      while :; do
+        link_count="$(az network private-dns link vnet list \
+          --resource-group '${self.resource_group_name}' \
+          --zone-name '${self.name}' \
+          --query 'length(@)' \
+          --output tsv 2>/dev/null || printf '0')"
+
+        if [ "$link_count" = "0" ]; then
+          sleep 30
+          exit 0
+        fi
+        if [ "$SECONDS" -gt "$deadline" ]; then
+          echo "Timed out waiting for private DNS zone links to be removed from ${self.name}; remaining=$link_count" >&2
+          exit 1
+        fi
+        echo "Waiting for private DNS zone links to be removed from ${self.name}; remaining=$link_count"
+        sleep 10
+      done
+    EOT
+  }
 }
 
 resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
-  name                  = "postgres-${local.cell_name}"
+  name                  = "pc-database-vnet-link"
   resource_group_name   = azurerm_resource_group.this.name
   private_dns_zone_name = azurerm_private_dns_zone.postgres.name
   virtual_network_id    = azurerm_virtual_network.this.id
   registration_enabled  = false
-  tags                  = local.tags
 }
 
 resource "random_password" "db" {

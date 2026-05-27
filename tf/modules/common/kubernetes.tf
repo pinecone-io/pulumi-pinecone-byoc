@@ -42,7 +42,7 @@ resource "kubernetes_secret_v1" "datadog_api_key" {
 }
 
 resource "kubernetes_secret_v1" "azure_storage_key" {
-  count = var.azure_storage_access_key == null ? 0 : 1
+  count = var.create_azure_storage_key_secret ? 1 : 0
   metadata {
     name      = "azure-storage-account-access-key"
     namespace = kubernetes_namespace_v1.external_secrets.metadata[0].name

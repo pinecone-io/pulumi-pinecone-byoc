@@ -15,12 +15,29 @@ resource "azurerm_key_vault" "pulumi" {
   tags                       = local.tags
 }
 
-resource "azurerm_key_vault_key" "pulumi" {
-  name         = "pulumi-key"
-  key_vault_id = azurerm_key_vault.pulumi.id
-  key_type     = "RSA"
-  key_size     = 2048
-  key_opts     = ["decrypt", "encrypt", "sign", "unwrapKey", "verify", "wrapKey"]
+resource "terraform_data" "pulumi_key" {
+  input = {
+    key_resource_id = "${azurerm_key_vault.pulumi.id}/keys/pulumi-key"
+  }
+
+  triggers_replace = [
+    azurerm_key_vault.pulumi.id,
+  ]
+
+  provisioner "local-exec" {
+    interpreter = ["/bin/sh", "-c"]
+    command     = <<-EOT
+      set -eu
+      subscription_id="$(printf '%s' '${self.input.key_resource_id}' | cut -d/ -f3)"
+      az account set --subscription "$subscription_id" >/dev/null
+      az rest \
+        --method put \
+        --url "https://management.azure.com${self.input.key_resource_id}?api-version=2023-07-01" \
+        --headers "Content-Type=application/json" \
+        --body '{"properties":{"kty":"RSA","keySize":2048,"keyOps":["decrypt","encrypt","sign","unwrapKey","verify","wrapKey"]}}' \
+        --output none
+    EOT
+  }
 }
 
 resource "azurerm_user_assigned_identity" "pulumi_operator" {

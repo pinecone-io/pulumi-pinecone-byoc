@@ -104,7 +104,7 @@ az account show --subscription <subscription-id>
 az account set --subscription <subscription-id>
 ```
 
-The Azure module registers the required Azure resource providers with Terraform. If your principal cannot register providers, ask an Azure subscription owner to register them first:
+The Azure module expects the required Azure resource providers to already be registered. If your principal cannot register providers, ask an Azure subscription owner to register them first:
 
 ```bash
 for ns in Microsoft.Authorization Microsoft.Compute Microsoft.ContainerService Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.ManagedIdentity Microsoft.Network Microsoft.Storage; do az provider register --namespace "$ns" --subscription <subscription-id>; done
@@ -316,7 +316,7 @@ The setup wizard runs preflight checks for cloud quotas and required APIs. If th
 **Azure:**
 
 1. **Subscription Access** - Run `az account show --subscription <subscription-id>` and confirm the expected subscription
-2. **Resource Providers** - Terraform registers required providers; if registration is denied, ask a subscription owner to register them
+2. **Resource Providers** - Required providers must already be registered; if registration is denied, ask a subscription owner to register them
 3. **vCPU Quotas** - Request vCPU quota increases via Azure Portal
 4. **AKS Clusters** - Request a limit increase if at quota
 5. **Storage Accounts** - Ensure generated names are globally unique, 3-24 characters, and lowercase alphanumeric
@@ -364,6 +364,8 @@ If Azure returns `No registered resource provider found`, `MissingSubscriptionRe
 az account show --subscription <subscription-id>
 for ns in Microsoft.Authorization Microsoft.Compute Microsoft.ContainerService Microsoft.DBforPostgreSQL Microsoft.KeyVault Microsoft.ManagedIdentity Microsoft.Network Microsoft.Storage; do az provider register --namespace "$ns" --subscription <subscription-id>; done
 ```
+
+The Azure Terraform provider is configured with resource-provider auto-registration disabled so it does not mutate subscription-level provider registration state.
 
 ### Cluster access issues
 
@@ -433,6 +435,8 @@ cd tf/examples/<cloud>
 TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform apply -var='deletion_protection=false'
 TF_CLI_CONFIG_FILE=../../dev.tfrc.hcl terraform destroy
 ```
+
+Azure does not expose a `deletion_protection` variable in this Terraform module; `terraform destroy` is expected to remove the successfully created Azure resources.
 
 ## Support
 

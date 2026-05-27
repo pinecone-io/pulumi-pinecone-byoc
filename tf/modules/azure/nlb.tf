@@ -71,7 +71,6 @@ resource "terraform_data" "load_balancer_cleanup" {
         --overwrite-existing >/dev/null
 
       KUBECONFIG="$kubeconfig" kubectl delete service -n '${self.input.namespace}' ${self.input.service_names} --ignore-not-found=true --wait=false
-      KUBECONFIG="$kubeconfig" kubectl delete ingress -n '${self.input.namespace}' private-gloo-lb --ignore-not-found=true --wait=false
 
       deadline=$((SECONDS + 900))
       while :; do

@@ -70,6 +70,11 @@ variable "azure_storage_access_key" {
   default   = null
 }
 
+variable "create_azure_storage_key_secret" {
+  type    = bool
+  default = false
+}
+
 variable "storage_integration_credentials" {
   type      = map(string)
   sensitive = true
