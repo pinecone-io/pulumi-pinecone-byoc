@@ -78,11 +78,6 @@ variable "auth0_domain" {
   default = "https://login.pinecone.io"
 }
 
-variable "amp_aws_account_id" {
-  type    = string
-  default = "713131977538"
-}
-
 variable "labels" {
   type    = map(string)
   default = {}

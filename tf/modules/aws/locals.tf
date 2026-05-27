@@ -14,8 +14,10 @@ locals {
     "pinecone:managed-by" = "pulumi"
   }, var.tags)
 
-  registry_base        = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4"
-  pinetools_image      = "${local.registry_base}/pinetools:${var.pinecone_version}"
+  registry_base   = "843333058014.dkr.ecr.us-east-1.amazonaws.com/unstable/pinecone/v4"
+  pinetools_image = "${local.registry_base}/pinetools:${var.pinecone_version}"
+  # Legacy helmfile value consumed by pinetools; this is Pinecone-owned, not a customer GCP dependency.
+  helmfile_gcp_project = "production-pinecone"
   cluster_name         = substr("cluster-${local.cell_name}", 0, 100)
   public_subnet_cidrs  = [for i, _ in var.availability_zones : cidrsubnet(var.vpc_cidr, 4, i)]
   private_subnet_cidrs = [for i, _ in var.availability_zones : cidrsubnet(var.vpc_cidr, 2, i + 1)]

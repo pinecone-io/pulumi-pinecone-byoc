@@ -19,7 +19,6 @@ module "pinecone" {
   api_url                     = var.api_url
   global_env                  = var.global_env
   auth0_domain                = var.auth0_domain
-  amp_aws_account_id          = var.amp_aws_account_id
   labels                      = var.labels
   writer_k8s_service_accounts = var.writer_k8s_service_accounts
   reader_k8s_service_accounts = var.reader_k8s_service_accounts

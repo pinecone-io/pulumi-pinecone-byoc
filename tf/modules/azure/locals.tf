@@ -81,6 +81,9 @@ locals {
 
   registry_base   = "pinecone.azurecr.io/unstable/pinecone/v4"
   pinetools_image = "${local.registry_base}/pinetools:${var.pinecone_version}"
+  # Legacy helmfile/AMP values consumed by pinetools; these are Pinecone-owned, not customer cross-cloud dependencies.
+  helmfile_gcp_project = "production-pinecone"
+  amp_broker_role_arn  = "arn:aws:iam::713131977538:user/AmpCpgwIamManagerUser"
 
   dbs = {
     control = {

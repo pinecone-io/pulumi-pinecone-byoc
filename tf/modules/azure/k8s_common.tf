@@ -19,7 +19,7 @@ locals {
     data_storage_account_name           = azurerm_storage_account.this.name
     image_registry                      = local.registry_base
     sli_checkers_project_id             = pineconebyoc_project_api_key.sli.project_id
-    gcp_project                         = var.gcp_project
+    gcp_project                         = local.helmfile_gcp_project
     cpgw_admin_api_key_id               = pineconebyoc_cpgw_api_key.this.key_id
     api_url                             = var.api_url
     auth0_domain                        = var.auth0_domain

@@ -13,12 +13,12 @@ variable "subscription_id" {
 
 variable "region" {
   type    = string
-  default = "eastus"
+  default = "eastus2"
 }
 
 variable "availability_zones" {
   type    = list(string)
-  default = ["1", "2"]
+  default = ["2", "3"]
 }
 
 variable "vpc_cidr" {
@@ -78,16 +78,6 @@ variable "global_env" {
 variable "auth0_domain" {
   type    = string
   default = "https://login.pinecone.io"
-}
-
-variable "amp_aws_account_id" {
-  type    = string
-  default = "713131977538"
-}
-
-variable "gcp_project" {
-  type    = string
-  default = "production-pinecone"
 }
 
 variable "tags" {

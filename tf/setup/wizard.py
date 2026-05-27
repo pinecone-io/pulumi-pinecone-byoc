@@ -27,8 +27,8 @@ DEFAULTS = {
         "vpc_cidr": "10.112.0.0/12",
     },
     "azure": {
-        "region": "eastus",
-        "availability_zones": ["1", "2"],
+        "region": "eastus2",
+        "availability_zones": ["2", "3"],
         "vpc_cidr": "10.0.0.0/16",
     },
 }
@@ -123,15 +123,11 @@ def build_values(cloud: str) -> dict:
 
     if cloud == "gcp":
         values["project"] = ask("GCP project ID (not display name)")
-        values["amp_aws_account_id"] = ask("AMP AWS account ID", "713131977538")
         values["labels"] = {}
     elif cloud == "azure":
         values["subscription_id"] = ask("Azure subscription ID")
-        values["amp_aws_account_id"] = ask("AMP AWS account ID", "713131977538")
-        values["gcp_project"] = ask("GCP project for helmfile templates", "production-pinecone")
         values["tags"] = {}
     else:
-        values["gcp_project"] = ask("GCP project for helmfile templates", "production-pinecone")
         values["tags"] = {}
 
     return values

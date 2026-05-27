@@ -41,7 +41,7 @@ resource "pineconebyoc_datadog_api_key" "this" {
 }
 
 resource "pineconebyoc_amp_access" "this" {
-  workload_role_arn = "arn:aws:iam::${var.amp_aws_account_id}:user/AmpCpgwIamManagerUser"
+  workload_role_arn = local.amp_broker_role_arn
   api_url           = var.api_url
   cpgw_api_key      = pineconebyoc_cpgw_api_key.this.key
   depends_on        = [pineconebyoc_cpgw_api_key.this]

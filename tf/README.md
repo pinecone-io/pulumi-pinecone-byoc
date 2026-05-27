@@ -197,6 +197,8 @@ Replace `<new-version>` with the target Pinecone version, for example `main-306e
 
 The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also pass values through any standard Terraform variable mechanism.
 
+AWS and Azure deployments do not require a customer GCP project, and GCP and Azure deployments do not require a customer AWS account. Some internal `pulumi_outputs` fields retain legacy `gcp_project` and `aws_amp_*` names because the `pinetools` helmfile templates consume those keys; the values are Pinecone-owned control-plane/observability constants, not customer cloud resources.
+
 **AWS Configuration Options:**
 
 | Option | Description | Default |
@@ -235,8 +237,8 @@ The setup wizard creates `examples/<cloud>/terraform.tfvars.json`. You can also 
 | `pinecone_version` | Pinecone release version (required) | - |
 | `pinecone_api_key` | Pinecone API key (required) | - |
 | `subscription_id` | Azure subscription ID (required) | - |
-| `region` | Azure region | `eastus` |
-| `availability_zones` | Zones for high availability | `["1", "2"]` |
+| `region` | Azure region | `eastus2` |
+| `availability_zones` | Zones for high availability | `["2", "3"]` |
 | `vpc_cidr` | VNet IP range | `10.0.0.0/16` |
 | `kubernetes_version` | AKS Kubernetes version | `1.33` |
 | `public_access_enabled` | Enable public endpoint (false = Private Link only) | `true` |
@@ -319,7 +321,8 @@ The setup wizard runs preflight checks for cloud quotas and required APIs. If th
 2. **Resource Providers** - Required providers must already be registered; if registration is denied, ask a subscription owner to register them
 3. **vCPU Quotas** - Request vCPU quota increases via Azure Portal
 4. **AKS Clusters** - Request a limit increase if at quota
-5. **Storage Accounts** - Ensure generated names are globally unique, 3-24 characters, and lowercase alphanumeric
+5. **Region/Zones** - Use a region where the subscription can create AKS zonal node pools and PostgreSQL Flexible Server. The default `eastus2` / `["2", "3"]` combination has been validated in CI-like testing.
+6. **Storage Accounts** - Ensure generated names are globally unique, 3-24 characters, and lowercase alphanumeric
 
 ### Deployment failures
 
@@ -366,6 +369,10 @@ for ns in Microsoft.Authorization Microsoft.Compute Microsoft.ContainerService M
 ```
 
 The Azure Terraform provider is configured with resource-provider auto-registration disabled so it does not mutate subscription-level provider registration state.
+
+### Azure region or zone failures
+
+If AKS returns `AvailabilityZoneNotSupported`, choose a region and `availability_zones` list supported by the subscription. If PostgreSQL Flexible Server returns `LocationIsOfferRestricted`, choose a region where the subscription can provision PostgreSQL Flexible Server. The Azure defaults use `eastus2` with zones `["2", "3"]` because `eastus` can be unavailable for these services in some subscriptions.
 
 ### Cluster access issues
 

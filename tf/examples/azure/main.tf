@@ -18,7 +18,5 @@ module "pinecone" {
   api_url               = var.api_url
   global_env            = var.global_env
   auth0_domain          = var.auth0_domain
-  amp_aws_account_id    = var.amp_aws_account_id
-  gcp_project           = var.gcp_project
   tags                  = var.tags
 }

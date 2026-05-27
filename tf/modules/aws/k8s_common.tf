@@ -50,7 +50,7 @@ module "common" {
     aws_ec2_iam_role_arn             = aws_iam_role.node.arn
     aws_subnet_ids                   = [for s in aws_subnet.private : s.id]
     image_registry                   = local.registry_base
-    gcp_project                      = var.gcp_project
+    gcp_project                      = local.helmfile_gcp_project
     sli_checkers_project_id          = pineconebyoc_project_api_key.sli.project_id
     aws_storage_integration_role_arn = aws_iam_role.storage_integration.arn
     customer_tags                    = var.tags

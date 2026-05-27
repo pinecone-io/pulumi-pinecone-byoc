@@ -18,6 +18,8 @@ locals {
   registry_base   = "us-docker.pkg.dev/pinecone-artifacts/unstable"
   pinetools_image = "${local.registry_base}/pinetools:${var.pinecone_version}"
   cluster_name    = "cluster-${local.cell_name}"
+  # Pinecone AMP broker identity used by the control plane; this is not a customer AWS dependency.
+  amp_broker_role_arn = "arn:aws:iam::713131977538:user/AmpCpgwIamManagerUser"
 
   np_sa_account_id      = "np-${substr(local.cell_org, 0, max(0, 30 - 2 - 1 - length(local.cell_sa_suffix)))}${local.cell_sa_suffix}"
   reader_sa_account_id  = "read-${substr(local.cell_org, 0, max(0, 30 - 4 - 1 - length(local.cell_sa_suffix)))}${local.cell_sa_suffix}"

@@ -77,11 +77,6 @@ variable "auth0_domain" {
   default = "https://login.pinecone.io"
 }
 
-variable "gcp_project" {
-  type    = string
-  default = "production-pinecone"
-}
-
 variable "custom_ami_id" {
   type    = string
   default = null
@@ -96,4 +91,3 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
-
