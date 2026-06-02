@@ -17,5 +17,3 @@ __all__ = [
     "FlexibleServerConfig",
     "FlexibleServerInstanceConfig",
 ]
-
-# trigger ci (TODO: remove before merging)
