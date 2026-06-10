@@ -458,6 +458,27 @@ class BaseSetupWizard:
 
         return shutil.which("pulumi") is not None
 
+    @staticmethod
+    def _cpgw_config_from_env() -> dict:
+        """Control-plane target overrides (headless only), e.g. for deploying
+        against a non-prod control plane. Keys are emitted to stack config only
+        when set; otherwise the cluster-args prod defaults apply."""
+        cpgw = {}
+        if os.environ.get("PINECONE_API_URL"):
+            cpgw["api_url"] = os.environ["PINECONE_API_URL"]
+        if os.environ.get("PINECONE_GLOBAL_ENV"):
+            cpgw["global_env"] = os.environ["PINECONE_GLOBAL_ENV"]
+        return cpgw
+
+    @staticmethod
+    def _cpgw_config_lines(project_name: str, cpgw: dict) -> str:
+        lines = ""
+        if cpgw.get("api_url"):
+            lines += f"  {project_name}:api-url: {cpgw['api_url']}\n"
+        if cpgw.get("global_env"):
+            lines += f"  {project_name}:global-env: {cpgw['global_env']}\n"
+        return lines
+
     def _print_success(self, output_dir: str):
         console.print()
         console.print(
@@ -877,6 +898,7 @@ class AWSSetupWizard(BaseSetupWizard):
             {},
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            cpgw=self._cpgw_config_from_env(),
         )
 
     def _validate_aws_creds(self) -> bool:
@@ -989,7 +1011,9 @@ class AWSSetupWizard(BaseSetupWizard):
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
+        cpgw: dict | None = None,
     ):
+        cpgw = cpgw or {}
         console.print()
 
         console.print(f"  {self._step('Creating Project')}")
@@ -1036,6 +1060,9 @@ cluster = PineconeAWSCluster(
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
+        # Control-plane target; absent config keys fall back to the prod defaults.
+        api_url=config.get("api-url") or "https://api.pinecone.io",
+        global_env=config.get("global-env") or "prod",
     ),
 )
 
@@ -1094,6 +1121,8 @@ dependencies = ["pulumi-pinecone-byoc[aws]"]
             config_content += f"  {project_name}:tags:\n"
             for key, value in tags.items():
                 config_content += f'    {key}: "{value}"\n'
+
+        config_content += self._cpgw_config_lines(project_name, cpgw)
 
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
@@ -1586,6 +1615,7 @@ class GCPSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
+            cpgw=self._cpgw_config_from_env(),
         )
 
     def _validate_gcp_creds(self) -> str | None:
@@ -1728,7 +1758,9 @@ class GCPSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         labels: dict[str, str],
+        cpgw: dict | None = None,
     ):
+        cpgw = cpgw or {}
         console.print()
 
         if not self._check_pulumi_installed():
@@ -1773,6 +1805,9 @@ cluster = PineconeGCPCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         labels=config.get_object("labels") or {},
+        # Control-plane target; absent config keys fall back to the prod defaults.
+        api_url=config.get("api-url") or "https://api.pinecone.io",
+        global_env=config.get("global-env") or "prod",
     ),
 )
 
@@ -1823,6 +1858,8 @@ dependencies = ["pulumi-pinecone-byoc[gcp]"]
             config_content += f"  {project_name}:labels:\n"
             for key, value in labels.items():
                 config_content += f'    {key}: "{value}"\n'
+
+        config_content += self._cpgw_config_lines(project_name, cpgw)
 
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
@@ -2453,6 +2490,7 @@ class AzureSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
+            cpgw=self._cpgw_config_from_env(),
         )
 
     def _validate_azure_creds(self) -> str | None:
@@ -2601,7 +2639,9 @@ class AzureSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         tags: dict[str, str],
+        cpgw: dict | None = None,
     ):
+        cpgw = cpgw or {}
         console.print()
 
         if not self._check_pulumi_installed():
@@ -2643,6 +2683,9 @@ cluster = PineconeAzureCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         tags=config.get_object("tags"),
+        # Control-plane target; absent config keys fall back to the prod defaults.
+        api_url=config.get("api-url") or "https://api.pinecone.io",
+        global_env=config.get("global-env") or "prod",
     ),
 )
 
@@ -2692,6 +2735,8 @@ dependencies = ["pulumi-pinecone-byoc[azure]"]
             config_content += f"  {project_name}:tags:\n"
             for key, value in tags.items():
                 config_content += f'    {key}: "{value}"\n'
+
+        config_content += self._cpgw_config_lines(project_name, cpgw)
 
         config_path = os.path.join(output_dir, f"Pulumi.{stack_name}.yaml")
         with open(config_path, "w") as f:
