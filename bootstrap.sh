@@ -61,7 +61,6 @@ echo ""
 
 missing=0
 
-check_command "python3" "Python 3.12+" "https://www.python.org/downloads/" || missing=1
 check_command "uv" "uv" "https://docs.astral.sh/uv/getting-started/installation/" || missing=1
 check_command "pulumi" "Pulumi CLI" "https://www.pulumi.com/docs/install/" || missing=1
 check_command "kubectl" "kubectl" "https://kubernetes.io/docs/tasks/tools/" || missing=1
@@ -92,14 +91,12 @@ if [ $missing -eq 1 ]; then
     exit 1
 fi
 
-# check python version
-python_version=$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-required_version="3.12"
-
-if [ "$(printf '%s\n' "$required_version" "$python_version" | sort -V | head -n1)" != "$required_version" ]; then
-    echo -e "${RED}Python $required_version or higher is required (found $python_version)${RESET}"
-    exit 1
+# check python version (uv provides the interpreter the wizard runs on)
+if ! uv python find '>=3.12' &> /dev/null; then
+    echo "Installing Python 3.12 via uv..."
+    uv python install 3.12
 fi
+echo -e "  ${GREEN}✓${RESET} Python 3.12+ (via uv)"
 
 # cloud-specific credential checks
 if [ "$CLOUD" = "aws" ] || [ -z "$CLOUD" ]; then
