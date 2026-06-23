@@ -2322,23 +2322,30 @@ class AzurePreflightChecker:
             return
 
         try:
-            vnets = self._az_json(
-                [
-                    "network",
-                    "vnet",
-                    "list",
-                    "--subscription",
-                    self.subscription_id,
-                ]
+            # Enumerate existing VNets subscription-wide via the ARM REST API.
+            # `az network vnet list` cannot list across an entire subscription on
+            # recent Azure CLI versions (the migrated `aaz` module marks
+            # --resource-group as required), so use `az rest`, which is built into
+            # the CLI core and supports subscription-wide listing with pagination.
+            vnets = []
+            url = (
+                "https://management.azure.com/subscriptions/"
+                f"{self.subscription_id}/providers/Microsoft.Network/"
+                "virtualNetworks?api-version=2023-09-01"
             )
-            if not isinstance(vnets, list):
-                vnets = []
+            while url:
+                resp = self._az_json(["rest", "--method", "get", "--url", url])
+                if not isinstance(resp, dict):
+                    break
+                vnets.extend(resp.get("value", []) or [])
+                url = resp.get("nextLink")
 
             # check all derived subnets against existing VNets
             check_nets = [aks_net, db_net, pls_net]
             conflicts = []
             for vnet in vnets:
-                for prefix in vnet.get("addressSpace", {}).get("addressPrefixes", []):
+                address_space = vnet.get("properties", {}).get("addressSpace", {})
+                for prefix in address_space.get("addressPrefixes", []):
                     try:
                         existing_net = ipaddress.ip_network(prefix)
                         for net in check_nets:
