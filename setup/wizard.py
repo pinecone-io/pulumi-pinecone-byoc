@@ -7,7 +7,6 @@ import platform
 import subprocess
 import sys
 from dataclasses import dataclass
-from enum import StrEnum
 
 import yaml
 from rich.console import Console
@@ -262,26 +261,6 @@ def _read_input_with_placeholder(prompt: str, placeholder: str = "", password: b
 # ---------------------------------------------------------------------------
 
 
-class StateKey(StrEnum):
-    """Keys for persisted (non-secret) wizard answers — the single source of
-    truth for what resume can restore."""
-
-    REGION = "region"
-    ZONES = "zones"
-    AZS = "azs"
-    CIDR = "cidr"
-    DELETION_PROTECTION = "deletion_protection"
-    PUBLIC_ACCESS = "public_access"
-    PROJECT_NAME = "project_name"
-    BACKEND = "backend"
-    CUSTOM_AMI_ID = "custom_ami_id"
-    KMS_KEY_ARN = "kms_key_arn"
-    PROJECT_ID = "project_id"
-    SUBSCRIPTION_ID = "subscription_id"
-    TAGS_INPUT = "tags_input"
-    LABELS_INPUT = "labels_input"
-
-
 class WizardState:
     """Persists non-secret wizard answers to a JSON file in the project dir.
 
@@ -311,10 +290,10 @@ class WizardState:
     def is_empty(self) -> bool:
         return not self._data
 
-    def get(self, key: StateKey, default: str = "") -> str:
+    def get(self, key: str, default: str = "") -> str:
         return self._data.get(key, default)
 
-    def set(self, key: StateKey, value: str) -> None:
+    def set(self, key: str, value: str) -> None:
         self._data[key] = value
         try:
             with open(self._path, "w") as f:
@@ -343,7 +322,6 @@ class BaseSetupWizard:
     DELETION_PROTECTION_DESC: str = ""
     PRIVATE_ACCESS_DESC: str = ""
     METADATA_NAME: str = "tags"
-    METADATA_KEY: StateKey = StateKey.TAGS_INPUT
 
     def __init__(
         self,
@@ -368,7 +346,7 @@ class BaseSetupWizard:
         message: str,
         default: str | None = None,
         password: bool = False,
-        key: StateKey | None = None,
+        key: str | None = None,
     ) -> str:
         """Prompt for a value.
 
@@ -392,7 +370,7 @@ class BaseSetupWizard:
         if self._state.is_empty:
             return
 
-        saved_region = self._state.get(StateKey.REGION)
+        saved_region = self._state.get("region")
         summary = self.CLOUD_NAME + (f", region {saved_region}" if saved_region else "")
         console.print()
         console.print(
@@ -468,16 +446,14 @@ class BaseSetupWizard:
         console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(f"  [dim]{self.CIDR_DESC}[/]")
         console.print()
-        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key=StateKey.CIDR)
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="cidr")
 
     def _get_deletion_protection(self) -> bool:
         console.print()
         console.print(f"  {self._step('Deletion Protection')}")
         console.print(f"  [dim]{self.DELETION_PROTECTION_DESC}[/]")
         console.print()
-        response = self._prompt(
-            "Enable deletion protection? (Y/n)", "Y", key=StateKey.DELETION_PROTECTION
-        )
+        response = self._prompt("Enable deletion protection? (Y/n)", "Y", key="deletion_protection")
         return response.lower() in ("y", "yes", "")
 
     def _get_public_access(self) -> bool:
@@ -486,7 +462,7 @@ class BaseSetupWizard:
         console.print("  [dim]Public access allows connections from the internet[/]")
         console.print(f"  [dim]{self.PRIVATE_ACCESS_DESC}[/]")
         console.print()
-        response = self._prompt("Enable public access? (Y/n)", "Y", key=StateKey.PUBLIC_ACCESS)
+        response = self._prompt("Enable public access? (Y/n)", "Y", key="public_access")
         return response.lower() in ("y", "yes", "")
 
     def _get_custom_metadata(self) -> dict[str, str]:
@@ -499,9 +475,7 @@ class BaseSetupWizard:
         console.print("  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]")
         console.print()
 
-        input_val = self._prompt(
-            f"Enter {name} (or press Enter to skip)", "", key=self.METADATA_KEY
-        )
+        input_val = self._prompt(f"Enter {name} (or press Enter to skip)", "", key=f"{name}_input")
         if not input_val:
             return {}
 
@@ -522,7 +496,7 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Project Name')}")
         console.print("  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]")
         console.print()
-        return self._prompt("Enter project name", "pinecone-byoc", key=StateKey.PROJECT_NAME)
+        return self._prompt("Enter project name", "pinecone-byoc", key="project_name")
 
     def _setup_pulumi_backend(self) -> bool:
         console.print()
@@ -530,7 +504,7 @@ class BaseSetupWizard:
         console.print("  [dim]Where to store infrastructure state[/]")
         console.print()
 
-        backend = self._prompt("Backend (local/cloud)", "local", key=StateKey.BACKEND).lower()
+        backend = self._prompt("Backend (local/cloud)", "local", key="backend").lower()
         use_local = backend != "cloud"
 
         if use_local:
@@ -1029,7 +1003,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
         console.print(f"  {self._step('AWS Region')}")
         console.print()
-        return self._prompt("Enter AWS region", "us-east-1", key=StateKey.REGION)
+        return self._prompt("Enter AWS region", "us-east-1", key="region")
 
     def _fetch_azs(self, region: str) -> list[str]:
         import boto3
@@ -1054,9 +1028,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        azs_input = self._prompt(
-            "Enter AZs (comma-separated)", ",".join(available[:2]), key=StateKey.AZS
-        )
+        azs_input = self._prompt("Enter AZs (comma-separated)", ",".join(available[:2]), key="azs")
         azs = [az.strip() for az in azs_input.split(",")]
         return azs
 
@@ -1067,9 +1039,7 @@ class AWSSetupWizard(BaseSetupWizard):
             "  [dim]Specify a custom AMI ID for EKS nodes (leave blank for default AWS AMI)[/]"
         )
         console.print()
-        ami_id = self._prompt(
-            "Enter AMI ID (or press Enter to skip)", "", key=StateKey.CUSTOM_AMI_ID
-        )
+        ami_id = self._prompt("Enter AMI ID (or press Enter to skip)", "", key="custom_ami_id")
         return ami_id or None
 
     def _get_kms_key_arn(self) -> str | None:
@@ -1082,9 +1052,7 @@ class AWSSetupWizard(BaseSetupWizard):
             "  [dim]Leave blank to use default AWS-managed encryption (AES256/default RDS key).[/]"
         )
         console.print()
-        arn = self._prompt(
-            "Enter KMS key ARN (or press Enter to skip)", "", key=StateKey.KMS_KEY_ARN
-        )
+        arn = self._prompt("Enter KMS key ARN (or press Enter to skip)", "", key="kms_key_arn")
         return arn or None
 
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
@@ -1630,7 +1598,6 @@ class GCPSetupWizard(BaseSetupWizard):
     DELETION_PROTECTION_DESC = "Protect AlloyDB databases and GCS buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Private Service Connect (more secure)"
     METADATA_NAME = "labels"
-    METADATA_KEY = StateKey.LABELS_INPUT
     CLOUD_NAME = "GCP"
 
     def run(self, output_dir: str = ".") -> bool:
@@ -1780,13 +1747,13 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print()
         console.print(f"  {self._step('GCP Project ID')}")
         console.print()
-        return self._prompt("Enter GCP project ID", detected_project, key=StateKey.PROJECT_ID)
+        return self._prompt("Enter GCP project ID", detected_project, key="project_id")
 
     def _get_region(self) -> str:
         console.print()
         console.print(f"  {self._step('GCP Region')}")
         console.print()
-        return self._prompt("Enter GCP region", "us-central1", key=StateKey.REGION)
+        return self._prompt("Enter GCP region", "us-central1", key="region")
 
     def _fetch_zones(self, project_id: str, region: str) -> list[str]:
         try:
@@ -1823,7 +1790,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", ",".join(available[:2]), key=StateKey.ZONES
+            "Enter zones (comma-separated)", ",".join(available[:2]), key="zones"
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
@@ -2633,14 +2600,14 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Azure Subscription ID')}")
         console.print()
         return self._prompt(
-            "Enter Azure subscription ID", detected_subscription, key=StateKey.SUBSCRIPTION_ID
+            "Enter Azure subscription ID", detected_subscription, key="subscription_id"
         )
 
     def _get_region(self) -> str:
         console.print()
         console.print(f"  {self._step('Azure Region')}")
         console.print()
-        return self._prompt("Enter Azure region", "eastus", key=StateKey.REGION)
+        return self._prompt("Enter Azure region", "eastus", key="region")
 
     def _fetch_zones(self, subscription_id: str, region: str) -> list[str]:
         import json as _json
@@ -2707,7 +2674,7 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", ",".join(available[:2]), key=StateKey.ZONES
+            "Enter zones (comma-separated)", ",".join(available[:2]), key="zones"
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
