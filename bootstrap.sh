@@ -139,11 +139,17 @@ read project_dir < /dev/tty
 project_dir="${project_dir:-$default_dir}"
 
 if [ -d "$project_dir" ]; then
-    echo -e "${RED}Directory '$project_dir' already exists${RESET}"
-    exit 1
+    # allow resuming a previous setup that left a checkpoint; otherwise refuse
+    # to touch a directory we didn't create
+    if [ -f "$project_dir/.setup-state.json" ]; then
+        echo -e "${BLUE}Resuming setup in '$project_dir'${RESET}"
+    else
+        echo -e "${RED}Directory '$project_dir' already exists${RESET}"
+        exit 1
+    fi
+else
+    mkdir -p "$project_dir"
 fi
-
-mkdir -p "$project_dir"
 cd "$project_dir"
 
 echo ""
