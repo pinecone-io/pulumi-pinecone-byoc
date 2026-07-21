@@ -368,7 +368,19 @@ class BaseSetupWizard:
         """Load prior answers and, if present, offer to resume."""
         self._state = WizardState(output_dir).load()
         if self._state.is_empty:
+            self._state.set("cloud", self.CLOUD_NAME)
             return
+
+        saved_cloud = self._state.get("cloud")
+        if saved_cloud not in ("", self.CLOUD_NAME):
+            console.print()
+            console.print(
+                f"  [red]✗[/] Saved progress is for {saved_cloud} but you selected {self.CLOUD_NAME}"
+            )
+            console.print(
+                f"  [dim]Re-run and pick {saved_cloud}, or delete {WizardState.FILENAME}[/]"
+            )
+            sys.exit(1)
 
         saved_region = self._state.get("region")
         summary = self.CLOUD_NAME + (f", region {saved_region}" if saved_region else "")
@@ -379,6 +391,7 @@ class BaseSetupWizard:
         response = self._prompt("Resume previous setup? (Y/n)", "Y")
         if response.lower() not in ("y", "yes", ""):
             self._state.clear()
+        self._state.set("cloud", self.CLOUD_NAME)
 
     def _print_header(self):
         console.print()

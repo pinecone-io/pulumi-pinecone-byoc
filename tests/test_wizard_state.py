@@ -3,7 +3,11 @@
 import json
 
 import pytest
-from wizard import WizardState
+from wizard import BaseSetupWizard, WizardState
+
+
+class _StubWizard(BaseSetupWizard):
+    CLOUD_NAME = "AWS"
 
 
 @pytest.fixture
@@ -70,3 +74,36 @@ def test_set_then_load_round_trips(tmp_path):
 
     reloaded = WizardState(str(tmp_path)).load()
     assert reloaded.get("azs") == "us-west-2a,us-west-2b"
+
+
+def test_resume_records_cloud_for_fresh_state(tmp_path):
+    _StubWizard()._maybe_resume(str(tmp_path))
+
+    assert WizardState(str(tmp_path)).load().get("cloud") == "AWS"
+
+
+def test_resume_exits_on_a_different_cloud(tmp_path):
+    prior = WizardState(str(tmp_path))
+    prior.set("cloud", "GCP")
+    prior.set("region", "us-central1")
+
+    with pytest.raises(SystemExit) as exc:
+        _StubWizard()._maybe_resume(str(tmp_path))
+    assert exc.value.code == 1
+
+    reloaded = WizardState(str(tmp_path)).load()
+    assert reloaded.get("cloud") == "GCP"
+    assert reloaded.get("region") == "us-central1"
+
+
+def test_resume_keeps_matching_cloud_state(tmp_path, monkeypatch):
+    prior = WizardState(str(tmp_path))
+    prior.set("cloud", "AWS")
+    prior.set("region", "us-west-2")
+
+    monkeypatch.setattr("wizard._read_input_with_placeholder", lambda *a, **k: "Y")
+    _StubWizard()._maybe_resume(str(tmp_path))
+
+    reloaded = WizardState(str(tmp_path)).load()
+    assert reloaded.get("cloud") == "AWS"
+    assert reloaded.get("region") == "us-west-2"
