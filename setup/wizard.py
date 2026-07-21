@@ -275,16 +275,37 @@ class BaseSetupWizard:
         headless: bool = False,
         stack_name: str = "prod",
         skip_install: bool = False,
+        dev_source: str | None = None,
     ):
         self.results: list[PreflightResult] = []
         self._current_step = 0
         self._headless = headless
         self._stack_name = stack_name
         self._skip_install = skip_install
+        self._dev_source = dev_source
 
     def _step(self, title: str) -> str:
         self._current_step += 1
         return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
+
+    def _write_pyproject(self, output_dir: str, cloud: str, dev_source: str | None) -> None:
+        pyproject_content = (
+            "[project]\n"
+            'name = "pinecone-byoc"\n'
+            'version = "0.1.0"\n'
+            'requires-python = ">=3.12"\n'
+            f'dependencies = ["pulumi-pinecone-byoc[{cloud}]"]\n'
+        )
+        if dev_source:
+            path = os.path.abspath(dev_source)
+            pyproject_content += (
+                "\n[tool.uv.sources]\n"
+                f'pulumi-pinecone-byoc = {{ path = "{path}", editable = true }}\n'
+            )
+        pyproject_path = os.path.join(output_dir, "pyproject.toml")
+        with open(pyproject_path, "w") as f:
+            f.write(pyproject_content)
+        console.print("  [green]✓[/] Created pyproject.toml")
 
     def _prompt(self, message: str, default: str | None = None, password: bool = False) -> str:
         return _read_input_with_placeholder(message, default or "", password)
@@ -1053,17 +1074,7 @@ if config.get_bool("public-access-enabled") is False:
             f.write(main_py)
         console.print("  [green]✓[/] Created __main__.py")
 
-        # create pyproject.toml for uv toolchain to install dependencies
-        pyproject_content = """[project]
-name = "pinecone-byoc"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["pulumi-pinecone-byoc[aws]"]
-"""
-        pyproject_path = os.path.join(output_dir, "pyproject.toml")
-        with open(pyproject_path, "w") as f:
-            f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        self._write_pyproject(output_dir, "aws", self._dev_source)
 
         # create stack config
         stack_name = self._stack_name
@@ -1790,17 +1801,7 @@ if config.get_bool("public-access-enabled") is False:
             f.write(main_py)
         console.print("  [green]✓[/] Created __main__.py")
 
-        # create pyproject.toml for uv toolchain to install dependencies
-        pyproject_content = """[project]
-name = "pinecone-byoc"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["pulumi-pinecone-byoc[gcp]"]
-"""
-        pyproject_path = os.path.join(output_dir, "pyproject.toml")
-        with open(pyproject_path, "w") as f:
-            f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        self._write_pyproject(output_dir, "gcp", self._dev_source)
 
         # create stack config
         stack_name = self._stack_name
@@ -2669,16 +2670,7 @@ if config.get_bool("public-access-enabled") is False:
             f.write(main_py)
         console.print("  [green]✓[/] Created __main__.py")
 
-        pyproject_content = """[project]
-name = "pinecone-byoc"
-version = "0.1.0"
-requires-python = ">=3.12"
-dependencies = ["pulumi-pinecone-byoc[azure]"]
-"""
-        pyproject_path = os.path.join(output_dir, "pyproject.toml")
-        with open(pyproject_path, "w") as f:
-            f.write(pyproject_content)
-        console.print("  [green]✓[/] Created pyproject.toml")
+        self._write_pyproject(output_dir, "azure", self._dev_source)
 
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
@@ -2831,6 +2823,7 @@ def run_setup(
     headless: bool = False,
     stack_name: str = "prod",
     skip_install: bool = False,
+    dev_source: str | None = None,
 ) -> bool:
     try:
         if not cloud:
@@ -2839,25 +2832,25 @@ def run_setup(
                 return False
             cloud = select_cloud()
 
-        if cloud == "aws":
-            wizard = AWSSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
-            )
-            return wizard.run(output_dir)
-        elif cloud == "gcp":
-            wizard = GCPSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
-            )
-            return wizard.run(output_dir)
-        elif cloud == "azure":
-            wizard = AzureSetupWizard(
-                headless=headless, stack_name=stack_name, skip_install=skip_install
-            )
-            return wizard.run(output_dir)
-        else:
-            console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
-            console.print("  [dim]Valid options: aws, gcp, azure[/]")
-            return False
+        wizard_kwargs = {
+            "headless": headless,
+            "stack_name": stack_name,
+            "skip_install": skip_install,
+            "dev_source": dev_source,
+        }
+        match cloud:
+            case "aws":
+                wizard = AWSSetupWizard(**wizard_kwargs)
+            case "gcp":
+                wizard = GCPSetupWizard(**wizard_kwargs)
+            case "azure":
+                wizard = AzureSetupWizard(**wizard_kwargs)
+            case _:
+                console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
+                console.print("  [dim]Valid options: aws, gcp, azure[/]")
+                return False
+
+        return wizard.run(output_dir)
 
     except KeyboardInterrupt:
         console.print()
@@ -2894,7 +2887,23 @@ if __name__ == "__main__":
         action="store_true",
         help="Skip dependency installation and stack initialization.",
     )
+    parser.add_argument(
+        "--dev",
+        action="store_true",
+        help="Dev mode: point the generated project at the local pulumi-pinecone-byoc "
+        "checkout (inferred from this script's location) instead of PyPI.",
+    )
+    parser.add_argument(
+        "--dev-source",
+        metavar="PATH",
+        help="Dev mode with an explicit path to the local pulumi-pinecone-byoc checkout. "
+        "Implies --dev.",
+    )
     args = parser.parse_args()
+
+    dev_source = args.dev_source
+    if not dev_source and args.dev:
+        dev_source = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     success = run_setup(
         args.output_dir,
@@ -2902,5 +2911,6 @@ if __name__ == "__main__":
         headless=args.headless,
         stack_name=args.stack_name,
         skip_install=args.skip_install,
+        dev_source=dev_source,
     )
     sys.exit(0 if success else 1)
