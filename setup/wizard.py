@@ -290,11 +290,24 @@ class WizardState:
     def is_empty(self) -> bool:
         return not self._data
 
+    def stored_keys(self) -> list[str]:
+        return list(self._data)
+
     def get(self, key: str, default: str = "") -> str:
         return self._data.get(key, default)
 
     def set(self, key: str, value: str) -> None:
         self._data[key] = value
+        try:
+            with open(self._path, "w") as f:
+                json.dump(self._data, f, indent=2)
+        except OSError:
+            pass
+
+    def unset(self, key: str) -> None:
+        if key not in self._data:
+            return
+        del self._data[key]
         try:
             with open(self._path, "w") as f:
                 json.dump(self._data, f, indent=2)
@@ -364,14 +377,24 @@ class BaseSetupWizard:
             self._state.set(key, value)
         return value
 
+    def _zone_default(self, key: str, available: list[str]) -> str:
+        if self._state is not None:
+            saved = self._state.get(key)
+            if saved and not all(z.strip() in available for z in saved.split(",")):
+                self._state.unset(key)
+        return ",".join(available[:2])
+
     def _maybe_resume(self, output_dir: str) -> None:
         """Load prior answers and, if present, offer to resume."""
         self._state = WizardState(output_dir).load()
-        if self._state.is_empty:
+        saved_cloud = self._state.get("cloud")
+        has_progress = any(k != "cloud" for k in self._state.stored_keys())
+
+        if not has_progress:
+            self._state.clear()
             self._state.set("cloud", self.CLOUD_NAME)
             return
 
-        saved_cloud = self._state.get("cloud")
         if saved_cloud not in ("", self.CLOUD_NAME):
             console.print()
             console.print(
@@ -1041,7 +1064,9 @@ class AWSSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        azs_input = self._prompt("Enter AZs (comma-separated)", ",".join(available[:2]), key="azs")
+        azs_input = self._prompt(
+            "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
+        )
         azs = [az.strip() for az in azs_input.split(",")]
         return azs
 
@@ -1803,7 +1828,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", ",".join(available[:2]), key="zones"
+            "Enter zones (comma-separated)", self._zone_default("zones", available), key="zones"
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
@@ -2687,7 +2712,7 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", ",".join(available[:2]), key="zones"
+            "Enter zones (comma-separated)", self._zone_default("zones", available), key="zones"
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
