@@ -19,6 +19,7 @@ DIM='\033[2m'
 RESET='\033[0m'
 
 CLOUD=""
+DEV=0
 REPO_BASE="https://raw.githubusercontent.com/pinecone-io/pulumi-pinecone-byoc/main"
 
 # parse arguments
@@ -27,6 +28,10 @@ while [[ $# -gt 0 ]]; do
         --cloud)
             CLOUD="$2"
             shift 2
+            ;;
+        --dev)
+            DEV=1
+            shift
             ;;
         *)
             shift
@@ -40,6 +45,12 @@ echo ""
 
 # resolve SCRIPT_DIR before anything else (for local repo usage)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)" || SCRIPT_DIR=""
+
+# validate --dev before creating anything, so a bad invocation leaves no debris
+if [ "$DEV" -eq 1 ] && { [ -z "$SCRIPT_DIR" ] || [ ! -f "$SCRIPT_DIR/setup/wizard.py" ]; }; then
+    echo -e "${RED}--dev requires running bootstrap.sh from a local repo checkout.${RESET}"
+    exit 1
+fi
 
 # check for required tools
 check_command() {
@@ -195,12 +206,17 @@ echo ""
 echo "Running setup wizard..."
 echo ""
 
-# run the wizard (generates __main__.py and pyproject.toml for pulumi)
+WIZARD_ARGS=()
 if [ -n "$CLOUD" ]; then
-    uv run python wizard.py --cloud "$CLOUD"
-else
-    uv run python wizard.py
+    WIZARD_ARGS+=(--cloud "$CLOUD")
 fi
+
+if [ "$DEV" -eq 1 ]; then
+    WIZARD_ARGS+=(--dev "$SCRIPT_DIR")
+fi
+
+# run the wizard (generates __main__.py and pyproject.toml for pulumi)
+uv run python wizard.py "${WIZARD_ARGS[@]}"
 
 # cleanup wizard setup files (keep .venv, pyproject.toml, uv.lock created by wizard)
 rm -f wizard.py autocomplete.py
