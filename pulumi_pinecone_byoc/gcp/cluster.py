@@ -60,7 +60,7 @@ class PineconeGCPClusterArgs:
     )
 
     # networking
-    vpc_cidr: str = "10.112.0.0/12"
+    vpc_cidr: str = "10.112.0.0/16"
 
     # kubernetes
     kubernetes_version: str = "1.33"

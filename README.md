@@ -153,7 +153,7 @@ The setup wizard creates a Pulumi stack with these configurable options:
 | `gcp_project` | GCP project ID (required) | — |
 | `region` | GCP region | `us-central1` |
 | `availability_zones` | Zones for high availability | `["us-central1-a", "us-central1-b"]` |
-| `vpc_cidr` | VPC IP range | `10.112.0.0/12` |
+| `vpc_cidr` | VPC IP range | `10.112.0.0/16` |
 | `deletion_protection` | Protect AlloyDB/GCS from accidental deletion | `true` |
 | `public_access_enabled` | Enable public endpoint (false = Private Service Connect only) | `true` |
 | `labels` | Custom labels to apply to all resources | `{}` |
