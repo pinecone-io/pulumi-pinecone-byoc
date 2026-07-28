@@ -5,8 +5,9 @@ There are deliberately no assertions beyond the deploy succeeding -- `pulumi up`
 returning non-zero is the failure signal. Deselected by default; each run takes
 tens of minutes and provisions real infrastructure.
 
-    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_public -s
-    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_carve  -s
+    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_public  -s
+    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_private -s
+    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_carve   -s
 
 Requires PINECONE_API_KEY. Pass --keep-vpc to leave both stacks up.
 
@@ -107,6 +108,11 @@ def byoc_project(request, byovpc):
 @pytest.mark.parametrize("byovpc", ["public"], indirect=True)
 def test_e2e_public(byoc_project):
     print(f"\ndeployed BYOC into adopted public/private subnets: {byoc_project}")
+
+
+@pytest.mark.parametrize("byovpc", ["private"], indirect=True)
+def test_e2e_private(byoc_project):
+    print(f"\ndeployed BYOC into adopted private-only subnets: {byoc_project}")
 
 
 @pytest.mark.parametrize("byovpc", ["carve"], indirect=True)

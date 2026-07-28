@@ -6,7 +6,7 @@ import pulumi_aws as aws
 from config.aws import AWSConfig
 from pulumi_pinecone_byoc.aws.vpc import VPC
 
-MODES = ("public", "carve")
+MODES = ("public", "private", "carve")
 
 config = pulumi.Config()
 stack = pulumi.get_stack()
@@ -48,6 +48,10 @@ base_tags = {"pinecone-byoc-test": name}
 
 def public_cidr(index: int) -> str:
     return f"{octets[0]}.{octets[1]}.{index * 16}.0/20"
+
+
+def private_cidr(index: int) -> str:
+    return f"{octets[0]}.{octets[1]}.{64 + index * 64}.0/18"
 
 
 def carve_cidr() -> str:
@@ -149,6 +153,24 @@ main_rt = aws.ec2.DefaultRouteTable(
     ],
     tags={**base_tags, "Name": f"{name}-main-rt"},
 )
+
+if mode == "private":
+    private_subnets = [
+        aws.ec2.Subnet(
+            f"{name}-private-{az}",
+            vpc_id=vpc_id,
+            cidr_block=private_cidr(i),
+            availability_zone=az,
+            tags={
+                **base_tags,
+                "Name": f"{name}-private-{az}",
+                "kubernetes.io/role/internal-elb": "1",
+            },
+            opts=pulumi.ResourceOptions(depends_on=[main_rt]),
+        )
+        for i, az in enumerate(azs)
+    ]
+    private_ids = joined([s.id for s in private_subnets])
 
 pulumi.export("mode", mode)
 pulumi.export("vpc_id", vpc_id)

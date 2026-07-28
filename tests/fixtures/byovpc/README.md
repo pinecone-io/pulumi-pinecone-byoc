@@ -10,13 +10,14 @@ The shape comes from the stack name — any stack containing one of these tokens
 picks that mode, so `ilia-public`, `public-ci` and `public` all work. Set
 `byovpc:mode` to override.
 
-| mode     | creates                                                                | exercises                                  |
-| -------- | ---------------------------------------------------------------------- | ------------------------------------------ |
-| `public` | public + private subnets, role-tagged (built by the module's own `VPC`) | adopt-existing-subnets, public or private  |
-| `carve`  | no workload subnets                                                    | adopt-VPC + module carves its own subnets  |
+| mode      | creates                                                                | exercises                                   |
+| --------- | ---------------------------------------------------------------------- | ------------------------------------------- |
+| `public`  | public + private subnets, role-tagged (built by the module's own `VPC`) | adopt-existing-subnets, public or private   |
+| `private` | private subnets (`internal-elb`) plus one untagged subnet for the NAT   | adopt-existing-subnets, private access only |
+| `carve`   | no workload subnets                                                    | adopt-VPC + module carves its own subnets   |
 
-NAT egress always sits on the VPC **main route table**, so the subnets the module
-carves inherit egress without a route table of their own.
+NAT egress always sits on the VPC **main route table**, so subnets the module
+carves inherit egress and every shape can also serve as a carve target.
 
 ## Use
 
@@ -46,8 +47,9 @@ against real AWS. Stacks are named `$USER-<mode>`; profile, region and AZs come
 from `pytest.ini`.
 
 ```bash
-uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k public -s
-uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k carve  -s
+uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k public  -s
+uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k private -s
+uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k carve   -s
 ```
 
 Add `--keep-vpc` to leave the VPC up after the assertions run.

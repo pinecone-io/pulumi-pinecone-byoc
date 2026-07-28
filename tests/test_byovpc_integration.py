@@ -3,6 +3,7 @@
 Deselected by default. Run one shape at a time:
 
     pytest -m integration tests/test_byovpc_integration.py -k public -s
+    pytest -m integration tests/test_byovpc_integration.py -k private -s
     pytest -m integration tests/test_byovpc_integration.py -k carve -s
 
 Stack names are "$USER-<mode>". Profile and region come from pytest ini
@@ -90,6 +91,27 @@ def test_public_vpc_is_adoptable_with_both_subnet_roles(ec2, byovpc):
         assert igw_routes, f"{subnet['SubnetId']} is elb-tagged but has no IGW route"
 
     assert_wizard_env(byovpc, {"PINECONE_PUBLIC_ACCESS": "true"})
+
+
+@pytest.mark.parametrize("byovpc", ["private"], indirect=True)
+def test_private_vpc_exposes_only_internal_subnets(ec2, byovpc):
+    assert_vpc_baseline(ec2, byovpc, "private")
+    vpc_id = byovpc["vpc_id"]
+    azs = [az.strip() for az in byovpc["azs"].split(",")]
+
+    _, public, private = subnets_by_role(ec2, vpc_id)
+    assert public == [], "private shape must not expose elb-tagged subnets"
+    assert {s["AvailabilityZone"] for s in private} == set(azs)
+    assert byovpc["public_subnet_ids"] == ""
+    assert set(byovpc["private_subnet_ids"].split(",")) == {s["SubnetId"] for s in private}
+
+    assert_wizard_env(
+        byovpc,
+        {
+            "PINECONE_PUBLIC_ACCESS": "false",
+            "PINECONE_PUBLIC_SUBNET_IDS": "",
+        },
+    )
 
 
 @pytest.mark.parametrize("byovpc", ["carve"], indirect=True)
