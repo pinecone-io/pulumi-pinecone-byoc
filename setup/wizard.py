@@ -1,11 +1,16 @@
 """Pinecone BYOC setup wizard."""
 
+import argparse
 import contextlib
+import ipaddress
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 
 import yaml
@@ -453,9 +458,6 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Validating API Key')}")
         console.print()
 
-        import urllib.error
-        import urllib.request
-
         with Status("  [dim]Checking API key...[/]", console=console, spinner="dots"):
             try:
                 req = urllib.request.Request(
@@ -581,8 +583,6 @@ class BaseSetupWizard:
         return True
 
     def _check_pulumi_installed(self) -> bool:
-        import shutil
-
         return shutil.which("pulumi") is not None
 
     def _print_success(self, output_dir: str):
@@ -851,8 +851,6 @@ class AWSPreflightChecker:
             self._add_result("Instance Types", False, "Failed to check", str(e))
 
     def _check_cidr_conflicts(self):
-        import ipaddress
-
         try:
             target_net = ipaddress.ip_network(self.cidr)
         except ValueError:
@@ -1362,8 +1360,6 @@ class GCPPreflightChecker:
         self.results.append(result)
 
     def _gcloud_json(self, args: list[str]):
-        import json
-
         result = subprocess.run(
             ["gcloud"] + args + [f"--project={self.project_id}", "--format=json"],
             capture_output=True,
@@ -1568,8 +1564,6 @@ class GCPPreflightChecker:
             self._add_result("Availability Zones", False, f"Failed to check: {e}")
 
     def _check_cidr_conflicts(self):
-        import ipaddress
-
         try:
             target_net = ipaddress.ip_network(self.cidr)
         except ValueError:
@@ -2092,8 +2086,6 @@ class AzurePreflightChecker:
         self.results.append(result)
 
     def _az_json(self, args: list[str]):
-        import json
-
         result = subprocess.run(
             ["az"] + args + ["--output", "json"],
             capture_output=True,
@@ -2165,8 +2157,6 @@ class AzurePreflightChecker:
                     f"Failed: {result.stderr.strip().split(chr(10))[0]}",
                 )
                 return
-
-            import json
 
             skus = json.loads(result.stdout)
             if not skus:
@@ -2277,8 +2267,6 @@ class AzurePreflightChecker:
             "Standard_L4s_v4",
         ]
         try:
-            import json
-
             result = subprocess.run(
                 [
                     "az",
@@ -2325,8 +2313,6 @@ class AzurePreflightChecker:
 
     def _check_zones(self):
         try:
-            import json
-
             # use REST API directly - much faster than `az vm list-skus` CLI
             result = subprocess.run(
                 [
@@ -2402,8 +2388,6 @@ class AzurePreflightChecker:
             self._add_result("Availability Zones", False, f"Failed to check: {e}")
 
     def _check_cidr_conflicts(self):
-        import ipaddress
-
         try:
             aks_net = ipaddress.ip_network(self.cidr)
         except ValueError:
@@ -2604,8 +2588,6 @@ class AzureSetupWizard(BaseSetupWizard):
 
         with Status("  [dim]Validating Azure credentials...[/]", console=console, spinner="dots"):
             try:
-                import json
-
                 result = subprocess.run(
                     ["az", "account", "show", "--output", "json"],
                     capture_output=True,
@@ -2648,8 +2630,6 @@ class AzureSetupWizard(BaseSetupWizard):
         return self._prompt("Enter Azure region", "eastus", key="region")
 
     def _fetch_zones(self, subscription_id: str, region: str) -> list[str]:
-        import json as _json
-
         try:
             result = subprocess.run(
                 [
@@ -2669,7 +2649,7 @@ class AzureSetupWizard(BaseSetupWizard):
                 timeout=30,
             )
             if result.returncode == 0:
-                data = _json.loads(result.stdout)
+                data = json.loads(result.stdout)
                 required_skus = [
                     "Standard_D4s_v5",
                     "Standard_L2aos_v4",
@@ -3008,8 +2988,6 @@ def run_setup(
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser(description="Pinecone BYOC Setup Wizard")
     parser.add_argument("--output-dir", default=".", help="Directory to write project files")
     parser.add_argument(
