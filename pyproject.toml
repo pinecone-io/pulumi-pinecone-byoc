@@ -74,8 +74,6 @@ exclude = [
     "**/*.pyc",
 ]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
 
 [tool.ty.environment]
 extra-paths = ["typings", "setup"]

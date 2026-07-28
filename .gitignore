@@ -3,3 +3,8 @@ pulumi_pinecone_byoc/_version.py
 pinecone-byoc/
 .idea/
 .vscode/
+.venv/
+*.log
+tests/fixtures/byovpc/Pulumi.*-*.yaml
+.byovpc-logs/
+.e2e/
