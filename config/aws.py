@@ -65,6 +65,10 @@ class AWSConfig(BaseConfig):
     # subnet to put it in; false leaves the data plane reachable over PrivateLink only
     public_access: bool = True
 
+    # given with existing_vpc_id, the module adopts these subnets and creates none
+    public_subnet_ids: list[str] | None = None
+    private_subnet_ids: list[str] | None = None
+
     # route table to associate each carved subnet with, keyed by availability zone.
     # Unset means the subnets carry no association and inherit the VPC main route
     # table, which only carries egress in landing zones that put it there.

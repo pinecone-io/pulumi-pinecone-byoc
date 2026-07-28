@@ -26,6 +26,8 @@ vpc = VPC(
         vpc_cidr=config.require("vpc-cidr"),
         existing_vpc_id=config.get("existing-vpc-id"),
         public_access=True if public_access is None else public_access,
+        public_subnet_ids=config.get_object("public-subnet-ids"),
+        private_subnet_ids=config.get_object("private-subnet-ids"),
     ),
 )
 

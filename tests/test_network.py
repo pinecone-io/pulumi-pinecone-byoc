@@ -49,6 +49,9 @@ class Applied(NamedTuple):
 
 
 def expected_counts(shape, az_count):
+    if shape == "public":
+        # adopt looks the network up: the whole point is that it creates nothing
+        return {VPC: 0, CIDR_ASSOCIATION: 0, SUBNET: 0, NAT: 0}
     if shape == "carve":
         return {VPC: 0, CIDR_ASSOCIATION: 1, SUBNET: az_count, NAT: 0}
     return {VPC: 1, CIDR_ASSOCIATION: 0, SUBNET: 2 * az_count, NAT: az_count}
@@ -119,7 +122,19 @@ def network_project(request):
         "PINECONE_VPC_CIDR": cidr,
         "PINECONE_PUBLIC_ACCESS": "true",
     }
-    if shape == "carve":
+    if shape == "public":
+        adopted = request.getfixturevalue("byovpc")
+        azs = adopted["azs"]
+        customer_vpc_id = adopted["vpc_id"]
+        cidr = adopted["vpc_cidr"]
+        env |= {
+            "PINECONE_AZS": azs,
+            "PINECONE_EXISTING_VPC_ID": customer_vpc_id,
+            "PINECONE_VPC_CIDR": cidr,
+            "PINECONE_PUBLIC_SUBNET_IDS": adopted["public_subnet_ids"],
+            "PINECONE_PRIVATE_SUBNET_IDS": adopted["private_subnet_ids"],
+        }
+    elif shape == "carve":
         customer = request.getfixturevalue("customer_vpc")
         azs = customer["azs"]
         cidr = customer["carve_cidr"]
@@ -159,7 +174,7 @@ def assert_stopped_at_the_network(created):
         assert not stray, f"targeting should have stopped before {prefix}, got {stray}"
 
 
-@pytest.mark.parametrize("network_project", ["vanilla", "carve"], indirect=True)
+@pytest.mark.parametrize("network_project", ["vanilla", "carve", "public"], indirect=True)
 def test_network(network_project, ec2):
     applied = network_project
     azs = applied.azs
