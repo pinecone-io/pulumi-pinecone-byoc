@@ -417,6 +417,7 @@ class AWSPreflightChecker:
         vpc_id: str | None = None,
         public_subnet_ids: list[str] | None = None,
         private_subnet_ids: list[str] | None = None,
+        create_subnets: bool = False,
     ):
         import boto3
 
@@ -426,6 +427,7 @@ class AWSPreflightChecker:
         self.vpc_id = vpc_id
         self.public_subnet_ids = public_subnet_ids or []
         self.private_subnet_ids = private_subnet_ids or []
+        self.create_subnets = create_subnets
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -433,7 +435,20 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        if self.vpc_id:
+        if self.vpc_id and self.create_subnets:
+            # adopt VPC but carve new subnets: validate the VPC and that the
+            # carve CIDR fits inside one of its CIDR associations.
+            checks = [
+                ("VPC Exists", self._check_vpc_exists),
+                ("VPC DNS", self._check_vpc_dns),
+                ("Carve CIDR", self._check_carve_cidr),
+                ("Subnet Egress", self._check_carve_egress),
+                ("Availability Zones", self._check_az_availability),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Instance Types", self._check_instance_types),
+            ]
+        elif self.vpc_id:
             # adopt mode: the network already exists, so create-oriented quota and
             # CIDR-conflict checks don't apply. validate the adopted network instead.
             checks = [
@@ -783,6 +798,96 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("VPC DNS", False, "Failed to check", str(e))
 
+    def _check_carve_cidr(self):
+        try:
+            carve = ipaddress.ip_network(self.cidr, strict=False)
+        except ValueError as e:
+            self._add_result("Carve CIDR", False, f"Invalid CIDR {self.cidr}", str(e))
+            return
+        if carve.prefixlen != 16:
+            self._add_result(
+                "Carve CIDR",
+                False,
+                f"{self.cidr} must be a /16",
+                "The subnet layout requires a /16 carve range",
+            )
+            return
+        try:
+            response = self.ec2.describe_vpcs(VpcIds=[self.vpc_id])
+            assoc = [
+                a["CidrBlock"]
+                for a in response["Vpcs"][0].get("CidrBlockAssociationSet", [])
+                if a.get("CidrBlockState", {}).get("State") == "associated"
+            ]
+            nets = [ipaddress.ip_network(c) for c in assoc]
+            within = any(carve.subnet_of(n) for n in nets)
+            overlaps = any(carve.overlaps(n) for n in nets)
+            if within:
+                self._add_result(
+                    "Carve CIDR", True, f"{self.cidr} fits inside the VPC ({', '.join(assoc)})"
+                )
+            elif not overlaps:
+                self._add_result(
+                    "Carve CIDR",
+                    True,
+                    f"{self.cidr} will be associated to {self.vpc_id} as a secondary CIDR",
+                )
+            else:
+                self._add_result(
+                    "Carve CIDR",
+                    False,
+                    f"{self.cidr} partially overlaps a VPC CIDR: {', '.join(assoc)}",
+                    "Pick a /16 that is either inside an existing CIDR or fully disjoint",
+                )
+        except Exception as e:
+            self._add_result("Carve CIDR", False, "Failed to check", str(e))
+
+    def _check_carve_egress(self):
+        # carved subnets have no route table of their own, so they inherit the VPC's
+        # main route table. without a default route there the EKS nodes have no
+        # internet egress and the cluster can't pull images.
+        try:
+            response = self.ec2.describe_route_tables(
+                Filters=[
+                    {"Name": "vpc-id", "Values": [self.vpc_id]},
+                    {"Name": "association.main", "Values": ["true"]},
+                ]
+            )
+            tables = response.get("RouteTables", [])
+            if not tables:
+                self._add_result(
+                    "Subnet Egress", False, f"No main route table found for {self.vpc_id}"
+                )
+                return
+            routes = tables[0].get("Routes", [])
+            default = next(
+                (
+                    r
+                    for r in routes
+                    if r.get("DestinationCidrBlock") == "0.0.0.0/0" and r.get("State") == "active"
+                ),
+                None,
+            )
+            if default:
+                target = (
+                    default.get("NatGatewayId")
+                    or default.get("TransitGatewayId")
+                    or default.get("GatewayId")
+                    or default.get("VpcPeeringConnectionId")
+                    or "?"
+                )
+                self._add_result("Subnet Egress", True, f"main route table egresses via {target}")
+            else:
+                self._add_result(
+                    "Subnet Egress",
+                    False,
+                    f"{self.vpc_id} main route table has no default (0.0.0.0/0) route",
+                    "Carved subnets inherit the main route table; add a NAT or "
+                    "Transit Gateway default route to it, or the EKS nodes get no egress",
+                )
+        except Exception as e:
+            self._add_result("Subnet Egress", False, "Failed to check", str(e))
+
     def _check_adopt_egress(self):
         # each adopted private subnet must have a default route (explicit route table
         # or the VPC main table) or its EKS nodes have no internet egress.
@@ -951,8 +1056,8 @@ class AWSSetupWizard(BaseSetupWizard):
 
         region = self._get_region()
         vpc_id = self._get_vpc(region)
-        cidr = self._get_cidr(vpc_id, region)
-        azs = self._get_azs(region, vpc_id)
+        cidr = self._get_cidr(vpc_id, region, self._create_subnets)
+        azs = self._get_azs(region, vpc_id, self._create_subnets)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
         deletion_protection = self._get_deletion_protection()
@@ -966,6 +1071,7 @@ class AWSSetupWizard(BaseSetupWizard):
             vpc_id,
             self._adopted_public_ids,
             self._adopted_private_ids,
+            self._create_subnets,
         ):
             return False
 
@@ -1162,6 +1268,20 @@ class AWSSetupWizard(BaseSetupWizard):
         else:
             vpc_id = self._prompt(prompt, "").strip()
 
+        self._create_subnets = False
+        if vpc_id:
+            console.print()
+            console.print(
+                "  [dim]Adopt this VPC's existing subnets, or create new "
+                "module-managed subnets in it[/]"
+            )
+            strategy = self._prompt(
+                "Subnets: adopt or create?",
+                "adopt",
+                key="subnet_strategy",
+                options=["adopt", "create"],
+            )
+            self._create_subnets = strategy.strip().lower() == "create"
         return vpc_id or None
 
     def _fetch_azs(self, region: str) -> list[str]:
@@ -1192,7 +1312,9 @@ class AWSSetupWizard(BaseSetupWizard):
             subnets.append((s["SubnetId"], s["AvailabilityZone"], s.get("CidrBlock", ""), name))
         return subnets
 
-    def _get_azs(self, region: str, vpc_id: str | None = None) -> list[str]:
+    def _get_azs(
+        self, region: str, vpc_id: str | None = None, create_subnets: bool = False
+    ) -> list[str]:
         console.print()
         console.print(f"  {self._step('Availability Zones')}")
         console.print()
@@ -1200,7 +1322,7 @@ class AWSSetupWizard(BaseSetupWizard):
         self._adopted_public_ids = []
         self._adopted_private_ids = []
 
-        if vpc_id:
+        if vpc_id and not create_subnets:
             with Status("  [dim]Fetching subnets for VPC...[/]", console=console, spinner="dots"):
                 subnets = self._fetch_subnets_for_vpc(region, vpc_id)
             by_az: dict[str, list[tuple[str, str, str]]] = {}
@@ -1264,17 +1386,25 @@ class AWSSetupWizard(BaseSetupWizard):
                 public_ids.append(pub)
         return public_ids, private_ids
 
-    def _get_cidr(self, vpc_id: str | None = None, region: str | None = None) -> str:
+    def _get_cidr(
+        self, vpc_id: str | None = None, region: str | None = None, create_subnets: bool = False
+    ) -> str:
         console.print()
         console.print(f"  {self._step('VPC CIDR Block')}")
         if vpc_id:
             with Status("  [dim]Reading VPC CIDR...[/]", console=console, spinner="dots"):
                 cidrs = self._fetch_vpc_cidrs(region, vpc_id)
             default = cidrs[0] if cidrs else self.DEFAULT_CIDR
-            console.print(
-                "  [dim]Suggested from the adopted VPC; Enter to accept, "
-                "Tab to cycle its CIDRs, or type a custom range[/]"
-            )
+            if create_subnets:
+                console.print(
+                    "  [dim]A /16 to carve new subnets from (associated to the VPC as a "
+                    "secondary CIDR if not already present); Tab to cycle, or type a range[/]"
+                )
+            else:
+                console.print(
+                    "  [dim]Suggested from the adopted VPC; Enter to accept, "
+                    "Tab to cycle its CIDRs, or type a custom range[/]"
+                )
             console.print()
             return self._prompt("VPC CIDR", default, key="cidr", options=cidrs) or default
         console.print(f"  [dim]{self.CIDR_DESC}[/]")
@@ -1312,13 +1442,14 @@ class AWSSetupWizard(BaseSetupWizard):
         vpc_id: str | None = None,
         public_subnet_ids: list[str] | None = None,
         private_subnet_ids: list[str] | None = None,
+        create_subnets: bool = False,
     ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
         checker = AWSPreflightChecker(
-            region, azs, cidr, vpc_id, public_subnet_ids, private_subnet_ids
+            region, azs, cidr, vpc_id, public_subnet_ids, private_subnet_ids, create_subnets
         )
         if not checker.run_checks():
             console.print()

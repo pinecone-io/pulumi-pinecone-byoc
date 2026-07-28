@@ -38,7 +38,10 @@ class VPC(pulumi.ComponentResource):
         self.config = config
 
         if config.existing_vpc_id:
-            self._adopt(config)
+            if config.private_subnet_ids:
+                self._adopt(config)
+            else:
+                self._adopt_and_create_subnets(name, config)
         else:
             self._create(name, config)
 
@@ -83,6 +86,65 @@ class VPC(pulumi.ComponentResource):
         missing = [s for s in subnet_ids if s not in set(result.ids)]
         if missing:
             raise ValueError(f"Subnet(s) {', '.join(missing)} were not found in VPC {vpc_id}.")
+
+    def _adopt_and_create_subnets(self, name: str, config: AWSConfig) -> None:
+        vpc_id = config.existing_vpc_id
+
+        vpc = aws.ec2.get_vpc(id=vpc_id)
+        self._validate_cidr(config.vpc_cidr)
+        if len(config.availability_zones) > 3:
+            raise ValueError(
+                f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
+                "Subnet layout does not fit more than 3 AZs in a /16."
+            )
+
+        child_opts = pulumi.ResourceOptions(parent=self)
+
+        # associate the carve CIDR as a secondary block if the VPC doesn't already
+        # cover it, so subnets can be created in it; teardown removes it with them.
+        carve = ipaddress.IPv4Network(config.vpc_cidr)
+        covered = any(
+            carve.subnet_of(ipaddress.IPv4Network(a.cidr_block))
+            for a in vpc.cidr_block_associations
+        )
+        subnet_deps: list[pulumi.Resource] = []
+        if not covered:
+            self.cidr_association = aws.ec2.VpcIpv4CidrBlockAssociation(
+                f"{name}-cidr",
+                vpc_id=vpc_id,
+                cidr_block=config.vpc_cidr,
+                opts=child_opts,
+            )
+            subnet_deps = [self.cidr_association]
+
+        self.private_subnets: list[aws.ec2.Subnet] = []
+        for i, az in enumerate(config.availability_zones):
+            private_subnet = aws.ec2.Subnet(
+                f"{name}-private-{az}",
+                vpc_id=vpc_id,
+                cidr_block=self._calculate_cidr(i, is_public=False),
+                availability_zone=az,
+                tags=config.tags(
+                    Name=f"{config.resource_prefix}-private-{az}",
+                    **{"kubernetes.io/role/internal-elb": "1"},
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=subnet_deps),
+            )
+            self.private_subnets.append(private_subnet)
+
+        self._vpc_id = vpc_id
+        self._public_subnet_ids = []
+        self._private_subnet_ids = [s.id for s in self.private_subnets]
+        existing_cidrs = [a.cidr_block for a in vpc.cidr_block_associations]
+        self._vpc_cidr_blocks = existing_cidrs + ([] if covered else [config.vpc_cidr])
+
+        self.register_outputs(
+            {
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
+            }
+        )
 
     def _create(self, name: str, config: AWSConfig) -> None:
         self._validate_cidr(config.vpc_cidr)

@@ -10,12 +10,13 @@ The shape comes from the stack name — any stack containing one of these tokens
 picks that mode, so `ilia-public`, `public-ci` and `public` all work. Set
 `byovpc:mode` to override.
 
-| mode     | creates                                                                | exercises                                 |
-| -------- | ---------------------------------------------------------------------- | ----------------------------------------- |
-| `public` | public + private subnets, role-tagged (built by the module's own `VPC`) | adopt-existing-subnets, public or private |
+| mode     | creates                                                                | exercises                                  |
+| -------- | ---------------------------------------------------------------------- | ------------------------------------------ |
+| `public` | public + private subnets, role-tagged (built by the module's own `VPC`) | adopt-existing-subnets, public or private  |
+| `carve`  | no workload subnets                                                    | adopt-VPC + module carves its own subnets  |
 
-NAT egress always sits on the VPC **main route table**, so subnets with no route
-table of their own still reach the internet.
+NAT egress always sits on the VPC **main route table**, so the subnets the module
+carves inherit egress without a route table of their own.
 
 ## Use
 
@@ -46,6 +47,7 @@ from `pytest.ini`.
 
 ```bash
 uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k public -s
+uv run --extra aws pytest -m integration tests/test_byovpc_integration.py -k carve  -s
 ```
 
 Add `--keep-vpc` to leave the VPC up after the assertions run.

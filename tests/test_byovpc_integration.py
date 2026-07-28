@@ -1,13 +1,15 @@
 """Integration tests that provision a stand-in customer VPC via the byovpc fixture.
 
-Deselected by default:
+Deselected by default. Run one shape at a time:
 
     pytest -m integration tests/test_byovpc_integration.py -k public -s
+    pytest -m integration tests/test_byovpc_integration.py -k carve -s
 
 Stack names are "$USER-<mode>". Profile and region come from pytest ini
 (aws_profile / aws_region). Pass --keep-vpc to leave the stack up.
 """
 
+import ipaddress
 import os
 
 import pytest
@@ -88,3 +90,33 @@ def test_public_vpc_is_adoptable_with_both_subnet_roles(ec2, byovpc):
         assert igw_routes, f"{subnet['SubnetId']} is elb-tagged but has no IGW route"
 
     assert_wizard_env(byovpc, {"PINECONE_PUBLIC_ACCESS": "true"})
+
+
+@pytest.mark.parametrize("byovpc", ["carve"], indirect=True)
+def test_carve_vpc_has_no_workload_subnets_but_has_egress(ec2, byovpc):
+    assert_vpc_baseline(ec2, byovpc, "carve")
+    vpc_id = byovpc["vpc_id"]
+
+    _, public, private = subnets_by_role(ec2, vpc_id)
+    assert public == [], "carve target must not expose elb-tagged subnets"
+    assert private == [], "carve target must have no pre-tagged private subnets"
+    assert byovpc["public_subnet_ids"] == ""
+    assert byovpc["private_subnet_ids"] == ""
+
+    env = assert_wizard_env(
+        byovpc,
+        {
+            "PINECONE_PUBLIC_ACCESS": "false",
+            "PINECONE_PRIVATE_SUBNET_IDS": "",
+        },
+    )
+
+    carve = ipaddress.IPv4Network(env["PINECONE_VPC_CIDR"])
+    assert carve.prefixlen == 16, "the module requires a /16 to carve from"
+    associated = [
+        ipaddress.IPv4Network(a["CidrBlock"])
+        for a in ec2.describe_vpcs(VpcIds=[vpc_id])["Vpcs"][0]["CidrBlockAssociationSet"]
+    ]
+    assert not any(carve.overlaps(net) for net in associated), (
+        f"carve range {carve} must be disjoint from the VPC so the module can associate it"
+    )
