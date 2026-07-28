@@ -102,7 +102,7 @@ def test_resume_starts_fresh_on_marker_only_same_cloud(tmp_path, monkeypatch):
     def _no_prompt(*a, **k):
         raise AssertionError("should not prompt for a marker-only checkpoint")
 
-    monkeypatch.setattr("wizard._read_input_with_placeholder", _no_prompt)
+    monkeypatch.setattr("wizard.read_input_with_placeholder", _no_prompt)
     _StubWizard()._maybe_resume(str(tmp_path))
 
     assert WizardState(str(tmp_path)).load().stored_keys() == ["cloud"]
@@ -114,7 +114,7 @@ def test_resume_starts_fresh_on_marker_only_different_cloud(tmp_path, monkeypatc
     def _no_prompt(*a, **k):
         raise AssertionError("should not prompt for a marker-only checkpoint")
 
-    monkeypatch.setattr("wizard._read_input_with_placeholder", _no_prompt)
+    monkeypatch.setattr("wizard.read_input_with_placeholder", _no_prompt)
     _StubWizard()._maybe_resume(str(tmp_path))
 
     reloaded = WizardState(str(tmp_path)).load()
@@ -171,7 +171,7 @@ def test_resume_keeps_matching_cloud_state(tmp_path, monkeypatch):
     prior.set("cloud", "AWS")
     prior.set("region", "us-west-2")
 
-    monkeypatch.setattr("wizard._read_input_with_placeholder", lambda *a, **k: "Y")
+    monkeypatch.setattr("wizard.read_input_with_placeholder", lambda *a, **k: "Y")
     _StubWizard()._maybe_resume(str(tmp_path))
 
     reloaded = WizardState(str(tmp_path)).load()

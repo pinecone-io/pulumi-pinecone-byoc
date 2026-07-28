@@ -5,7 +5,6 @@ import contextlib
 import ipaddress
 import json
 import os
-import platform
 import shutil
 import subprocess
 import sys
@@ -14,15 +13,10 @@ import urllib.request
 from dataclasses import dataclass
 
 import yaml
+from autocomplete import read_input_with_cycle, read_input_with_placeholder
 from rich.console import Console
 from rich.panel import Panel
 from rich.status import Status
-
-IS_WINDOWS = platform.system() == "Windows"
-if not IS_WINDOWS:
-    import termios
-    import tty
-
 
 # pinecone blue
 BLUE = "#002BFF"
@@ -38,227 +32,6 @@ class PreflightResult:
     passed: bool
     message: str
     details: str | None = None
-
-
-def _read_input_with_placeholder_unix(
-    prompt: str, placeholder: str = "", password: bool = False
-) -> str:
-    console.print(f"  {prompt}: ", end="")
-
-    # open /dev/tty directly to handle curl pipe case where stdin is not a TTY
-    # use binary mode with no buffering to avoid input lag
-    tty_file = open("/dev/tty", "rb", buffering=0)
-    try:
-        fd = tty_file.fileno()
-        old_settings = termios.tcgetattr(fd)
-    except Exception:
-        tty_file.close()
-        raise
-
-    def show_placeholder():
-        if placeholder and not password:
-            sys.stdout.write(f"\033[2m{placeholder}\033[0m")  # dim
-            sys.stdout.write(f"\033[{len(placeholder)}D")  # move back
-            sys.stdout.flush()
-
-    def clear_placeholder():
-        if placeholder and not password:
-            sys.stdout.write(" " * len(placeholder))
-            sys.stdout.write(f"\033[{len(placeholder)}D")
-            sys.stdout.flush()
-
-    show_placeholder()
-
-    try:
-        tty.setraw(fd)
-        result = []
-        placeholder_visible = True
-
-        while True:
-            char = tty_file.read(1).decode("utf-8", errors="replace")
-
-            # enter - accept
-            if char in ("\r", "\n"):
-                if not result and placeholder:
-                    result = list(placeholder)
-                break
-
-            # tab or right arrow - complete with placeholder
-            if char == "\t" or char == "\x1b":
-                if char == "\x1b":
-                    # read arrow key sequence
-                    next1 = tty_file.read(1).decode("utf-8", errors="replace")
-                    next2 = tty_file.read(1).decode("utf-8", errors="replace")
-                    if next1 == "[" and next2 == "C" and placeholder and not result:  # right arrow
-                        clear_placeholder()
-                        result = list(placeholder)
-                        sys.stdout.write(placeholder)
-                        sys.stdout.flush()
-                        placeholder_visible = False
-                    continue
-                else:  # tab
-                    if placeholder and not result:
-                        clear_placeholder()
-                        result = list(placeholder)
-                        sys.stdout.write(placeholder)
-                        sys.stdout.flush()
-                        placeholder_visible = False
-                    continue
-
-            # backspace
-            if char in ("\x7f", "\x08"):
-                if result:
-                    result.pop()
-                    sys.stdout.write("\b \b")
-                    sys.stdout.flush()
-                    # if empty, show placeholder again
-                    if not result and placeholder and not password:
-                        show_placeholder()
-                        placeholder_visible = True
-                continue
-
-            # ctrl+c
-            if char == "\x03":
-                raise KeyboardInterrupt
-
-            # ctrl+d
-            if char == "\x04":
-                if not result:
-                    raise EOFError
-                continue
-
-            # ignore other control chars
-            if ord(char) < 32:
-                continue
-
-            # clear placeholder on first real char
-            if placeholder_visible and placeholder and not password:
-                clear_placeholder()
-                placeholder_visible = False
-
-            result.append(char)
-            sys.stdout.write("•" if password else char)
-            sys.stdout.flush()
-
-        return "".join(result)
-
-    finally:
-        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-        tty_file.close()
-        console.print()
-
-
-def _read_input_with_placeholder_windows(
-    prompt: str, placeholder: str = "", password: bool = False
-) -> str:
-    if sys.platform != "win32":
-        return placeholder or ""
-    import msvcrt
-
-    console.print(f"  {prompt}: ", end="")
-
-    def show_placeholder():
-        if placeholder and not password:
-            sys.stdout.write(f"\033[2m{placeholder}\033[0m")  # dim
-            sys.stdout.write(f"\033[{len(placeholder)}D")  # move back
-            sys.stdout.flush()
-
-    def clear_placeholder():
-        if placeholder and not password:
-            sys.stdout.write(" " * len(placeholder))
-            sys.stdout.write(f"\033[{len(placeholder)}D")
-            sys.stdout.flush()
-
-    show_placeholder()
-
-    result = []
-    placeholder_visible = True
-
-    try:
-        while True:
-            if msvcrt.kbhit():
-                char_bytes = msvcrt.getch()
-
-                # tab or right arrow - complete with placeholder
-                if char_bytes in (b"\x00", b"\xe0"):
-                    special = msvcrt.getch()
-                    if (
-                        char_bytes == b"\xe0" and special == b"M" and placeholder and not result
-                    ):  # right arrow
-                        clear_placeholder()
-                        result = list(placeholder)
-                        sys.stdout.write(placeholder)
-                        sys.stdout.flush()
-                        placeholder_visible = False
-                    continue
-
-                try:
-                    char = char_bytes.decode("utf-8", errors="replace")
-                except Exception:
-                    continue
-
-                # enter - accept
-                if char == "\r":
-                    if not result and placeholder:
-                        result = list(placeholder)
-                    break
-
-                # tab or right arrow - complete with placeholder
-                if char == "\t":
-                    if placeholder and not result:
-                        clear_placeholder()
-                        result = list(placeholder)
-                        sys.stdout.write(placeholder)
-                        sys.stdout.flush()
-                        placeholder_visible = False
-                    continue
-
-                # backspace
-                if char in ("\x08", "\x7f"):
-                    if result:
-                        result.pop()
-                        sys.stdout.write("\b \b")
-                        sys.stdout.flush()
-                        # if empty, show placeholder again
-                        if not result and placeholder and not password:
-                            show_placeholder()
-                            placeholder_visible = True
-                    continue
-
-                # ctrl+c
-                if char == "\x03":
-                    raise KeyboardInterrupt
-
-                # ctrl+d
-                if char == "\x04":
-                    if not result:
-                        raise EOFError
-                    continue
-
-                # ignore other control chars
-                if ord(char) < 32:
-                    continue
-
-                # clear placeholder on first real char
-                if placeholder_visible and placeholder and not password:
-                    clear_placeholder()
-                    placeholder_visible = False
-
-                result.append(char)
-                sys.stdout.write("•" if password else char)
-                sys.stdout.flush()
-
-        return "".join(result)
-
-    finally:
-        console.print()
-
-
-def _read_input_with_placeholder(prompt: str, placeholder: str = "", password: bool = False) -> str:
-    if IS_WINDOWS:
-        return _read_input_with_placeholder_windows(prompt, placeholder, password)
-    else:
-        return _read_input_with_placeholder_unix(prompt, placeholder, password)
 
 
 # ---------------------------------------------------------------------------
@@ -367,18 +140,23 @@ class BaseSetupWizard:
         default: str | None = None,
         password: bool = False,
         key: str | None = None,
+        options: list[str] | None = None,
     ) -> str:
         """Prompt for a value.
 
         When ``key`` is given, any previously saved answer for that key becomes
         the default (resume), and the entered value is persisted — unless this
-        is a ``password`` field, whose value is never written to disk.
+        is a ``password`` field, whose value is never written to disk. When
+        ``options`` is given, Tab cycles through them.
         """
         effective_default = default or ""
         if key and self._state is not None:
             effective_default = self._state.get(key, effective_default)
 
-        value = _read_input_with_placeholder(message, effective_default, password)
+        if options:
+            value = read_input_with_cycle(message, options, effective_default)
+        else:
+            value = read_input_with_placeholder(message, effective_default, password)
 
         if key and self._state is not None and not password:
             self._state.set(key, value)
@@ -621,8 +399,7 @@ class BaseSetupWizard:
         console.print()
         dir_name = os.path.basename(os.path.abspath(output_dir))
         console.print("  [dim]To deploy, run:[/]")
-        console.print(f"    [bold {BLUE}]cd {dir_name}[/]")
-        console.print(f"    [bold {BLUE}]pulumi up[/]")
+        console.print(f"    [bold {BLUE}]pulumi -C {dir_name} up[/]")
         console.print()
 
 
@@ -1029,18 +806,44 @@ class AWSSetupWizard(BaseSetupWizard):
             kms_key_arn=kms_key_arn,
         )
 
+    def _select_aws_profile(self) -> None:
+        import boto3
+
+        if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+            console.print(
+                "  [dim]Using credentials from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY[/]"
+            )
+            return
+
+        available = boto3.Session().available_profiles
+        default = os.environ.get("AWS_PROFILE") or "default"
+        options = [default] + [p for p in available if p != default]
+
+        console.print("  [dim]Tab cycles through configured profiles; Enter to accept[/]")
+        profile = self._prompt("AWS profile", default, key="aws_profile", options=options)
+        console.print()
+
+        if profile:
+            os.environ["AWS_PROFILE"] = profile
+            with contextlib.suppress(Exception):
+                boto3.setup_default_session(profile_name=profile)
+
     def _validate_aws_creds(self) -> bool:
         console.print()
         console.print(f"  {self._step('AWS Credentials')}")
         console.print()
 
+        self._select_aws_profile()
+
         with Status("  [dim]Validating AWS credentials...[/]", console=console, spinner="dots"):
             try:
                 import boto3
 
-                sts = boto3.client("sts")
+                session = boto3.Session()
+                sts = session.client("sts")
                 identity = sts.get_caller_identity()
                 account_id = identity["Account"]
+                profile = session.profile_name or "default"
             except Exception as e:
                 console.print(f"  [red]✗[/] AWS credentials invalid: {e}")
                 console.print()
@@ -1051,7 +854,9 @@ class AWSSetupWizard(BaseSetupWizard):
                 console.print("    [dim]· AWS_PROFILE environment variable[/]")
                 return False
 
-        console.print(f"  [green]✓[/] AWS credentials valid [dim](Account: {account_id})[/]")
+        console.print(
+            f"  [green]✓[/] AWS credentials valid [dim](Account: {account_id}, Profile: {profile})[/]"
+        )
         return True
 
     def _get_region(self) -> str:
@@ -2921,7 +2726,7 @@ def select_cloud() -> str:
     console.print("  [3] Azure")
     console.print()
 
-    cloud = _read_input_with_placeholder("Enter choice (1, 2, or 3)", "1")
+    cloud = read_input_with_placeholder("Enter choice (1, 2, or 3)", "1")
 
     if cloud == "1":
         return "aws"
@@ -3016,7 +2821,6 @@ if __name__ == "__main__":
 
     dev_source = args.dev
     if dev_source == "":
-        # this script lives at <checkout>/setup/wizard.py
         dev_source = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if dev_source and not os.path.isdir(os.path.join(dev_source, "pulumi_pinecone_byoc")):
         console.print(f"  [red]✗[/] --dev: {dev_source} is not a pulumi-pinecone-byoc checkout")
