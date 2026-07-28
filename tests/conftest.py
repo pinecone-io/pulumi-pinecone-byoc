@@ -2,6 +2,7 @@
 
 import os
 import re
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -11,10 +12,14 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup"))
 
 from byovpc_util import (  # noqa: E402
+    FIXTURE_DIR,
     REPO_ROOT,
     log_line,
     log_path,
+    pulumi,
+    pulumi_json,
     set_log_path,
+    stack_name,
 )
 
 
@@ -163,3 +168,48 @@ def pytest_terminal_summary(terminalreporter, exitstatus, config):
         for report in terminalreporter.stats.get(key, []):
             log_line(f"{key.upper()} {report.nodeid}:\n{report.longreprtext}")
     print(f"\nrun log: {log_path()}")
+
+
+@pytest.fixture(scope="module")
+def ec2():
+    boto3 = pytest.importorskip("boto3")
+    return boto3.client("ec2", region_name=os.environ["AWS_REGION"])
+
+
+@pytest.fixture
+def byovpc(request):
+    """Bring the byovpc fixture stack up for one mode and yield its stack outputs."""
+    mode = request.param
+    stack = stack_name(mode)
+    region = os.environ["AWS_REGION"]
+    azs = request.config.getini("byovpc_azs")
+
+    if not (FIXTURE_DIR / "Pulumi.yaml").exists():
+        pytest.skip(f"byovpc fixture not found at {FIXTURE_DIR}")
+
+    pulumi("stack", "select", "--create", stack)
+    pulumi("config", "set", "aws:region", region)
+    # remove the list first: setting azs[0..n] leaves any longer previous list in
+    # place, so a stack configured with more zones would silently keep them
+    subprocess.run(
+        ["pulumi", "config", "rm", "byovpc:azs"],
+        cwd=FIXTURE_DIR,
+        capture_output=True,
+        check=False,
+    )
+    for i, az in enumerate(azs.split(",")):
+        pulumi("config", "set", "--path", f"byovpc:azs[{i}]", az.strip())
+
+    pulumi("install")
+    pulumi("up", "--yes", "--skip-preview")
+    outputs = pulumi_json("stack", "output", "--json")
+    outputs["stack"] = stack
+    try:
+        yield outputs
+    finally:
+        if keep_stacks(request):
+            message = f"leaving byovpc stack {stack} up ({outputs.get('vpc_id')}) - destroy it with: pulumi destroy --yes --cwd {FIXTURE_DIR} --stack {stack}"
+            print(f"\n{message}")
+            log_line(message)
+        else:
+            pulumi("destroy", "--yes", "--skip-preview")

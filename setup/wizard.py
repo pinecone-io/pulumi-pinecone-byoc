@@ -409,12 +409,23 @@ class BaseSetupWizard:
 
 
 class AWSPreflightChecker:
-    def __init__(self, region: str, azs: list[str], cidr: str):
+    def __init__(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
+    ):
         import boto3
 
         self.region = region
         self.azs = azs
         self.cidr = cidr
+        self.vpc_id = vpc_id
+        self.public_subnet_ids = public_subnet_ids or []
+        self.private_subnet_ids = private_subnet_ids or []
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -422,17 +433,32 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        checks = [
-            ("VPC Quota", self._check_vpc_quota),
-            ("Elastic IPs", self._check_eip_quota),
-            ("NAT Gateways", self._check_nat_gateway_quota),
-            ("Internet Gateways", self._check_igw_quota),
-            ("EKS Clusters", self._check_eks_cluster_quota),
-            ("Network Load Balancers", self._check_nlb_quota),
-            ("Availability Zones", self._check_az_availability),
-            ("Instance Types", self._check_instance_types),
-            ("VPC CIDR", self._check_cidr_conflicts),
-        ]
+        if self.vpc_id:
+            # adopt mode: the network already exists, so create-oriented quota and
+            # CIDR-conflict checks don't apply. validate the adopted network instead.
+            checks = [
+                ("VPC Exists", self._check_vpc_exists),
+                ("VPC DNS", self._check_vpc_dns),
+                ("Subnet AZ Coverage", self._check_adopt_az_coverage),
+                ("ELB Subnet Tags", self._check_elb_subnet_tags),
+                ("Subnet Egress", self._check_adopt_egress),
+                ("Availability Zones", self._check_az_availability),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Instance Types", self._check_instance_types),
+            ]
+        else:
+            checks = [
+                ("VPC Quota", self._check_vpc_quota),
+                ("Elastic IPs", self._check_eip_quota),
+                ("NAT Gateways", self._check_nat_gateway_quota),
+                ("Internet Gateways", self._check_igw_quota),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Availability Zones", self._check_az_availability),
+                ("Instance Types", self._check_instance_types),
+                ("VPC CIDR", self._check_cidr_conflicts),
+            ]
 
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
@@ -712,9 +738,191 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
 
+    # --- adopt-mode checks (existing VPC) ------------------------------------
+
+    def _check_vpc_exists(self):
+        try:
+            response = self.ec2.describe_vpcs(VpcIds=[self.vpc_id])
+            if response["Vpcs"]:
+                cidr = response["Vpcs"][0].get("CidrBlock", "?")
+                self._add_result("VPC Exists", True, f"{self.vpc_id} ({cidr})")
+            else:
+                self._add_result("VPC Exists", False, f"{self.vpc_id} not found in {self.region}")
+        except Exception as e:
+            self._add_result(
+                "VPC Exists",
+                False,
+                f"{self.vpc_id} not found in {self.region}",
+                str(e),
+            )
+
+    def _check_vpc_dns(self):
+        # EKS and in-cluster service discovery require DNS support + hostnames on the VPC
+        try:
+            support = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsSupport"
+            )["EnableDnsSupport"]["Value"]
+            hostnames = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsHostnames"
+            )["EnableDnsHostnames"]["Value"]
+
+            missing = []
+            if not support:
+                missing.append("enableDnsSupport")
+            if not hostnames:
+                missing.append("enableDnsHostnames")
+
+            self._add_result(
+                "VPC DNS",
+                not missing,
+                "DNS support and hostnames enabled"
+                if not missing
+                else f"Disabled: {', '.join(missing)}",
+                f"Enable {', '.join(missing)} on {self.vpc_id}" if missing else None,
+            )
+        except Exception as e:
+            self._add_result("VPC DNS", False, "Failed to check", str(e))
+
+    def _check_adopt_egress(self):
+        # each adopted private subnet must have a default route (explicit route table
+        # or the VPC main table) or its EKS nodes have no internet egress.
+        try:
+            if not self.private_subnet_ids:
+                self._add_result("Subnet Egress", True, "no private subnets to check")
+                return
+            response = self.ec2.describe_route_tables(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )
+            explicit: dict[str, list] = {}
+            main_routes: list | None = None
+            for t in response.get("RouteTables", []):
+                routes = t.get("Routes", [])
+                for a in t.get("Associations", []):
+                    if a.get("Main"):
+                        main_routes = routes
+                    if a.get("SubnetId"):
+                        explicit[a["SubnetId"]] = routes
+
+            def has_egress(routes):
+                return routes is not None and any(
+                    r.get("DestinationCidrBlock") == "0.0.0.0/0" and r.get("State") == "active"
+                    for r in routes
+                )
+
+            no_egress = [
+                s for s in self.private_subnet_ids if not has_egress(explicit.get(s, main_routes))
+            ]
+            if no_egress:
+                self._add_result(
+                    "Subnet Egress",
+                    False,
+                    f"No default (0.0.0.0/0) route for: {', '.join(no_egress)}",
+                    "Private subnets need a NAT or Transit Gateway default route for node egress",
+                )
+            else:
+                self._add_result("Subnet Egress", True, "private subnets have egress routes")
+        except Exception as e:
+            self._add_result("Subnet Egress", False, "Failed to check", str(e))
+
+    def _check_adopt_az_coverage(self):
+        try:
+            if not self.private_subnet_ids:
+                self._add_result(
+                    "Subnet AZ Coverage",
+                    False,
+                    "No private subnets selected",
+                    "Select a private subnet in each requested AZ",
+                )
+                return
+
+            selected = self.private_subnet_ids + self.public_subnet_ids
+            response = self.ec2.describe_subnets(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )
+            az_by_id = {s["SubnetId"]: s["AvailabilityZone"] for s in response["Subnets"]}
+
+            not_in_vpc = [s for s in selected if s not in az_by_id]
+            if not_in_vpc:
+                self._add_result(
+                    "Subnet AZ Coverage",
+                    False,
+                    f"Not in {self.vpc_id}: {', '.join(not_in_vpc)}",
+                    "Choose subnets that belong to the adopted VPC",
+                )
+                return
+
+            covered = {az_by_id[s] for s in self.private_subnet_ids}
+            missing = [az for az in self.azs if az not in covered]
+            self._add_result(
+                "Subnet AZ Coverage",
+                not missing,
+                f"private subnets cover {', '.join(sorted(covered))}"
+                if not missing
+                else f"No private subnet in: {', '.join(missing)}",
+                f"Select a private subnet in {', '.join(missing)}" if missing else None,
+            )
+        except Exception as e:
+            self._add_result("Subnet AZ Coverage", False, "Failed to check", str(e))
+
+    def _check_elb_subnet_tags(self):
+        # EKS places load balancers by subnet role tags: public subnets need
+        # kubernetes.io/role/elb, private subnets need internal-elb. Validate the
+        # selected subnets carry the right tag for their role.
+        try:
+            selected = self.private_subnet_ids + self.public_subnet_ids
+            if not selected:
+                self._add_result("ELB Subnet Tags", True, "no adopted subnets to check")
+                return
+
+            response = self.ec2.describe_subnets(SubnetIds=selected)
+            tags_by_id = {
+                s["SubnetId"]: {t["Key"] for t in s.get("Tags", [])} for s in response["Subnets"]
+            }
+            missing_private = [
+                s
+                for s in self.private_subnet_ids
+                if "kubernetes.io/role/internal-elb" not in tags_by_id.get(s, set())
+            ]
+            missing_public = [
+                s
+                for s in self.public_subnet_ids
+                if "kubernetes.io/role/elb" not in tags_by_id.get(s, set())
+            ]
+
+            problems = []
+            fixes = []
+            if missing_private:
+                problems.append(
+                    f"kubernetes.io/role/internal-elb missing on {', '.join(missing_private)}"
+                )
+                fixes.append(self._tag_fix_command(missing_private, "internal-elb"))
+            if missing_public:
+                problems.append(f"kubernetes.io/role/elb missing on {', '.join(missing_public)}")
+                fixes.append(self._tag_fix_command(missing_public, "elb"))
+
+            self._add_result(
+                "ELB Subnet Tags",
+                not problems,
+                "role tags present on selected subnets" if not problems else "; ".join(problems),
+                "\n    ".join(f for f in fixes if f) if problems else None,
+            )
+        except Exception as e:
+            self._add_result("ELB Subnet Tags", False, "Failed to check", str(e))
+
+    def _tag_fix_command(self, subnet_ids: list[str], role: str) -> str | None:
+        if not subnet_ids:
+            return None
+        return (
+            f"aws ec2 create-tags --region {self.region} "
+            f"--resources {' '.join(subnet_ids)} "
+            f"--tags Key=kubernetes.io/role/{role},Value=1"
+        )
+
 
 class AWSSetupWizard(BaseSetupWizard):
-    TOTAL_STEPS = 15
+    # one extra step vs. the base flow for VPC selection; the CIDR step is still
+    # shown in adopt mode (as a derived, non-prompting step) so the total is fixed
+    TOTAL_STEPS = 16
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
@@ -742,15 +950,23 @@ class AWSSetupWizard(BaseSetupWizard):
             return False
 
         region = self._get_region()
-        azs = self._get_azs(region)
+        vpc_id = self._get_vpc(region)
+        cidr = self._get_cidr(vpc_id, region)
+        azs = self._get_azs(region, vpc_id)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
-        cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
         tags = self._get_custom_metadata()
 
-        if not self._run_preflight_checks(region, azs, cidr):
+        if not self._run_preflight_checks(
+            region,
+            azs,
+            cidr,
+            vpc_id,
+            self._adopted_public_ids,
+            self._adopted_private_ids,
+        ):
             return False
 
         project_name = self._get_project_name()
@@ -770,6 +986,9 @@ class AWSSetupWizard(BaseSetupWizard):
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            vpc_id=vpc_id,
+            public_subnet_ids=self._adopted_public_ids,
+            private_subnet_ids=self._adopted_private_ids,
         )
 
     def _run_headless(self, output_dir: str) -> bool:
@@ -791,6 +1010,17 @@ class AWSSetupWizard(BaseSetupWizard):
         project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
         custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
         kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
+        vpc_id = os.environ.get("PINECONE_EXISTING_VPC_ID", "") or None
+        public_subnet_ids = [
+            s.strip()
+            for s in os.environ.get("PINECONE_PUBLIC_SUBNET_IDS", "").split(",")
+            if s.strip()
+        ]
+        private_subnet_ids = [
+            s.strip()
+            for s in os.environ.get("PINECONE_PRIVATE_SUBNET_IDS", "").split(",")
+            if s.strip()
+        ]
 
         return self._generate_project(
             output_dir,
@@ -804,6 +1034,9 @@ class AWSSetupWizard(BaseSetupWizard):
             {},
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            vpc_id=vpc_id,
+            public_subnet_ids=public_subnet_ids,
+            private_subnet_ids=private_subnet_ids,
         )
 
     def _select_aws_profile(self) -> None:
@@ -865,6 +1098,72 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
         return self._prompt("Enter AWS region", "us-east-1", key="region")
 
+    def _fetch_vpcs(self, region: str) -> list[tuple[str, str, str]]:
+        """Return (vpc_id, name_tag, cidr_block) for every VPC in the region."""
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_vpcs()
+            vpcs = []
+            for vpc in response["Vpcs"]:
+                name = next((t["Value"] for t in vpc.get("Tags", []) if t["Key"] == "Name"), "")
+                vpcs.append((vpc["VpcId"], name, vpc.get("CidrBlock", "")))
+            return vpcs
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch VPCs from AWS: {e}")
+            return []
+
+    def _fetch_vpc_cidrs(self, region: str, vpc_id: str) -> list[str]:
+        """All CIDR blocks associated with the VPC (primary first). A VPC can carry
+        secondary associations, and adopted subnets may live in any of them."""
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_vpcs(VpcIds=[vpc_id])
+            if not response["Vpcs"]:
+                return []
+            vpc = response["Vpcs"][0]
+            associated = [
+                a["CidrBlock"]
+                for a in vpc.get("CidrBlockAssociationSet", [])
+                if a.get("CidrBlockState", {}).get("State") == "associated"
+            ]
+            primary = vpc.get("CidrBlock")
+            if primary:
+                associated = [primary] + [c for c in associated if c != primary]
+            return associated
+        except Exception:
+            return []
+
+    def _get_vpc(self, region: str) -> str | None:
+        """Prompt for an existing VPC to adopt; blank means create a new one."""
+        console.print()
+        console.print(f"  {self._step('VPC')}")
+        console.print("  [dim]Adopt an existing VPC, or leave blank to create a new one[/]")
+        console.print()
+
+        with Status("  [dim]Fetching VPCs...[/]", console=console, spinner="dots"):
+            vpcs = self._fetch_vpcs(region)
+
+        if vpcs:
+            console.print(f"  [dim]Existing VPCs in {region}:[/]")
+            for vid, name, cidr in vpcs:
+                console.print(f"    [dim]{vid}   {name or '-'}   {cidr}[/]")
+            console.print(
+                "  [dim]Tab cycles through VPC IDs; Enter on a blank line creates a new one[/]"
+            )
+            console.print()
+
+        prompt = "Enter VPC ID (or press Enter to create a new one)"
+        if vpcs:
+            vpc_id = read_input_with_cycle(prompt, [vid for vid, _, _ in vpcs]).strip()
+        else:
+            vpc_id = self._prompt(prompt, "").strip()
+
+        return vpc_id or None
+
     def _fetch_azs(self, region: str) -> list[str]:
         import boto3
 
@@ -878,21 +1177,109 @@ class AWSSetupWizard(BaseSetupWizard):
             console.print(f"  [yellow]⚠[/] Could not fetch AZs from AWS: {e}")
             return [f"{region}a", f"{region}b", f"{region}c"]
 
-    def _get_azs(self, region: str) -> list[str]:
+    def _fetch_subnets_for_vpc(self, region: str, vpc_id: str) -> list[tuple[str, str, str, str]]:
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch subnets for {vpc_id}: {e}")
+            return []
+        subnets = []
+        for s in response["Subnets"]:
+            name = next((t["Value"] for t in s.get("Tags", []) if t["Key"] == "Name"), "")
+            subnets.append((s["SubnetId"], s["AvailabilityZone"], s.get("CidrBlock", ""), name))
+        return subnets
+
+    def _get_azs(self, region: str, vpc_id: str | None = None) -> list[str]:
         console.print()
         console.print(f"  {self._step('Availability Zones')}")
         console.print()
 
+        self._adopted_public_ids = []
+        self._adopted_private_ids = []
+
+        if vpc_id:
+            with Status("  [dim]Fetching subnets for VPC...[/]", console=console, spinner="dots"):
+                subnets = self._fetch_subnets_for_vpc(region, vpc_id)
+            by_az: dict[str, list[tuple[str, str, str]]] = {}
+            for sid, az, cidr, name in subnets:
+                by_az.setdefault(az, []).append((sid, cidr, name))
+            available = sorted(by_az)
+            if available:
+                console.print(f"  [dim]AZs covered by {vpc_id}:[/] {', '.join(available)}")
+            else:
+                console.print(f"  [yellow]⚠[/] No subnets found in {vpc_id}")
+
+            azs_input = self._prompt(
+                "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
+            )
+            azs = [az.strip() for az in azs_input.split(",") if az.strip()]
+            self._adopted_public_ids, self._adopted_private_ids = self._select_subnets(azs, by_az)
+            return azs
+
         with Status("  [dim]Fetching availability zones...[/]", console=console, spinner="dots"):
             available = self._fetch_azs(region)
-
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         azs_input = self._prompt(
             "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
         )
-        azs = [az.strip() for az in azs_input.split(",")]
+        azs = [az.strip() for az in azs_input.split(",") if az.strip()]
         return azs
+
+    def _select_subnets(
+        self, azs: list[str], by_az: dict[str, list[tuple[str, str, str]]]
+    ) -> tuple[list[str], list[str]]:
+        console.print()
+        console.print(
+            "  [dim]Select a private subnet per AZ (required); public is optional "
+            "(Enter to skip). Tab cycles the AZ's subnets.[/]"
+        )
+        public_ids: list[str] = []
+        private_ids: list[str] = []
+        for az in azs:
+            az_subnets = by_az.get(az, [])
+            console.print()
+            console.print(f"  [dim]{az}:[/]")
+            for sid, cidr, name in az_subnets:
+                console.print(f"    [dim]{sid}   {name or '-'}   {cidr}[/]")
+            ids = [s[0] for s in az_subnets]
+            priv = self._prompt(
+                f"Private subnet in {az}",
+                ids[0] if ids else "",
+                key=f"private_subnet_{az}",
+                options=ids,
+            ).strip()
+            if priv:
+                private_ids.append(priv)
+            pub = self._prompt(
+                f"Public subnet in {az} (Enter to skip)",
+                "",
+                key=f"public_subnet_{az}",
+                options=ids,
+            ).strip()
+            if pub:
+                public_ids.append(pub)
+        return public_ids, private_ids
+
+    def _get_cidr(self, vpc_id: str | None = None, region: str | None = None) -> str:
+        console.print()
+        console.print(f"  {self._step('VPC CIDR Block')}")
+        if vpc_id:
+            with Status("  [dim]Reading VPC CIDR...[/]", console=console, spinner="dots"):
+                cidrs = self._fetch_vpc_cidrs(region, vpc_id)
+            default = cidrs[0] if cidrs else self.DEFAULT_CIDR
+            console.print(
+                "  [dim]Suggested from the adopted VPC; Enter to accept, "
+                "Tab to cycle its CIDRs, or type a custom range[/]"
+            )
+            console.print()
+            return self._prompt("VPC CIDR", default, key="cidr", options=cidrs) or default
+        console.print(f"  [dim]{self.CIDR_DESC}[/]")
+        console.print()
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="cidr")
 
     def _get_custom_ami_id(self) -> str | None:
         console.print()
@@ -917,12 +1304,22 @@ class AWSSetupWizard(BaseSetupWizard):
         arn = self._prompt("Enter KMS key ARN (or press Enter to skip)", "", key="kms_key_arn")
         return arn or None
 
-    def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
+    def _run_preflight_checks(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
+    ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AWSPreflightChecker(region, azs, cidr)
+        checker = AWSPreflightChecker(
+            region, azs, cidr, vpc_id, public_subnet_ids, private_subnet_ids
+        )
         if not checker.run_checks():
             console.print()
             console.print(
@@ -945,6 +1342,9 @@ class AWSSetupWizard(BaseSetupWizard):
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
+        vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
     ):
         console.print()
 
@@ -1004,6 +1404,16 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
+        # adopt mode: pass the existing VPC id and subnet ids so the component adopts
+        if vpc_id:
+            main_py = main_py.replace(
+                '        vpc_cidr=config.get("vpc-cidr"),\n',
+                '        vpc_cidr=config.get("vpc-cidr"),\n'
+                '        existing_vpc_id=config.get("existing-vpc-id"),\n'
+                '        public_subnet_ids=config.get_object("public-subnet-ids"),\n'
+                '        private_subnet_ids=config.get_object("private-subnet-ids"),\n',
+            )
+
         main_py_path = os.path.join(output_dir, "__main__.py")
         with open(main_py_path, "w") as f:
             f.write(main_py)
@@ -1026,6 +1436,18 @@ if config.get_bool("public-access-enabled") is False:
 """
         for az in azs:
             config_content += f"    - {az}\n"
+
+        # add existing VPC id and subnet ids if adopting an externally-managed network
+        if vpc_id:
+            config_content += f"  {project_name}:existing-vpc-id: {vpc_id}\n"
+            if private_subnet_ids:
+                config_content += f"  {project_name}:private-subnet-ids:\n"
+                for sid in private_subnet_ids:
+                    config_content += f"    - {sid}\n"
+            if public_subnet_ids:
+                config_content += f"  {project_name}:public-subnet-ids:\n"
+                for sid in public_subnet_ids:
+                    config_content += f"    - {sid}\n"
 
         # add custom AMI ID if provided
         if custom_ami_id:

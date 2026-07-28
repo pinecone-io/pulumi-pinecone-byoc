@@ -61,6 +61,9 @@ class PineconeAWSClusterArgs:
 
     # networking
     vpc_cidr: str = "10.0.0.0/16"
+    existing_vpc_id: str | None = None
+    public_subnet_ids: list[str] | None = None
+    private_subnet_ids: list[str] | None = None
 
     # kubernetes
     kubernetes_version: str = "1.33"
@@ -559,6 +562,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cloud="aws",
             availability_zones=args.availability_zones,
             vpc_cidr=args.vpc_cidr,
+            existing_vpc_id=args.existing_vpc_id,
+            public_subnet_ids=args.public_subnet_ids,
+            private_subnet_ids=args.private_subnet_ids,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,

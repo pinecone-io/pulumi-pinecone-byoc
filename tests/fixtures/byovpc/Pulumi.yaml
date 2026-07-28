@@ -1,0 +1,7 @@
+name: byovpc
+runtime:
+  name: python
+  options:
+    virtualenv: .venv
+    toolchain: uv
+description: Stand-in customer-managed AWS VPC for exercising BYO-VPC modes. See README.md.

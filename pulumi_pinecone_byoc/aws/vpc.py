@@ -36,6 +36,55 @@ class VPC(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
         self.config = config
+
+        if config.existing_vpc_id:
+            self._adopt(config)
+        else:
+            self._create(name, config)
+
+    def _adopt(self, config: AWSConfig) -> None:
+        vpc_id = config.existing_vpc_id
+
+        vpc = aws.ec2.get_vpc(id=vpc_id)
+
+        private_ids = config.private_subnet_ids or []
+        public_ids = config.public_subnet_ids or []
+        if not private_ids:
+            raise ValueError(
+                f"Adopt mode for VPC {vpc_id} requires private_subnet_ids "
+                "(one private subnet per availability zone)."
+            )
+
+        self._verify_subnets_in_vpc(vpc_id, private_ids)
+        if public_ids:
+            self._verify_subnets_in_vpc(vpc_id, public_ids)
+
+        self._vpc_id = vpc_id
+        self._public_subnet_ids = public_ids
+        self._private_subnet_ids = private_ids
+        self._vpc_cidr_blocks = [a.cidr_block for a in vpc.cidr_block_associations]
+
+        self.register_outputs(
+            {
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
+            }
+        )
+
+    @staticmethod
+    def _verify_subnets_in_vpc(vpc_id: str, subnet_ids: list[str]) -> None:
+        result = aws.ec2.get_subnets(
+            filters=[
+                {"name": "vpc-id", "values": [vpc_id]},
+                {"name": "subnet-id", "values": subnet_ids},
+            ]
+        )
+        missing = [s for s in subnet_ids if s not in set(result.ids)]
+        if missing:
+            raise ValueError(f"Subnet(s) {', '.join(missing)} were not found in VPC {vpc_id}.")
+
+    def _create(self, name: str, config: AWSConfig) -> None:
         self._validate_cidr(config.vpc_cidr)
         if len(config.availability_zones) > 3:
             raise ValueError(
@@ -115,11 +164,16 @@ class VPC(pulumi.ComponentResource):
 
         self._create_route_tables(name, child_opts)
 
+        self._vpc_id = self.vpc.id
+        self._public_subnet_ids = [s.id for s in self.public_subnets]
+        self._private_subnet_ids = [s.id for s in self.private_subnets]
+        self._vpc_cidr_blocks = [self.vpc.cidr_block]
+
         self.register_outputs(
             {
-                "vpc_id": self.vpc.id,
-                "public_subnet_ids": [s.id for s in self.public_subnets],
-                "private_subnet_ids": [s.id for s in self.private_subnets],
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
             }
         )
 
@@ -221,13 +275,17 @@ class VPC(pulumi.ComponentResource):
         )
 
     @property
-    def vpc_id(self) -> pulumi.Output[str]:
-        return self.vpc.id
+    def vpc_id(self) -> pulumi.Input[str]:
+        return self._vpc_id
 
     @property
-    def public_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.public_subnets]
+    def public_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._public_subnet_ids
 
     @property
-    def private_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.private_subnets]
+    def private_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._private_subnet_ids
+
+    @property
+    def vpc_cidr_blocks(self) -> list[pulumi.Input[str]]:
+        return self._vpc_cidr_blocks
