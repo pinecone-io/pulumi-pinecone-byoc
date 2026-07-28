@@ -155,11 +155,14 @@ cd "$project_dir"
 echo ""
 echo "Downloading setup wizard..."
 
-# copy wizard file from local repo or curl from GitHub
+# copy wizard files from local repo or curl from GitHub
+# (wizard.py imports helper modules that must sit alongside it)
 if [ -n "$SCRIPT_DIR" ] && [ -f "$SCRIPT_DIR/setup/wizard.py" ]; then
     cp "$SCRIPT_DIR/setup/wizard.py" wizard.py
+    cp "$SCRIPT_DIR/setup/autocomplete.py" autocomplete.py
 else
     curl -fsSL "${REPO_BASE}/setup/wizard.py" -o wizard.py
+    curl -fsSL "${REPO_BASE}/setup/autocomplete.py" -o autocomplete.py
 fi
 
 # create a temp pyproject.toml for the setup wizard dependencies
@@ -199,5 +202,5 @@ else
     uv run python wizard.py
 fi
 
-# cleanup wizard setup file (keep .venv, pyproject.toml, uv.lock created by wizard)
-rm -f wizard.py
+# cleanup wizard setup files (keep .venv, pyproject.toml, uv.lock created by wizard)
+rm -f wizard.py autocomplete.py
