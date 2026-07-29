@@ -201,6 +201,25 @@ class BaseSetupWizard:
             self._state.clear()
         self._state.set("cloud", self.CLOUD_NAME)
 
+    CONTROL_PLANE_ENV = {
+        "global-env": "PINECONE_GLOBAL_ENV",
+        "api-url": "PINECONE_API_URL",
+        "auth0-domain": "PINECONE_AUTH0_DOMAIN",
+        "gcp-project": "PINECONE_GCP_PROJECT",
+    }
+
+    def _control_plane_overrides(self) -> dict[str, str]:
+        """Non-default control plane settings, for internal (non-prod) deployments.
+
+        Headless only: a customer deploy always targets production, whose values are
+        the component defaults.
+        """
+        return {
+            key: os.environ[env]
+            for key, env in self.CONTROL_PLANE_ENV.items()
+            if os.environ.get(env)
+        }
+
     def _write_pyproject(self, output_dir: str, cloud: str, dev_source: str | None) -> None:
         pyproject_content = (
             "[project]\n"
@@ -1127,6 +1146,7 @@ class AWSSetupWizard(BaseSetupWizard):
             for s in os.environ.get("PINECONE_PRIVATE_SUBNET_IDS", "").split(",")
             if s.strip()
         ]
+        control_plane = self._control_plane_overrides()
 
         return self._generate_project(
             output_dir,
@@ -1143,6 +1163,7 @@ class AWSSetupWizard(BaseSetupWizard):
             vpc_id=vpc_id,
             public_subnet_ids=public_subnet_ids,
             private_subnet_ids=private_subnet_ids,
+            control_plane=control_plane,
         )
 
     def _select_aws_profile(self) -> None:
@@ -1476,6 +1497,7 @@ class AWSSetupWizard(BaseSetupWizard):
         vpc_id: str | None = None,
         public_subnet_ids: list[str] | None = None,
         private_subnet_ids: list[str] | None = None,
+        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -1535,6 +1557,18 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
+        # non-production control plane (internal CI): the component defaults to prod,
+        # so only the overrides that were given are wired through
+        if control_plane:
+            main_py = main_py.replace(
+                '        tags=config.get_object("tags"),\n',
+                '        tags=config.get_object("tags"),\n'
+                + "".join(
+                    f'        {key.replace("-", "_")}=config.require("{key}"),\n'
+                    for key in control_plane
+                ),
+            )
+
         # adopt mode: pass the existing VPC id and subnet ids so the component adopts
         if vpc_id:
             main_py = main_py.replace(
@@ -1567,6 +1601,9 @@ if config.get_bool("public-access-enabled") is False:
 """
         for az in azs:
             config_content += f"    - {az}\n"
+
+        for key, value in (control_plane or {}).items():
+            config_content += f"  {project_name}:{key}: {value}\n"
 
         # add existing VPC id and subnet ids if adopting an externally-managed network
         if vpc_id:
