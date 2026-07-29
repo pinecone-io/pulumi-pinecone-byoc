@@ -1588,7 +1588,7 @@ class GCPPreflightChecker:
                 "VPC CIDR",
                 False,
                 f"Invalid CIDR: {self.cidr}",
-                "Enter a valid CIDR block (e.g., 10.112.0.0/12)",
+                "Enter a valid CIDR block (e.g., 10.112.0.0/16)",
             )
             return
 
@@ -1643,7 +1643,7 @@ class GCPPreflightChecker:
 class GCPSetupWizard(BaseSetupWizard):
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
-    DEFAULT_CIDR = "10.112.0.0/12"
+    DEFAULT_CIDR = "10.112.0.0/16"
     DELETION_PROTECTION_DESC = "Protect AlloyDB databases and GCS buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Private Service Connect (more secure)"
     METADATA_NAME = "labels"
@@ -1914,7 +1914,7 @@ cluster = PineconeGCPCluster(
         project=gcp_config.require("project"),
         region=config.require("region"),
         availability_zones=config.require_object("availability-zones"),
-        vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/12",
+        vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/16",
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         labels=config.get_object("labels") or {},
