@@ -21,6 +21,7 @@ from pulumi.dynamic import (
 )
 
 from .api import (
+    PineconeApiError,
     PineconeApiInternalError,
     create_amp_access,
     create_api_key,
@@ -615,14 +616,22 @@ class DatadogApiKeyProvider(ResourceProvider):
         # skip delete if we don't have the required props (state corruption)
         if not all([_props.get("key_id"), _props.get("api_url"), _props.get("cpgw_api_key")]):
             return
-        asyncio.run(
-            asyncio.to_thread(
-                delete_datadog_api_key,
-                key_id=_props["key_id"],
-                api_url=_props["api_url"],
-                cpgw_api_key=_props["cpgw_api_key"],
+        try:
+            asyncio.run(
+                asyncio.to_thread(
+                    delete_datadog_api_key,
+                    key_id=_props["key_id"],
+                    api_url=_props["api_url"],
+                    cpgw_api_key=_props["cpgw_api_key"],
+                )
             )
-        )
+        except (PineconeApiError, PineconeApiInternalError) as e:
+            code = e.code if isinstance(e, PineconeApiError) else None
+            if code != 404 and "status code 404" not in str(e):
+                raise
+            pulumi.log.warn(
+                f"datadog api key {_props['key_id']} was already deleted, treating destroy as done"
+            )
 
 
 class DatadogApiKey(Resource):
