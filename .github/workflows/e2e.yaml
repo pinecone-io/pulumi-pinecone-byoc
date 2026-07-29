@@ -48,7 +48,16 @@ jobs:
   aws:
     needs: changes
     if: needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      # one AWS account and one Pinecone org, and the vanilla shape identifies its
+      # cluster as the one that appeared since it started -- so never in parallel
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        shape: [vanilla, private, carve]
     uses: ./.github/workflows/aws.yaml
+    with:
+      shape: ${{ matrix.shape }}
     secrets: inherit
 
   gcp:
