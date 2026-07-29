@@ -22,6 +22,7 @@ import pytest
 from byovpc_util import (
     REPO_ROOT,
     delete_project_indexes,
+    destroy_stack,
     log_line,
     pulumi,
     run,
@@ -90,7 +91,7 @@ def vanilla_project(request):
                 log_line(message)
             else:
                 delete_project_indexes(project_dir)
-                pulumi("destroy", "--yes", "--skip-preview", cwd=project_dir)
+                destroy_stack(project_dir)
         finally:
             stop_streaming.set()
             streamer.join(timeout=10)

@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup"))
 from byovpc_util import (  # noqa: E402
     FIXTURE_DIR,
     REPO_ROOT,
+    destroy_stack,
     log_line,
     log_path,
     pulumi,
@@ -21,6 +22,23 @@ from byovpc_util import (  # noqa: E402
     set_log_path,
     stack_name,
 )
+
+AMBIENT_AWS_CREDENTIALS = (
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+)
+
+
+def aws_region(config):
+    """Region for this run: the environment wins over pytest.ini, so one workflow
+    can drive whatever region it authenticated against."""
+    return os.environ.get("AWS_REGION") or config.getini("aws_region")
+
+
+def byovpc_azs(config):
+    return os.environ.get("PINECONE_AZS") or config.getini("byovpc_azs")
 
 
 def pytest_addoption(parser):
@@ -72,14 +90,18 @@ def pytest_configure(config):
         started = datetime.now().strftime("%Y%m%d-%H%M%S")
         set_log_path(REPO_ROOT / ".byovpc-logs" / f"{started}-{selection}-{os.getpid()}.log")
 
-    os.environ.setdefault("AWS_PROFILE", config.getini("aws_profile"))
-    region = config.getini("aws_region")
-    os.environ.setdefault("AWS_REGION", region)
-    os.environ.setdefault("AWS_DEFAULT_REGION", region)
+    # a profile would shadow credentials the environment already carries, which is
+    # how CI authenticates (OIDC web identity or a static key pair)
+    if not any(os.environ.get(v) for v in AMBIENT_AWS_CREDENTIALS):
+        os.environ.setdefault("AWS_PROFILE", config.getini("aws_profile"))
+    region = aws_region(config)
+    os.environ["AWS_REGION"] = region
+    os.environ["AWS_DEFAULT_REGION"] = region
     log_line()
     log_line(
         f"=== session start: -m {config.option.markexpr!r} -k {config.option.keyword!r} "
-        f"profile={os.environ['AWS_PROFILE']} region={region}"
+        f"profile={os.environ.get('AWS_PROFILE', '<ambient credentials>')} region={region} "
+        f"azs={byovpc_azs(config)}"
     )
 
 
@@ -182,7 +204,7 @@ def byovpc(request):
     mode = request.param
     stack = stack_name(mode)
     region = os.environ["AWS_REGION"]
-    azs = request.config.getini("byovpc_azs")
+    azs = byovpc_azs(request.config)
 
     if not (FIXTURE_DIR / "Pulumi.yaml").exists():
         pytest.skip(f"byovpc fixture not found at {FIXTURE_DIR}")
@@ -212,4 +234,4 @@ def byovpc(request):
             print(f"\n{message}")
             log_line(message)
         else:
-            pulumi("destroy", "--yes", "--skip-preview")
+            destroy_stack(FIXTURE_DIR, stack)

@@ -26,6 +26,7 @@ import pytest
 from byovpc_util import (
     REPO_ROOT,
     delete_project_indexes,
+    destroy_stack,
     log_line,
     parse_wizard_env,
     pulumi,
@@ -99,7 +100,7 @@ def byoc_project(request, byovpc):
                 # a failed install leaves an SLI index behind, and the project
                 # cannot be deleted while indexes exist (412), so clear them first
                 delete_project_indexes(project_dir)
-                pulumi("destroy", "--yes", "--skip-preview", cwd=project_dir)
+                destroy_stack(project_dir)
         finally:
             stop_streaming.set()
             streamer.join(timeout=10)

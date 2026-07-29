@@ -81,6 +81,25 @@ def pulumi(*args, cwd=FIXTURE_DIR, env=None):
     return run("pulumi", *args, cwd=cwd, env=env)
 
 
+def pulumi_release(*args, cwd=FIXTURE_DIR):
+    """Best-effort pulumi call for teardown steps that must not fail a run:
+    cancelling a stale lock, removing an already-destroyed stack."""
+    result = subprocess.run(["pulumi", *args], cwd=cwd, text=True, capture_output=True, check=False)
+    log_line(f"$ pulumi {' '.join(args)} -> exit {result.returncode}")
+    return result.returncode == 0
+
+
+def destroy_stack(cwd, stack=None):
+    """Destroy and then remove a stack, the way the CI workflow does: a run that was
+    killed mid-update leaves a lock behind, and a leftover stack name blocks reuse."""
+    scoped = (["--stack", stack] if stack else []) + ["--yes"]
+    pulumi_release("cancel", *scoped, cwd=cwd)
+    pulumi("destroy", "--yes", "--skip-preview", *(["--stack", stack] if stack else []), cwd=cwd)
+    pulumi_release(
+        "stack", "rm", *(["--stack", stack] if stack else []), "--yes", "--force", cwd=cwd
+    )
+
+
 def pulumi_json(*args, cwd=FIXTURE_DIR):
     result = subprocess.run(["pulumi", *args], cwd=cwd, text=True, capture_output=True, check=False)
     if result.returncode != 0:
@@ -92,8 +111,10 @@ def pulumi_json(*args, cwd=FIXTURE_DIR):
 
 
 def stack_name(*parts):
-    user = os.environ.get("USER") or getpass.getuser()
-    return "-".join([user, *parts])
+    """Stack names are per-developer by default; CI sets BYOVPC_STACK_PREFIX so
+    concurrent pull requests never share a stack."""
+    prefix = os.environ.get("BYOVPC_STACK_PREFIX") or os.environ.get("USER") or getpass.getuser()
+    return "-".join([prefix, *parts])
 
 
 def tags(resource):
