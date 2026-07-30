@@ -232,8 +232,8 @@ class RDS(pulumi.ComponentResource):
                     protocol="tcp",
                     from_port=5432,
                     to_port=5432,
-                    cidr_blocks=[config.vpc_cidr],
-                    description="PostgreSQL from VPC",
+                    cidr_blocks=vpc.private_subnet_cidrs,
+                    description="PostgreSQL from the private subnets",
                 ),
             ],
             egress=[

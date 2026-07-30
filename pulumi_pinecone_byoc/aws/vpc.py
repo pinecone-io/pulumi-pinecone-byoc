@@ -231,3 +231,10 @@ class VPC(pulumi.ComponentResource):
     @property
     def private_subnet_ids(self) -> list[pulumi.Output[str]]:
         return [s.id for s in self.private_subnets]
+
+    @property
+    def private_subnet_cidrs(self) -> list[str]:
+        return [
+            self._calculate_cidr(i, is_public=False)
+            for i in range(len(self.config.availability_zones))
+        ]
