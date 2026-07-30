@@ -229,6 +229,7 @@ class K8sAddons(pulumi.ComponentResource):
         eks: EKS,
         vpc_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
+        hosted_zone_id: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sAddons", name, None, opts)
@@ -276,6 +277,7 @@ class K8sAddons(pulumi.ComponentResource):
             name,
             eks.oidc_provider_arn,
             eks.oidc_provider_url,
+            hosted_zone_id,
             child_opts,
         )
 
@@ -559,6 +561,7 @@ class K8sAddons(pulumi.ComponentResource):
         name: str,
         oidc_arn: pulumi.Output[str],
         oidc_url: pulumi.Output[str],
+        hosted_zone_id: pulumi.Input[str],
         opts: pulumi.ResourceOptions,
     ) -> aws.iam.Role:
         trust_policy = pulumi.Output.all(oidc_arn, oidc_url).apply(
@@ -594,33 +597,36 @@ class K8sAddons(pulumi.ComponentResource):
             opts=opts,
         )
 
-        policy = {
-            "Version": "2012-10-17",
-            "Statement": [
+        def build_policy(zone_id: str) -> str:
+            return json.dumps(
                 {
-                    "Effect": "Allow",
-                    "Action": [
-                        "route53:ChangeResourceRecordSets",
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "route53:ChangeResourceRecordSets",
+                            ],
+                            "Resource": f"arn:aws:route53:::hostedzone/{zone_id}",
+                        },
+                        {
+                            "Effect": "Allow",
+                            "Action": [
+                                "route53:ListHostedZones",
+                                "route53:ListHostedZonesByName",
+                                "route53:ListResourceRecordSets",
+                                "route53:GetChange",
+                            ],
+                            "Resource": "*",
+                        },
                     ],
-                    "Resource": "arn:aws:route53:::hostedzone/*",
-                },
-                {
-                    "Effect": "Allow",
-                    "Action": [
-                        "route53:ListHostedZones",
-                        "route53:ListHostedZonesByName",
-                        "route53:ListResourceRecordSets",
-                        "route53:GetChange",
-                    ],
-                    "Resource": "*",
-                },
-            ],
-        }
+                }
+            )
 
         aws.iam.RolePolicy(
             f"{name}-external-dns-policy",
             role=role.name,
-            policy=json.dumps(policy),
+            policy=pulumi.Output.from_input(hosted_zone_id).apply(build_policy),
             opts=opts,
         )
 

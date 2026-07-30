@@ -273,7 +273,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             self._eks,
             self._vpc.vpc_id,
             cell_name=self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks]),
+            hosted_zone_id=self._dns.zone_id,
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks, self._dns]),
         )
 
         self._amp_access = AmpAccess(
