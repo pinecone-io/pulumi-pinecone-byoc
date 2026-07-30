@@ -6,4 +6,5 @@ pinecone-byoc/
 .venv/
 *.log
 .e2e-logs/
+tests/fixtures/byovpc/Pulumi.*-*.yaml
 .e2e/

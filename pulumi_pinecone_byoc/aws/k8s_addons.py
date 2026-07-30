@@ -227,7 +227,7 @@ class K8sAddons(pulumi.ComponentResource):
         name: str,
         config: AWSConfig,
         eks: EKS,
-        vpc_id: pulumi.Output[str],
+        vpc_id: pulumi.Input[str],
         cell_name: pulumi.Input[str],
         hosted_zone_id: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
@@ -412,7 +412,7 @@ class K8sAddons(pulumi.ComponentResource):
         name: str,
         k8s_provider: pulumi.ProviderResource,
         cluster_name: pulumi.Output[str],
-        vpc_id: pulumi.Output[str],
+        vpc_id: pulumi.Input[str],
         role_arn: pulumi.Output[str],
         opts: pulumi.ResourceOptions,
     ) -> Release:

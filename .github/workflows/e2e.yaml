@@ -1,8 +1,23 @@
+# A pull request that touches AWS runs, cheapest first: a targeted apply of the
+# carved network, a targeted apply of the vanilla network - a separate copy of the
+# subnet code, so it needs exercising of its own - and then the one full deploy,
+# into a stand-in customer VPC, which is the only thing that proves egress,
+# install and ingress work in an adopted network.
 name: E2E
 
 on:
   pull_request:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: network applies only the VPC component; e2e deploys a cluster
+        type: choice
+        options: [e2e, network]
+        default: e2e
+      shapes:
+        description: 'JSON list of AWS shapes to run, e.g. ["carve","vanilla"]'
+        type: string
+        default: '["carve"]'
 
 concurrency:
   group: byoc-e2e
@@ -19,7 +34,27 @@ jobs:
       aws: ${{ steps.filter.outputs.aws }}
       gcp: ${{ steps.filter.outputs.gcp }}
       azure: ${{ steps.filter.outputs.azure }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
     steps:
+      - name: Pick the AWS runs
+        id: matrix
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = workflow_dispatch ]; then
+            matrix=$(jq -cn --argjson shapes "$SHAPES" --arg tier "$TIER" \
+              '{include: [$shapes[] | {shape: ., tier: $tier}]}')
+          else
+            matrix='{"include":[
+              {"shape":"carve","tier":"network"},
+              {"shape":"vanilla","tier":"network"},
+              {"shape":"carve","tier":"e2e"}
+            ]}'
+          fi
+          echo "matrix=$(echo "$matrix" | jq -c .)" >> "$GITHUB_OUTPUT"
+          echo "$matrix" | jq .
+        env:
+          SHAPES: ${{ inputs.shapes }}
+          TIER: ${{ inputs.tier }}
+
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
         id: filter
@@ -51,7 +86,16 @@ jobs:
   aws:
     needs: changes
     if: needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      # one at a time, cheapest first, and the full deploy does not start if a
+      # targeted apply already failed
+      max-parallel: 1
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     uses: ./.github/workflows/aws.yaml
+    with:
+      shape: ${{ matrix.shape }}
+      tier: ${{ matrix.tier }}
     secrets: inherit
 
   gcp:

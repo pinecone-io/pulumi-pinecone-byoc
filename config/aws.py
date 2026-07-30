@@ -59,6 +59,13 @@ class AWSConfig(BaseConfig):
     public_subnet_mask: int = 20
     private_subnet_mask: int = 18
 
+    existing_vpc_id: str | None = None
+
+    # route table to associate each carved subnet with, keyed by availability zone.
+    # Unset means the subnets carry no association and inherit the VPC main route
+    # table, which only carries egress in landing zones that put it there.
+    existing_route_table_ids: dict[str, str] | None = None
+
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 

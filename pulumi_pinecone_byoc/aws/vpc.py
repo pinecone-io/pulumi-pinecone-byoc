@@ -36,6 +36,89 @@ class VPC(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
         self.config = config
+
+        if config.existing_vpc_id:
+            self._adopt_and_create_subnets(name, config)
+        else:
+            self._create(name, config)
+
+    def _adopt_and_create_subnets(self, name: str, config: AWSConfig) -> None:
+        vpc_id = config.existing_vpc_id
+        if not vpc_id:
+            raise ValueError("Carve mode requires existing_vpc_id.")
+
+        vpc = aws.ec2.get_vpc(id=vpc_id)
+        self._validate_cidr(config.vpc_cidr)
+        if len(config.availability_zones) > 3:
+            raise ValueError(
+                f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
+                "Subnet layout does not fit more than 3 AZs in a /16."
+            )
+
+        child_opts = pulumi.ResourceOptions(parent=self)
+
+        carve = ipaddress.IPv4Network(config.vpc_cidr)
+        covered = any(
+            carve.subnet_of(ipaddress.IPv4Network(a.cidr_block))
+            for a in vpc.cidr_block_associations
+        )
+        subnet_deps: list[pulumi.Resource] = []
+        if not covered:
+            self.cidr_association = aws.ec2.VpcIpv4CidrBlockAssociation(
+                f"{name}-cidr",
+                vpc_id=vpc_id,
+                cidr_block=config.vpc_cidr,
+                opts=child_opts,
+            )
+            subnet_deps = [self.cidr_association]
+
+        route_tables = config.existing_route_table_ids or {}
+        missing = [az for az in config.availability_zones if az not in route_tables]
+        if route_tables and missing:
+            raise ValueError(
+                f"existing_route_table_ids is missing a route table for {', '.join(missing)}. "
+                "Give one per availability zone, or none at all to inherit the VPC main "
+                "route table."
+            )
+
+        self.private_subnets: list[aws.ec2.Subnet] = []
+        for i, az in enumerate(config.availability_zones):
+            private_subnet = aws.ec2.Subnet(
+                f"{name}-private-{az}",
+                vpc_id=vpc_id,
+                cidr_block=self._calculate_cidr(i, is_public=False),
+                availability_zone=az,
+                tags=config.tags(
+                    Name=f"{config.resource_prefix}-private-{az}",
+                    **{"kubernetes.io/role/internal-elb": "1"},
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=subnet_deps),
+            )
+            self.private_subnets.append(private_subnet)
+
+            if route_tables:
+                aws.ec2.RouteTableAssociation(
+                    f"{name}-private-rta-{az}",
+                    subnet_id=private_subnet.id,
+                    route_table_id=route_tables[az],
+                    opts=child_opts,
+                )
+
+        self._vpc_id = vpc_id
+        self._public_subnet_ids = []
+        self._private_subnet_ids = [s.id for s in self.private_subnets]
+        existing_cidrs = [a.cidr_block for a in vpc.cidr_block_associations]
+        self._vpc_cidr_blocks = existing_cidrs + ([] if covered else [config.vpc_cidr])
+
+        self.register_outputs(
+            {
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
+            }
+        )
+
+    def _create(self, name: str, config: AWSConfig) -> None:
         self._validate_cidr(config.vpc_cidr)
         if len(config.availability_zones) > 3:
             raise ValueError(
@@ -115,11 +198,16 @@ class VPC(pulumi.ComponentResource):
 
         self._create_route_tables(name, child_opts)
 
+        self._vpc_id = self.vpc.id
+        self._public_subnet_ids = [s.id for s in self.public_subnets]
+        self._private_subnet_ids = [s.id for s in self.private_subnets]
+        self._vpc_cidr_blocks = [self.vpc.cidr_block]
+
         self.register_outputs(
             {
-                "vpc_id": self.vpc.id,
-                "public_subnet_ids": [s.id for s in self.public_subnets],
-                "private_subnet_ids": [s.id for s in self.private_subnets],
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
             }
         )
 
@@ -221,16 +309,16 @@ class VPC(pulumi.ComponentResource):
         )
 
     @property
-    def vpc_id(self) -> pulumi.Output[str]:
-        return self.vpc.id
+    def vpc_id(self) -> pulumi.Input[str]:
+        return self._vpc_id
 
     @property
-    def public_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.public_subnets]
+    def public_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._public_subnet_ids
 
     @property
-    def private_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.private_subnets]
+    def private_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._private_subnet_ids
 
     @property
     def private_subnet_cidrs(self) -> list[str]:
@@ -238,3 +326,7 @@ class VPC(pulumi.ComponentResource):
             self._calculate_cidr(i, is_public=False)
             for i in range(len(self.config.availability_zones))
         ]
+
+    @property
+    def vpc_cidr_blocks(self) -> list[pulumi.Input[str]]:
+        return self._vpc_cidr_blocks
