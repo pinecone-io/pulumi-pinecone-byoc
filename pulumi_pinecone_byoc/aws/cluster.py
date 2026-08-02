@@ -63,7 +63,7 @@ class PineconeAWSClusterArgs:
     vpc_cidr: str = "10.0.0.0/16"
 
     # kubernetes
-    kubernetes_version: str = "1.33"
+    kubernetes_version: str = "1.35"
     node_pools: list[NodePool] | None = None
 
     # dns
