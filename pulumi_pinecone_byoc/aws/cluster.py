@@ -7,6 +7,7 @@ import pulumi
 import pulumi_aws as aws
 
 from ..common.cred_refresher import RegistryCredentialRefresher
+from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
@@ -74,11 +75,11 @@ class PineconeAWSClusterArgs:
     deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
 
     # pinecone specific
-    api_url: str = "https://api.pinecone.io"
-    global_env: str = "prod"
-    auth0_domain: str = "https://login.pinecone.io"
+    api_url: str = CONTROL_PLANE_DEFAULTS["api_url"]
+    global_env: str = CONTROL_PLANE_DEFAULTS["global_env"]
+    auth0_domain: str = CONTROL_PLANE_DEFAULTS["auth0_domain"]
     # gcp_project is needed by some helmfiles even for AWS clusters (cross-cloud monitoring/metrics)
-    gcp_project: str = "production-pinecone"
+    gcp_project: str = CONTROL_PLANE_DEFAULTS["gcp_project"]
 
     # custom AMI
     custom_ami_id: str | None = None
@@ -88,6 +89,9 @@ class PineconeAWSClusterArgs:
 
     # tags
     tags: dict[str, str] | None = None
+
+    def __post_init__(self):
+        apply_defaults(self)
 
 
 class PineconeAWSCluster(pulumi.ComponentResource):

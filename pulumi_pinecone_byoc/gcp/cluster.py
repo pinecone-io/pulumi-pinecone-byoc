@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 import pulumi
 
 from ..common.cred_refresher import RegistryCredentialRefresher
+from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
@@ -74,9 +75,9 @@ class PineconeGCPClusterArgs:
     deletion_protection: bool = True
 
     # pinecone specific
-    api_url: str = "https://api.pinecone.io"
-    global_env: str = "prod"
-    auth0_domain: str = "https://login.pinecone.io"
+    api_url: str = CONTROL_PLANE_DEFAULTS["api_url"]
+    global_env: str = CONTROL_PLANE_DEFAULTS["global_env"]
+    auth0_domain: str = CONTROL_PLANE_DEFAULTS["auth0_domain"]
 
     # cross-cloud: AWS account for AMP federation
     amp_aws_account_id: str = "713131977538"
@@ -87,6 +88,9 @@ class PineconeGCPClusterArgs:
     # workload identity - K8s service accounts that need GCS access
     writer_k8s_service_accounts: list[str] | None = None
     reader_k8s_service_accounts: list[str] | None = None
+
+    def __post_init__(self):
+        apply_defaults(self)
 
 
 class PineconeGCPCluster(pulumi.ComponentResource):

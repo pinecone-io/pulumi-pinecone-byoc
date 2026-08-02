@@ -74,23 +74,6 @@ jobs:
             --skip-install \
             --output-dir ./e2e-project
 
-      - name: Patch __main__.py with CI overrides
-        working-directory: ./e2e-project
-        run: |
-          python3 << 'PATCH'
-          path = "__main__.py"
-          content = open(path).read()
-          content = content.replace(
-              "        labels=config.get_object(\"labels\") or {},",
-              """        labels=config.get_object("labels") or {},
-                  global_env=config.require("global-env"),
-                  api_url=config.require("api-url"),
-                  auth0_domain=config.require("auth0-domain"),
-                  amp_aws_account_id=config.require("amp-aws-account-id"),""",
-          )
-          open(path, "w").write(content)
-          PATCH
-
       - name: Replace PyPI dep with local source
         working-directory: ./e2e-project
         run: |
