@@ -7,6 +7,7 @@ import pulumi_azure_native as azure_native
 import pulumi_azuread as azuread
 
 from ..common.cred_refresher import RegistryCredentialRefresher
+from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
@@ -74,18 +75,21 @@ class PineconeAzureClusterArgs:
     deletion_protection: bool = True
 
     # pinecone specific
-    api_url: str = "https://api.pinecone.io"
-    global_env: str = "prod"
-    auth0_domain: str = "https://login.pinecone.io"
+    api_url: str = CONTROL_PLANE_DEFAULTS["api_url"]
+    global_env: str = CONTROL_PLANE_DEFAULTS["global_env"]
+    auth0_domain: str = CONTROL_PLANE_DEFAULTS["auth0_domain"]
 
     # cross-cloud: AWS account for AMP federation
     amp_aws_account_id: str = "713131977538"
 
     # cross-cloud: gcp project for helmfile templates
-    gcp_project: str = "production-pinecone"
+    gcp_project: str = CONTROL_PLANE_DEFAULTS["gcp_project"]
 
     # tags
     tags: dict[str, str] | None = None
+
+    def __post_init__(self):
+        apply_defaults(self)
 
 
 class PineconeAzureCluster(pulumi.ComponentResource):

@@ -201,6 +201,58 @@ class BaseSetupWizard:
             self._state.clear()
         self._state.set("cloud", self.CLOUD_NAME)
 
+    CONTROL_PLANE_ENV = {
+        "global-env": "PINECONE_GLOBAL_ENV",
+        "api-url": "PINECONE_API_URL",
+        "auth0-domain": "PINECONE_AUTH0_DOMAIN",
+        "gcp-project": "PINECONE_GCP_PROJECT",
+        "amp-aws-account-id": "PINECONE_AMP_AWS_ACCOUNT_ID",
+    }
+    CONTROL_PLANE_KEYS: tuple[str, ...] = ()
+
+    def _control_plane_overrides(self) -> dict[str, str]:
+        """Non-default control plane settings, for internal (non-prod) deployments.
+
+        Headless only: a customer deploy always targets production, whose values are
+        the component defaults.
+        """
+        return {
+            key: os.environ[self.CONTROL_PLANE_ENV[key]]
+            for key in self.CONTROL_PLANE_KEYS
+            if os.environ.get(self.CONTROL_PLANE_ENV[key])
+        }
+
+    def _write_main_py(self, output_dir: str, main_py: str) -> None:
+        main_py = main_py.replace("__CONTROL_PLANE__\n", self._control_plane_block())
+        with open(os.path.join(output_dir, "__main__.py"), "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
+
+    def _control_plane_config(self, project_name: str, control_plane: dict[str, str] | None) -> str:
+        return "".join(
+            f"  {project_name}:{key}: {value}\n" for key, value in (control_plane or {}).items()
+        )
+
+    def _control_plane_block(self) -> str:
+        """The generated program reads these from stack config.
+
+        A key the stack does not set is left out rather than passed as None, so it
+        falls back to the installed component's default instead of overriding it.
+        """
+        reads = "".join(
+            f'        "{key.replace("-", "_")}": config.get("{key}"),\n'
+            for key in self.CONTROL_PLANE_KEYS
+        )
+        return (
+            "control_plane = {\n"
+            "    name: value\n"
+            "    for name, value in {\n"
+            f"{reads}"
+            "    }.items()\n"
+            "    if value is not None\n"
+            "}\n"
+        )
+
     def _write_pyproject(self, output_dir: str, cloud: str, dev_source: str | None) -> None:
         pyproject_content = (
             "[project]\n"
@@ -714,6 +766,7 @@ class AWSPreflightChecker:
 
 
 class AWSSetupWizard(BaseSetupWizard):
+    CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "gcp-project")
     TOTAL_STEPS = 15
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
@@ -791,6 +844,7 @@ class AWSSetupWizard(BaseSetupWizard):
         project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
         custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
         kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
+        control_plane = self._control_plane_overrides()
 
         return self._generate_project(
             output_dir,
@@ -804,6 +858,7 @@ class AWSSetupWizard(BaseSetupWizard):
             {},
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            control_plane=control_plane,
         )
 
     def _select_aws_profile(self) -> None:
@@ -945,6 +1000,7 @@ class AWSSetupWizard(BaseSetupWizard):
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
+        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -979,6 +1035,7 @@ from pulumi_pinecone_byoc.aws import PineconeAWSCluster, PineconeAWSClusterArgs
 
 config = pulumi.Config()
 
+__CONTROL_PLANE__
 cluster = PineconeAWSCluster(
     name="pinecone-aws-cluster",
     args=PineconeAWSClusterArgs(
@@ -992,6 +1049,7 @@ cluster = PineconeAWSCluster(
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
+        **control_plane,
     ),
 )
 
@@ -1004,10 +1062,7 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
-        main_py_path = os.path.join(output_dir, "__main__.py")
-        with open(main_py_path, "w") as f:
-            f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        self._write_main_py(output_dir, main_py)
 
         self._write_pyproject(output_dir, "aws", self._dev_source)
 
@@ -1026,6 +1081,8 @@ if config.get_bool("public-access-enabled") is False:
 """
         for az in azs:
             config_content += f"    - {az}\n"
+
+        config_content += self._control_plane_config(project_name, control_plane)
 
         # add custom AMI ID if provided
         if custom_ami_id:
@@ -1440,6 +1497,7 @@ class GCPPreflightChecker:
 
 
 class GCPSetupWizard(BaseSetupWizard):
+    CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "amp-aws-account-id")
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
     DEFAULT_CIDR = "10.112.0.0/16"
@@ -1529,6 +1587,7 @@ class GCPSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
+            control_plane=self._control_plane_overrides(),
         )
 
     def _validate_gcp_creds(self) -> str | None:
@@ -1672,6 +1731,7 @@ class GCPSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         labels: dict[str, str],
+        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -1705,6 +1765,7 @@ from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
 config = pulumi.Config()
 gcp_config = pulumi.Config("gcp")
 
+__CONTROL_PLANE__
 cluster = PineconeGCPCluster(
     "pinecone-byoc",
     PineconeGCPClusterArgs(
@@ -1717,6 +1778,7 @@ cluster = PineconeGCPCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         labels=config.get_object("labels") or {},
+        **control_plane,
     ),
 )
 
@@ -1729,10 +1791,7 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
 '''
 
-        main_py_path = os.path.join(output_dir, "__main__.py")
-        with open(main_py_path, "w") as f:
-            f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        self._write_main_py(output_dir, main_py)
 
         self._write_pyproject(output_dir, "gcp", self._dev_source)
 
@@ -1751,6 +1810,8 @@ if config.get_bool("public-access-enabled") is False:
 """
         for zone in zones:
             config_content += f"    - {zone}\n"
+
+        config_content += self._control_plane_config(project_name, control_plane)
 
         # add labels if provided (quote values to handle YAML special chars)
         if labels:
@@ -2292,6 +2353,13 @@ class AzurePreflightChecker:
 
 
 class AzureSetupWizard(BaseSetupWizard):
+    CONTROL_PLANE_KEYS = (
+        "global-env",
+        "api-url",
+        "auth0-domain",
+        "gcp-project",
+        "amp-aws-account-id",
+    )
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - Azure"
     HEADER_SUBTITLE = (
         "This wizard will set up everything you need to deploy Pinecone BYOC on Azure."
@@ -2385,6 +2453,7 @@ class AzureSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
+            control_plane=self._control_plane_overrides(),
         )
 
     def _validate_azure_creds(self) -> str | None:
@@ -2532,6 +2601,7 @@ class AzureSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         tags: dict[str, str],
+        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -2562,6 +2632,7 @@ from pulumi_pinecone_byoc.azure import PineconeAzureCluster, PineconeAzureCluste
 
 config = pulumi.Config()
 
+__CONTROL_PLANE__
 cluster = PineconeAzureCluster(
     "pinecone-byoc",
     PineconeAzureClusterArgs(
@@ -2574,6 +2645,7 @@ cluster = PineconeAzureCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         tags=config.get_object("tags"),
+        **control_plane,
     ),
 )
 
@@ -2588,10 +2660,7 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
 '''
 
-        main_py_path = os.path.join(output_dir, "__main__.py")
-        with open(main_py_path, "w") as f:
-            f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
+        self._write_main_py(output_dir, main_py)
 
         self._write_pyproject(output_dir, "azure", self._dev_source)
 
@@ -2609,6 +2678,8 @@ if config.get_bool("public-access-enabled") is False:
 """
         for zone in zones:
             config_content += f'    - "{zone}"\n'
+
+        config_content += self._control_plane_config(project_name, control_plane)
 
         if tags:
             config_content += f"  {project_name}:tags:\n"
