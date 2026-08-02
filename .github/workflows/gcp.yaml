@@ -3,6 +3,10 @@ name: E2E GCP
 on:
   workflow_call: {}
 
+concurrency:
+  group: e2e-gcp
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write

@@ -3,6 +3,10 @@ name: E2E AWS
 on:
   workflow_call: {}
 
+concurrency:
+  group: e2e-aws
+  cancel-in-progress: false
+
 permissions:
   contents: read
   id-token: write
