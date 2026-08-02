@@ -11,13 +11,22 @@ ORG_NAME_MAX_LENGTH = 16
 # CNAME records created in both DNS and NLB components across all clouds
 DNS_CNAMES = ["*.svc", "metrics", "prometheus"]
 
+# A `pulumi up --target` that leaves pc-environment out still constructs the whole
+# cluster, and the engine hands back empty outputs for what it skipped. Nothing
+# named this is ever created, so a placeholder is enough - but one that says so,
+# rather than one that reads as a cell whose org happens to be blank.
+UNRESOLVED_CELL = "unresolved-byoc-0000"
+
+
+def cell(org_name: str | None, env_name: str | None) -> str:
+    """Derive cell name from an org and environment: e.g. pinecone-byoc-ef7a"""
+    if not org_name or not env_name:
+        return UNRESOLVED_CELL
+    org = re.sub(r"[^a-z0-9]", "", org_name.lower())[:ORG_NAME_MAX_LENGTH]
+    return f"{org}-byoc-{env_name.split('.')[0][-4:]}"
+
 
 def cell_name(environment: Environment) -> pulumi.Output[str]:
-    """Derive cell name from environment: e.g. pinecone-byoc-ef7a"""
-
-    def sanitize(name: str) -> str:
-        return re.sub(r"[^a-z0-9]", "", name.lower())[:ORG_NAME_MAX_LENGTH]
-
     return pulumi.Output.all(environment.org_name, environment.env_name).apply(
-        lambda args: f"{sanitize(args[0])}-byoc-{args[1].split('.')[0][-4:]}"
+        lambda args: cell(args[0], args[1])
     )
