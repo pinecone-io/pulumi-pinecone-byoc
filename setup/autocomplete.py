@@ -220,9 +220,12 @@ class _CyclePrompt(_Prompt):
             self.suggesting = True
 
     def tab(self, step: int) -> None:
-        self.suggesting = False
-        self.index = (self.index + step) % len(self.cycle)
+        if self.index < 0:
+            self.index = 0 if step > 0 else len(self.cycle) - 1
+        else:
+            self.index = (self.index + step) % len(self.cycle)
         self.editor.set(self.cycle[self.index])
+        self.suggesting = True
 
     def navigate(self, body: str) -> bool:
         self.suggesting = False
