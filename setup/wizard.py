@@ -211,11 +211,6 @@ class BaseSetupWizard:
     CONTROL_PLANE_KEYS: tuple[str, ...] = ()
 
     def _control_plane_overrides(self) -> dict[str, str]:
-        """Non-default control plane settings, for internal (non-prod) deployments.
-
-        Headless only: a customer deploy always targets production, whose values are
-        the component defaults.
-        """
         return {
             key: os.environ[self.CONTROL_PLANE_ENV[key]]
             for key in self.CONTROL_PLANE_KEYS

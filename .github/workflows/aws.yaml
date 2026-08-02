@@ -1,28 +1,31 @@
 name: E2E AWS
 
 on:
-  workflow_call: {}
+  workflow_call:
 
 permissions:
   contents: read
   id-token: write
 
+env:
+  AWS_REGION: us-east-2
+
 jobs:
   up:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 150
     environment: aws-e2e
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set stack name
+      - name: Set stack prefix
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "STACK_NAME=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "STACK_NAME=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -31,7 +34,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_E2E_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 43200
 
       - uses: astral-sh/setup-uv@v5
@@ -51,76 +54,42 @@ jobs:
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Run wizard (headless)
-        id: wizard
-        env:
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_REGION: us-east-1
-          PINECONE_AZS: "us-east-1a,us-east-1b"
-          PINECONE_VPC_CIDR: "10.0.0.0/16"
-          PINECONE_DELETION_PROTECTION: "false"
-          PINECONE_PUBLIC_ACCESS: "false"
-          PINECONE_PROJECT_NAME: "pinecone-byoc"
-        run: |
-          uv run --with rich --with pyyaml python setup/wizard.py \
-            --cloud aws \
-            --headless \
-            --stack-name "$STACK_NAME" \
-            --skip-install \
-            --output-dir ./e2e-project
-
-      - name: Replace PyPI dep with local source
-        working-directory: ./e2e-project
-        run: |
-          sed -i 's|"pulumi-pinecone-byoc\[aws\]"|"pulumi-pinecone-byoc[aws] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
-          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
-
-      - name: Install dependencies
-        working-directory: ./e2e-project
-        run: uv sync
-
-      - name: Setup Pulumi stack
-        working-directory: ./e2e-project
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: |
-          pulumi stack select --create "$STACK_NAME"
-
-      - name: Set Pulumi config
-        working-directory: ./e2e-project
+      - name: Deploy and tear down
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: |
-          pulumi config set --secret pinecone-api-key "$PINECONE_API_KEY" --stack "$STACK_NAME"
-          pulumi config set global-env ci --stack "$STACK_NAME"
-          pulumi config set api-url "https://api-staging.pinecone.io" --stack "$STACK_NAME"
-          pulumi config set auth0-domain "https://internal-beta-pinecone-io.us.auth0.com" --stack "$STACK_NAME"
-          pulumi config set gcp-project "development-pinecone" --stack "$STACK_NAME"
+        run: uv run --extra aws pytest -m e2e -s
 
-      - name: Pulumi up
-        working-directory: ./e2e-project
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi up --yes --stack "$STACK_NAME"
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-aws-logs
+          path: |
+            .e2e-logs/
+            .e2e/**/*.log
+          if-no-files-found: warn
+          # a public repository publishes its artifacts too; the harness redacts what
+          # it writes, and these are kept only long enough to debug the run that made them
+          retention-days: 3
 
   down:
     needs: up
-    if: always() && needs.up.result != 'skipped'
+    if: always() && needs.up.result != 'skipped' && needs.up.result != 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: aws-e2e
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set stack name
+      - name: Set stack prefix
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "STACK_NAME=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "STACK_NAME=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -129,7 +98,7 @@ jobs:
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_E2E_ROLE_ARN }}
-          aws-region: us-east-1
+          aws-region: ${{ env.AWS_REGION }}
           role-duration-seconds: 43200
 
       - uses: astral-sh/setup-uv@v5
@@ -146,47 +115,29 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: pulumi org set-default pinecone
 
-      - name: Run wizard (headless)
+      - name: Regenerate project
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_REGION: us-east-1
-          PINECONE_AZS: "us-east-1a,us-east-1b"
-          PINECONE_VPC_CIDR: "10.0.0.0/16"
-          PINECONE_DELETION_PROTECTION: "false"
-          PINECONE_PUBLIC_ACCESS: "false"
-          PINECONE_PROJECT_NAME: "pinecone-byoc"
+          PINECONE_REGION: ${{ env.AWS_REGION }}
         run: |
           uv run --with rich --with pyyaml python setup/wizard.py \
             --cloud aws \
             --headless \
-            --stack-name "$STACK_NAME" \
+            --stack-name "${E2E_STACK_PREFIX}-vanilla-byoc" \
             --skip-install \
-            --output-dir ./e2e-project
-
-      - name: Replace PyPI dep with local source
-        working-directory: ./e2e-project
-        run: |
-          sed -i 's|"pulumi-pinecone-byoc\[aws\]"|"pulumi-pinecone-byoc[aws] @ file://'"$GITHUB_WORKSPACE"'"|' pyproject.toml
-          grep -q 'file://' pyproject.toml || { echo "ERROR: local source substitution failed"; exit 1; }
+            --output-dir ./e2e-project \
+            --dev
 
       - name: Install dependencies
         working-directory: ./e2e-project
         run: uv sync
 
-      - name: Cancel stale locks
+      - name: Destroy leftovers
         working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi cancel --yes --stack "$STACK_NAME" 2>/dev/null || true
-
-      - name: Pulumi destroy
-        working-directory: ./e2e-project
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi destroy --yes --stack "$STACK_NAME"
-
-      - name: Pulumi stack rm
-        working-directory: ./e2e-project
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi stack rm "$STACK_NAME" --yes --force
+        run: |
+          stack="${E2E_STACK_PREFIX}-vanilla-byoc"
+          pulumi cancel --yes --stack "$stack" 2>/dev/null || true
+          pulumi destroy --yes --stack "$stack"
+          pulumi stack rm "$stack" --yes --force

@@ -214,7 +214,6 @@ if [ "$DEV" -eq 1 ]; then
     WIZARD_ARGS+=(--dev "$SCRIPT_DIR")
 fi
 
-# run the wizard (generates __main__.py and pyproject.toml for pulumi)
 uv run python wizard.py "${WIZARD_ARGS[@]}"
 
 rm -f wizard.py autocomplete.py

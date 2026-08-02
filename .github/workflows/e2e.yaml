@@ -2,11 +2,10 @@ name: E2E
 
 on:
   pull_request:
-    branches: [main]
   workflow_dispatch: {}
 
 concurrency:
-  group: e2e-${{ github.head_ref || github.ref }}
+  group: byoc-e2e
   cancel-in-progress: false
 
 permissions:
@@ -32,6 +31,10 @@ jobs:
               - 'config/aws.py'
               - 'config/base.py'
               - 'config/__init__.py'
+              - 'setup/wizard.py'
+              - 'tests/**'
+              - 'pytest.ini'
+              - '.github/workflows/aws.yaml'
             gcp:
               - 'pulumi_pinecone_byoc/gcp/**'
               - 'pulumi_pinecone_byoc/common/**'
@@ -52,14 +55,14 @@ jobs:
     secrets: inherit
 
   gcp:
-    needs: changes
-    if: needs.changes.outputs.gcp == 'true' || github.event_name == 'workflow_dispatch'
+    needs: [changes, aws]
+    if: ${{ !cancelled() && (needs.changes.outputs.gcp == 'true' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/gcp.yaml
     secrets: inherit
 
   azure:
-    needs: changes
-    if: needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch'
+    needs: [changes, gcp]
+    if: ${{ !cancelled() && (needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/azure.yaml
     secrets: inherit
 
