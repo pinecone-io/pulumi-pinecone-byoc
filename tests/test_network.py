@@ -28,7 +28,6 @@ from typing import NamedTuple
 import pytest
 from e2e.commands import pulumi, pulumi_json, run
 from e2e.paths import PROJECTS, REPO_ROOT
-from e2e.plan import network_targets
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 
@@ -55,7 +54,15 @@ def expected_counts(shape, az_count):
     return {VPC: 1, CIDR_ASSOCIATION: 0, SUBNET: 2 * az_count, NAT: az_count}
 
 
+MODULE_VPC_PROGRAM = Path(__file__).resolve().parent / "fixtures" / "module_vpc" / "__main__.py"
+
+
 def generate_project(stack, env):
+    """Scaffold with the wizard, then swap in the VPC-only program.
+
+    The wizard writes the stack config, the dev-source pyproject and the venv
+    wiring this needs; only the program itself is the tier's business.
+    """
     project_dir = PROJECTS / stack
     project_dir.mkdir(parents=True, exist_ok=True)
     run(
@@ -78,15 +85,12 @@ def generate_project(stack, env):
             **env,
         },
     )
+    (project_dir / "__main__.py").write_text(MODULE_VPC_PROGRAM.read_text())
     return project_dir
 
 
 def apply_network(project_dir):
-    targets = network_targets(pulumi_json("preview", "--json", cwd=project_dir))
-    assert targets, "the preview plan held no VPC resources to target"
-    logging.info(f"targeting {len(targets)} resource(s):\n" + "\n".join(targets))
-    flags = [flag for urn in targets for flag in ("--target", urn)]
-    pulumi("up", "--yes", "--skip-preview", *flags, cwd=project_dir)
+    pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
 
 
 def created_resources(project_dir):
