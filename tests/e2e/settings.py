@@ -26,10 +26,10 @@ def add_options(parser):
     for ini_key in CONTROL_PLANE_INI:
         parser.addini(ini_key, f"control plane setting passed to the wizard as {ini_key.upper()}")
     parser.addoption(
-        "--keep-vpc",
+        "--keep",
         action="store_true",
         default=False,
-        help="leave provisioned stacks up after integration/e2e tests",
+        help="leave everything the test provisioned up: the cluster, its database, its network",
     )
     parser.addoption(
         "--keep-failed",
@@ -63,7 +63,7 @@ def apply_to_environment(config):
 
 
 def keep_stacks(request):
-    if request.config.getoption("--keep-vpc"):
+    if request.config.getoption("--keep"):
         return True
     if not request.config.getoption("--keep-failed"):
         return False

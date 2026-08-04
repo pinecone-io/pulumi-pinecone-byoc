@@ -306,7 +306,7 @@ in `.e2e/<stack>/`, so an interrupted run is torn down with:
 cd .e2e/$USER-vanilla-byoc && pulumi destroy --yes
 ```
 
-Pass `--keep-vpc` to leave a stack up on success, or `--keep-failed` to leave it
+Pass `--keep` to leave a stack up on success, or `--keep-failed` to leave it
 up only when the test fails.
 
 ## Support

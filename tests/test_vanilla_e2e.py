@@ -7,6 +7,7 @@ import pytest
 from e2e.commands import pulumi, pulumi_json, run
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS, REPO_ROOT
+from e2e.reachability import assert_answers, data_plane_host
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 
@@ -74,3 +75,4 @@ def vanilla_project(request):
 def test_e2e_vanilla(vanilla_project):
     environment = pulumi_json("stack", "output", "--json", cwd=vanilla_project).get("environment")
     assert environment, "the deploy exported no environment"
+    assert_answers(data_plane_host(environment))
