@@ -56,8 +56,6 @@ class AWSConfig(BaseConfig):
     cloud: str = "aws"
 
     # Networking
-    public_subnet_mask: int = 20
-    private_subnet_mask: int = 18
 
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)

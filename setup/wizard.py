@@ -23,6 +23,9 @@ BLUE = "#002BFF"
 
 PINECONE_VERSION = "main-94a9e90"
 
+MIN_VPC_PREFIX = 16
+MAX_VPC_PREFIX = 20
+
 console = Console()
 
 
@@ -707,13 +710,14 @@ class AWSPreflightChecker:
             )
             return
 
-        # must be /16 for subnet calculation
-        if target_net.prefixlen != 16:
+        if not MIN_VPC_PREFIX <= target_net.prefixlen <= MAX_VPC_PREFIX:
             self._add_result(
                 "VPC CIDR",
                 False,
-                f"CIDR must be a /16 (got /{target_net.prefixlen})",
-                "Subnet calculation requires a /16 network (e.g., 10.0.0.0/16)",
+                f"/{target_net.prefixlen} is outside what is currently supported",
+                f"A /{MIN_VPC_PREFIX} to /{MAX_VPC_PREFIX} is supported today "
+                f"(e.g. 10.0.0.0/{MIN_VPC_PREFIX} or 192.168.16.0/{MAX_VPC_PREFIX}); "
+                f"/{MAX_VPC_PREFIX} is the smallest range the subnet layout fits in",
             )
             return
 
@@ -766,7 +770,7 @@ class AWSSetupWizard(BaseSetupWizard):
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
-    CIDR_DESC = "The IP range for your VPC (/16 from an RFC 1918 private range, must not conflict with existing VPCs)"
+    CIDR_DESC = "The IP range for your VPC (a /16 to /20 from an RFC 1918 private range, currently supported down to /20, must not conflict with existing VPCs)"
     DELETION_PROTECTION_DESC = "Protect RDS databases and S3 buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
