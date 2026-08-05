@@ -11,6 +11,18 @@ import pulumi_aws as aws
 
 from config.aws import AWSConfig
 
+MIN_VPC_PREFIX = 16
+MAX_VPC_PREFIX = 20
+
+# AWS refuses to load balance in anything narrower than a /27, and wants eight
+# addresses free to scale into
+PUBLIC_PREFIX_ON_A_SLICE = 26
+
+# the VPC is cut into sixteen slots; a public subnet takes one, a private subnet four
+SLOT_BITS = 4
+PRIVATE_SLOTS = 4
+PRIVATE_FIRST_SLOT = 4
+
 RFC1918_RANGES = [
     ipaddress.IPv4Network("10.0.0.0/8"),
     ipaddress.IPv4Network("172.16.0.0/12"),
@@ -67,8 +79,8 @@ class VPC(pulumi.ComponentResource):
         for i, az in enumerate(config.availability_zones):
             # calculate CIDR blocks for each subnet
             # public subnets get smaller blocks, private subnets get larger blocks
-            public_cidr = self._calculate_cidr(i, is_public=True)
-            private_cidr = self._calculate_cidr(i, is_public=False)
+            public_cidr = str(self._calculate_cidr(config.vpc_cidr, i, is_public=True))
+            private_cidr = str(self._calculate_cidr(config.vpc_cidr, i, is_public=False))
 
             public_subnet = aws.ec2.Subnet(
                 f"{name}-public-{az}",
@@ -130,31 +142,38 @@ class VPC(pulumi.ComponentResource):
         except (ValueError, ipaddress.AddressValueError) as e:
             raise ValueError(f"Invalid VPC CIDR '{cidr}': {e}") from e
 
-        if network.prefixlen != 16:
+        if not MIN_VPC_PREFIX <= network.prefixlen <= MAX_VPC_PREFIX:
             raise ValueError(
-                f"VPC CIDR must be a /16 (got /{network.prefixlen}). "
-                "Subnet calculation requires a /16 network."
+                f"VPC CIDR must be between a /{MIN_VPC_PREFIX} and a /{MAX_VPC_PREFIX} "
+                f"(got /{network.prefixlen}). The subnet layout needs sixteen slots, and a "
+                f"/{MAX_VPC_PREFIX} is the smallest range that still leaves a workable subnet "
+                "per availability zone."
             )
 
         if not any(network.subnet_of(rfc1918) for rfc1918 in RFC1918_RANGES):
             raise ValueError(
                 f"VPC CIDR '{cidr}' is not in an RFC 1918 private range. "
-                "Use a /16 block like 10.0.0.0/16, 172.16.0.0/16, or 192.168.0.0/16. "
+                "Use a block inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. "
                 "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html"
             )
 
-    def _calculate_cidr(self, index: int, is_public: bool) -> str:
-        base = self.config.vpc_cidr.split("/")[0]
-        octets = [int(x) for x in base.split(".")]
+    @staticmethod
+    def _calculate_cidr(vpc_cidr: str, index: int, is_public: bool) -> ipaddress.IPv4Network:
+        network = ipaddress.IPv4Network(vpc_cidr)
+        slots = list(network.subnets(prefixlen_diff=SLOT_BITS))
 
         if is_public:
-            # public subnets: /20 blocks starting at 10.0.0.0, 10.0.16.0, 10.0.32.0
-            third_octet = index * 16
-            return f"{octets[0]}.{octets[1]}.{third_octet}.0/{self.config.public_subnet_mask}"
+            slot = slots[index]
+            prefix = (
+                network.prefixlen + SLOT_BITS
+                if network.prefixlen == MIN_VPC_PREFIX
+                else max(PUBLIC_PREFIX_ON_A_SLICE, slot.prefixlen)
+            )
         else:
-            # private subnets: /18 blocks starting at 10.0.64.0, 10.0.128.0, 10.0.192.0
-            third_octet = 64 + (index * 64)
-            return f"{octets[0]}.{octets[1]}.{third_octet}.0/{self.config.private_subnet_mask}"
+            slot = slots[PRIVATE_FIRST_SLOT + index * PRIVATE_SLOTS]
+            prefix = network.prefixlen + PRIVATE_SLOTS // 2
+
+        return ipaddress.IPv4Network((slot.network_address, prefix))
 
     def _create_route_tables(self, name: str, opts: pulumi.ResourceOptions):
         public_rt = aws.ec2.RouteTable(
@@ -235,6 +254,6 @@ class VPC(pulumi.ComponentResource):
     @property
     def private_subnet_cidrs(self) -> list[str]:
         return [
-            self._calculate_cidr(i, is_public=False)
+            str(self._calculate_cidr(self.config.vpc_cidr, i, is_public=False))
             for i in range(len(self.config.availability_zones))
         ]

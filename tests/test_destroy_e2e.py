@@ -1,13 +1,12 @@
 import logging
-import os
 
 import pytest
 from e2e.aws import cluster_from_outputs, grant_cluster_admin
 from e2e.commands import pulumi_json, run
 from e2e.paths import PROJECTS
-from e2e.settings import destroy_targets, e2e_azs
+from e2e.settings import destroy_targets
 from e2e.stacks import destroy_stack, find_stack, project_of
-from e2e.wizard import generate_project
+from e2e.wizard import generate_project, headless_env
 
 pytestmark = pytest.mark.destroy
 
@@ -29,13 +28,7 @@ def condemned_project(target, request):
         PROJECTS / target.stack,
         target.stack,
         target.cloud,
-        {
-            "PINECONE_API_KEY": os.environ["PINECONE_API_KEY"],
-            "PINECONE_REGION": target.region,
-            "PINECONE_AZS": e2e_azs(request.config),
-            "PINECONE_PROJECT_NAME": project_of(qualified),
-            "PINECONE_DELETION_PROTECTION": "false",
-        },
+        headless_env(request.config, target.region, project_of(qualified)),
         skip_install=True,
     )
     run("uv", "sync", cwd=project_dir)
