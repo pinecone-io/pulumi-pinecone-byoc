@@ -3,6 +3,7 @@
 import ipaddress
 
 import pytest
+from wizard import AWSSetupWizard
 
 from pulumi_pinecone_byoc.aws.vpc import VPC
 
@@ -67,3 +68,11 @@ def test_a_public_subnet_stays_within_what_aws_will_load_balance_in(vpc_cidr):
         public = VPC._calculate_cidr(vpc_cidr, index, True)
         assert public.prefixlen <= 27, f"{public} is narrower than AWS allows for an ALB"
         assert public.num_addresses - 5 >= 8 + 1, "eight free for the ALB, one for the NAT"
+
+
+def test_the_default_the_wizard_offers_is_a_range_the_vpc_will_lay_out():
+    VPC._validate_cidr(AWSSetupWizard.DEFAULT_CIDR)
+    for index in range(3):
+        for is_public in (True, False):
+            subnet = VPC._calculate_cidr(AWSSetupWizard.DEFAULT_CIDR, index, is_public)
+            assert subnet.subnet_of(ipaddress.IPv4Network(AWSSetupWizard.DEFAULT_CIDR))
