@@ -37,6 +37,7 @@ from .api import (
     delete_environment,
     delete_service_account,
 )
+from .credentials import with_secret_outputs
 
 # =============================================================================
 # Environment Resource
@@ -189,7 +190,7 @@ class Environment(Resource):
             EnvironmentProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -297,7 +298,7 @@ class ServiceAccount(Resource):
             ServiceAccountProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -452,7 +453,7 @@ class ApiKey(Resource):
             ApiKeyProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -561,7 +562,7 @@ class DnsDelegation(Resource):
             DnsDelegationProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -653,7 +654,7 @@ class DatadogApiKey(Resource):
             DatadogApiKeyProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -797,7 +798,7 @@ class AmpAccess(Resource):
             AmpAccessProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
 
 
@@ -885,5 +886,5 @@ class CpgwApiKey(Resource):
             CpgwApiKeyProvider(),
             name,
             full_args,
-            opts,
+            with_secret_outputs(opts),
         )
