@@ -1,9 +1,11 @@
 """End-to-end runs: provision a stand-in customer VPC, generate a BYOC project
 against it with the headless wizard, and deploy it.
 
-There are deliberately no assertions beyond the deploy succeeding -- `pulumi up`
-returning non-zero is the failure signal. Deselected by default; each run takes
-tens of minutes and provisions real infrastructure.
+A deploy that returns zero is not the whole signal: the run also probes the data
+plane from outside the VPC, and what it expects depends on the shape. A shape the
+fixture handed PINECONE_PUBLIC_ACCESS=true must answer; one that asked for no
+public access must stay unreachable. Deselected by default; each run takes tens of
+minutes and provisions real infrastructure.
 
     pytest -m e2e tests/test_byovpc_e2e.py -k e2e_carve   -s
 
@@ -22,9 +24,10 @@ import sys
 import threading
 
 import pytest
-from e2e.commands import pulumi, run
+from e2e.commands import pulumi, pulumi_json, run
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS, REPO_ROOT
+from e2e.reachability import assert_answers, assert_never_answers, data_plane_host
 from e2e.settings import keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 from e2e.wizard import parse_wizard_env
@@ -89,5 +92,13 @@ def byoc_project(request, byovpc):
 
 
 @pytest.mark.parametrize("byovpc", ["carve"], indirect=True)
-def test_e2e_carve(byoc_project):
+def test_e2e_carve(byoc_project, byovpc):
     print(f"\ndeployed BYOC with module-carved subnets: {byoc_project}")
+    environment = pulumi_json("stack", "output", "--json", cwd=byoc_project).get("environment")
+    assert environment, "the deploy exported no environment"
+
+    host = data_plane_host(environment)
+    if parse_wizard_env(byovpc["wizard_env"])["PINECONE_PUBLIC_ACCESS"] == "true":
+        assert_answers(host)
+    else:
+        assert_never_answers(host)
