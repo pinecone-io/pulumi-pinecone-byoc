@@ -75,7 +75,7 @@ def test_carve_vpc_has_no_workload_subnets_but_has_egress(ec2, byovpc):
     env = assert_wizard_env(
         byovpc,
         {
-            "PINECONE_PUBLIC_ACCESS": "false",
+            "PINECONE_PUBLIC_ACCESS": "true",
             "PINECONE_PRIVATE_SUBNET_IDS": "",
         },
     )

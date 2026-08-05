@@ -147,7 +147,7 @@ wizard_env = pulumi.Output.all(vpc_id, public_ids, private_ids).apply(
             f"export PINECONE_EXISTING_VPC_ID={a[0]}",
             f"export PINECONE_PUBLIC_SUBNET_IDS={a[1]}",
             f"export PINECONE_PRIVATE_SUBNET_IDS={a[2]}",
-            "export PINECONE_PUBLIC_ACCESS=false",
+            "export PINECONE_PUBLIC_ACCESS=true",
             f"export PINECONE_VPC_CIDR={carve_cidr()}",
         ]
     )

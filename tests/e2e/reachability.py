@@ -4,9 +4,18 @@ import time
 
 import requests
 
+from .commands import pulumi_json
+
 
 def data_plane_host(environment):
     return f"probe.svc.{environment}.pinecone.io"
+
+
+def assert_data_plane_answers(project_dir):
+    """The check a vanilla run makes, so every shape with public access makes it too."""
+    environment = pulumi_json("stack", "output", "--json", cwd=project_dir).get("environment")
+    assert environment, "the deploy exported no environment"
+    return assert_answers(data_plane_host(environment))
 
 
 def assert_answers(host, timeout_seconds=900, poll_seconds=15):

@@ -568,6 +568,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             vpc_cidr=args.vpc_cidr,
             existing_vpc_id=args.existing_vpc_id,
             existing_route_table_ids=args.existing_route_table_ids,
+            public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,

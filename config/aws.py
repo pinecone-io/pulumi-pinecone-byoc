@@ -61,6 +61,10 @@ class AWSConfig(BaseConfig):
 
     existing_vpc_id: str | None = None
 
+    # whether the deploy needs an internet-facing load balancer, and so a public
+    # subnet to put it in; false leaves the data plane reachable over PrivateLink only
+    public_access: bool = True
+
     # route table to associate each carved subnet with, keyed by availability zone.
     # Unset means the subnets carry no association and inherit the VPC main route
     # table, which only carries egress in landing zones that put it there.
