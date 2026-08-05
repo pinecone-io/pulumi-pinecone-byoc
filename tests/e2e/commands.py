@@ -37,9 +37,15 @@ def pulumi(*args, cwd, env=None):
 
 
 def pulumi_quiet(*args, cwd):
-    """Run pulumi without logging its output, and report success rather than raise."""
+    """Run pulumi without logging its output, and report success rather than raise.
+
+    A failure still logs what pulumi said - a swallowed exit code with no
+    explanation is what made the old teardown impossible to diagnose.
+    """
     result = subprocess.run(["pulumi", *args], cwd=cwd, text=True, capture_output=True, check=False)
     logging.info("$ pulumi %s -> exit %s", " ".join(args), result.returncode)
+    if result.returncode != 0:
+        logging.info("%s", redact(result.stderr or result.stdout or "(no output)").strip())
     return result.returncode == 0
 
 

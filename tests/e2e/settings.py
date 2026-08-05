@@ -1,4 +1,7 @@
 import os
+from typing import NamedTuple
+
+from .stacks import stack_name
 
 AMBIENT_AWS_CREDENTIALS = (
     "AWS_WEB_IDENTITY_TOKEN_FILE",
@@ -37,6 +40,34 @@ def add_options(parser):
         default=False,
         help="leave provisioned stacks up only when the test fails, so it can be inspected",
     )
+    parser.addoption(
+        "--destroy-stack",
+        action="append",
+        default=[],
+        metavar="STACK",
+        help="stack the destroy test tears down; repeat to sweep several. "
+        "Defaults to the stack this run's E2E_STACK_PREFIX would have created.",
+    )
+    parser.addoption(
+        "--grant-cluster-access",
+        action="store_true",
+        default=False,
+        help="before destroying, give the calling principal cluster-admin on the stack's EKS "
+        "cluster. The module creates no access entries, so a CI-built cluster's only admin is "
+        "the role that created it and a local destroy cannot reach the Kubernetes API.",
+    )
+    parser.addoption(
+        "--destroy-cloud",
+        choices=("aws", "gcp", "azure"),
+        default=None,
+        help="cloud for --destroy-stack, when the stack name does not say which",
+    )
+    parser.addoption(
+        "--destroy-region",
+        default=None,
+        metavar="REGION",
+        help="region for --destroy-stack, when it is not the region under test",
+    )
 
 
 def aws_region(config):
@@ -60,6 +91,28 @@ def apply_to_environment(config):
         if value:
             os.environ.setdefault(env, value)
     return region
+
+
+class DestroyTarget(NamedTuple):
+    stack: str
+    cloud: str
+    region: str
+
+
+def _cloud_of(stack, override):
+    if override:
+        return override
+    for cloud in ("aws", "gcp", "azure"):
+        if f"-{cloud}-" in f"-{stack}-":
+            return cloud
+    return "aws"
+
+
+def destroy_targets(config):
+    stacks = config.getoption("--destroy-stack") or [stack_name("vanilla", "byoc")]
+    cloud_override = config.getoption("--destroy-cloud")
+    region = config.getoption("--destroy-region") or aws_region(config)
+    return [DestroyTarget(s, _cloud_of(s, cloud_override), region) for s in stacks]
 
 
 def keep_stacks(request):

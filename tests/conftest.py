@@ -35,11 +35,13 @@ def pytest_configure(config):
 @pytest.hookimpl(trylast=True)
 def pytest_collection_modifyitems(config, items):
     logging.info(f"selected {len(items)} test(s): {[i.name for i in items]}")
-    needs_api_key = [i for i in items if i.get_closest_marker("e2e")]
+    needs_api_key = [
+        i for i in items if i.get_closest_marker("e2e") or i.get_closest_marker("destroy")
+    ]
     if needs_api_key and not os.environ.get("PINECONE_API_KEY"):
         message = (
-            "PINECONE_API_KEY must be set to run e2e tests; nothing was provisioned. "
-            "Export it and re-run."
+            "PINECONE_API_KEY must be set to run e2e tests; nothing was provisioned or "
+            "destroyed. Export it and re-run."
         )
         logging.info(f"ABORT {message}")
         raise pytest.UsageError(message)

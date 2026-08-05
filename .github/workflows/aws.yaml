@@ -68,6 +68,8 @@ jobs:
           path: |
             .e2e-logs/
             .e2e/**/*.log
+          # both paths are dotted, and upload-artifact skips hidden files by default
+          include-hidden-files: true
           if-no-files-found: warn
           # a public repository publishes its artifacts too; the harness redacts what
           # it writes, and these are kept only long enough to debug the run that made them
@@ -115,33 +117,20 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: pulumi org set-default pinecone
 
-      - name: Regenerate project
+      - name: Destroy leftovers
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
-          PINECONE_REGION: ${{ env.AWS_REGION }}
-        run: |
-          uv run --with rich --with pyyaml python setup/wizard.py \
-            --cloud aws \
-            --headless \
-            --stack-name "${E2E_STACK_PREFIX}-vanilla-byoc" \
-            --skip-install \
-            --output-dir ./e2e-project \
-            --dev
-
-      - name: Install dependencies
-        working-directory: ./e2e-project
-        run: uv sync
-
-      - name: Destroy leftovers
-        working-directory: ./e2e-project
-        env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: |
-          stack="${E2E_STACK_PREFIX}-vanilla-byoc"
-          if ! pulumi stack ls --json | jq -e --arg s "$stack" '.[] | select(.name == $s)' > /dev/null; then
-            echo "no stack named $stack, nothing to destroy"
-            exit 0
-          fi
-          pulumi cancel --yes --stack "$stack" 2>/dev/null || true
-          pulumi destroy --yes --stack "$stack"
-          pulumi stack rm "$stack" --yes --force
+        run: uv run --extra aws pytest -m destroy -s
+
+      - name: Upload teardown logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-aws-teardown-logs
+          path: |
+            .e2e-logs/
+            .e2e/**/*.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
