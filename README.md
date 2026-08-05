@@ -277,6 +277,38 @@ pulumi destroy
 
 Note: If `deletion_protection` is enabled (default), you'll need to disable it first or manually delete protected resources.
 
+## Developing this project
+
+Unit tests need nothing but the dev group, and are what `pytest` runs by default:
+
+```bash
+uv sync --all-extras --group dev
+uv run pytest
+uv run ruff check . && uv run ruff format --check . && uv run ty check
+```
+
+Anything that provisions real infrastructure is marked and deselected by default.
+`integration` builds a network and asserts against it; `e2e` deploys a whole
+cluster, takes around an hour, and needs `PINECONE_API_KEY`:
+
+```bash
+uv run pytest -m e2e tests/test_vanilla_e2e.py -s
+```
+
+The vanilla e2e is the control run: the module creates its own VPC, so a failure
+there is a module-wide problem rather than a BYO-VPC one. There are no
+assertions - a non-zero `pulumi up` is the failure signal.
+
+Each run writes a redacted log to `.e2e-logs/`, and leaves the generated project
+in `.e2e/<stack>/`, so an interrupted run is torn down with:
+
+```bash
+cd .e2e/$USER-vanilla-byoc && pulumi destroy --yes
+```
+
+Pass `--keep` to leave a stack up on success, or `--keep-failed` to leave it
+up only when the test fails.
+
 ## Support
 
 - [Documentation](https://docs.pinecone.io/guides/production/bring-your-own-cloud)

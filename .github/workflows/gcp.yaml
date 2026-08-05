@@ -199,4 +199,4 @@ jobs:
         working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi stack rm "$STACK_NAME" --yes --force
+        run: pulumi stack rm "$STACK_NAME" --yes

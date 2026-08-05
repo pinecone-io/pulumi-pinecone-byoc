@@ -573,6 +573,7 @@ gcp = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "boto3" },
     { name = "pytest" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -601,6 +602,7 @@ provides-extras = ["aws", "azure", "gcp"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "boto3", specifier = ">=1.42.0" },
     { name = "pytest", specifier = ">=8.0.0" },
     { name = "pyyaml", specifier = ">=6.0.0" },
     { name = "rich", specifier = ">=14.0.0" },
