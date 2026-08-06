@@ -37,10 +37,36 @@ class VPC(pulumi.ComponentResource):
 
         self.config = config
 
-        if config.existing_vpc_id:
+        if config.existing_vpc_id and (config.private_subnet_ids or config.public_subnet_ids):
+            self._adopt(config)
+        elif config.existing_vpc_id:
             self._adopt_and_create_subnets(name, config)
         else:
             self._create(name, config)
+
+    def _adopt(self, config: AWSConfig) -> None:
+        vpc_id = config.existing_vpc_id
+        if not vpc_id:
+            raise ValueError("Adopt mode requires existing_vpc_id.")
+
+        vpc = aws.ec2.get_vpc(id=vpc_id)
+
+        private_ids = config.private_subnet_ids or []
+        public_ids = config.public_subnet_ids or []
+        if not private_ids:
+            raise ValueError(
+                f"Adopt mode for VPC {vpc_id} requires private_subnet_ids "
+                "(one private subnet per availability zone)."
+            )
+
+        self._verify_subnets_in_vpc(vpc_id, private_ids)
+        if public_ids:
+            self._verify_subnets_in_vpc(vpc_id, public_ids)
+
+        self._vpc_id: pulumi.Input[str] = vpc_id
+        self._public_subnet_ids: list[pulumi.Input[str]] = list(public_ids)
+        self._private_subnet_ids: list[pulumi.Input[str]] = list(private_ids)
+        self._vpc_cidr_blocks = [a.cidr_block for a in vpc.cidr_block_associations]
 
     def _adopt_and_create_subnets(self, name: str, config: AWSConfig) -> None:
         vpc_id = config.existing_vpc_id
@@ -121,6 +147,18 @@ class VPC(pulumi.ComponentResource):
                 "private_subnet_ids": self._private_subnet_ids,
             }
         )
+
+    @staticmethod
+    def _verify_subnets_in_vpc(vpc_id: str, subnet_ids: list[str]) -> None:
+        result = aws.ec2.get_subnets(
+            filters=[
+                {"name": "vpc-id", "values": [vpc_id]},
+                {"name": "subnet-id", "values": subnet_ids},
+            ]
+        )
+        missing = [s for s in subnet_ids if s not in set(result.ids)]
+        if missing:
+            raise ValueError(f"Subnet(s) {', '.join(missing)} were not found in VPC {vpc_id}.")
 
     def _create(self, name: str, config: AWSConfig) -> None:
         self._validate_cidr(config.vpc_cidr)

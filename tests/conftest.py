@@ -123,7 +123,7 @@ def customer_vpc(request):
 
 @pytest.fixture
 def byovpc(request):
-    mode = request.param
+    mode = getattr(request, "param", "public")
     stack = stack_name(mode)
     region = os.environ["AWS_REGION"]
     azs = e2e_azs(request.config)

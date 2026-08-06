@@ -3,6 +3,7 @@
 Deselected by default. Run one shape at a time:
 
     pytest -m integration tests/test_byovpc_integration.py -k carve -s
+    pytest -m integration tests/test_byovpc_integration.py -k public -s
 
 Stack names are "$USER-<mode>". Profile and region come from pytest ini
 (aws_profile / aws_region). Pass --keep-vpc to leave the stack up.
@@ -89,3 +90,34 @@ def test_carve_vpc_has_no_workload_subnets_but_has_egress(ec2, byovpc):
     assert not any(carve.overlaps(net) for net in associated), (
         f"carve range {carve} must be disjoint from the VPC so the module can associate it"
     )
+
+
+@pytest.mark.parametrize("byovpc", ["public"], indirect=True)
+def test_public_vpc_is_adoptable_with_both_subnet_roles(ec2, byovpc):
+    assert_vpc_baseline(ec2, byovpc, "public")
+    vpc_id = byovpc["vpc_id"]
+    azs = [az.strip() for az in byovpc["azs"].split(",")]
+
+    _, public, private = subnets_by_role(ec2, vpc_id)
+    assert {s["AvailabilityZone"] for s in public} == set(azs)
+    assert {s["AvailabilityZone"] for s in private} == set(azs)
+
+    exported_public = byovpc["public_subnet_ids"].split(",")
+    exported_private = byovpc["private_subnet_ids"].split(",")
+    assert set(exported_public) == {s["SubnetId"] for s in public}
+    assert set(exported_private) == {s["SubnetId"] for s in private}
+
+    for subnet in public:
+        route_table = ec2.describe_route_tables(
+            Filters=[{"Name": "association.subnet-id", "Values": [subnet["SubnetId"]]}]
+        )["RouteTables"]
+        assert route_table, f"{subnet['SubnetId']} needs an explicit route table"
+        igw_routes = [
+            r
+            for r in route_table[0]["Routes"]
+            if r.get("DestinationCidrBlock") == "0.0.0.0/0"
+            and str(r.get("GatewayId", "")).startswith("igw-")
+        ]
+        assert igw_routes, f"{subnet['SubnetId']} is elb-tagged but has no IGW route"
+
+    assert_wizard_env(byovpc, {"PINECONE_PUBLIC_ACCESS": "true"})

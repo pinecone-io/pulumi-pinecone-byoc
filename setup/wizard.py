@@ -5,7 +5,6 @@ import contextlib
 import ipaddress
 import json
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -23,12 +22,6 @@ from rich.status import Status
 BLUE = "#002BFF"
 
 PINECONE_VERSION = "main-94a9e90"
-
-RFC1918_RANGES = [
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-]
 
 console = Console()
 
@@ -108,6 +101,13 @@ class WizardState:
 # ---------------------------------------------------------------------------
 # Base Setup Wizard (shared between AWS and GCP)
 # ---------------------------------------------------------------------------
+
+
+RFC1918_RANGES = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
 
 
 class BaseSetupWizard:
@@ -213,47 +213,14 @@ class BaseSetupWizard:
         "api-url": "PINECONE_API_URL",
         "auth0-domain": "PINECONE_AUTH0_DOMAIN",
         "gcp-project": "PINECONE_GCP_PROJECT",
-        "amp-aws-account-id": "PINECONE_AMP_AWS_ACCOUNT_ID",
     }
-    CONTROL_PLANE_KEYS: tuple[str, ...] = ()
 
     def _control_plane_overrides(self) -> dict[str, str]:
         return {
-            key: os.environ[self.CONTROL_PLANE_ENV[key]]
-            for key in self.CONTROL_PLANE_KEYS
-            if os.environ.get(self.CONTROL_PLANE_ENV[key])
+            key: os.environ[env]
+            for key, env in self.CONTROL_PLANE_ENV.items()
+            if os.environ.get(env)
         }
-
-    def _write_main_py(self, output_dir: str, main_py: str) -> None:
-        main_py = main_py.replace("__CONTROL_PLANE__\n", self._control_plane_block())
-        with open(os.path.join(output_dir, "__main__.py"), "w") as f:
-            f.write(main_py)
-        console.print("  [green]✓[/] Created __main__.py")
-
-    def _control_plane_config(self, project_name: str, control_plane: dict[str, str] | None) -> str:
-        return "".join(
-            f"  {project_name}:{key}: {value}\n" for key, value in (control_plane or {}).items()
-        )
-
-    def _control_plane_block(self) -> str:
-        """The generated program reads these from stack config.
-
-        A key the stack does not set is left out rather than passed as None, so it
-        falls back to the installed component's default instead of overriding it.
-        """
-        reads = "".join(
-            f'        "{key.replace("-", "_")}": config.get("{key}"),\n'
-            for key in self.CONTROL_PLANE_KEYS
-        )
-        return (
-            "control_plane = {\n"
-            "    name: value\n"
-            "    for name, value in {\n"
-            f"{reads}"
-            "    }.items()\n"
-            "    if value is not None\n"
-            "}\n"
-        )
 
     def _write_pyproject(self, output_dir: str, cloud: str, dev_source: str | None) -> None:
         pyproject_content = (
@@ -319,7 +286,9 @@ class BaseSetupWizard:
                 )
                 with urllib.request.urlopen(req, timeout=10) as response:
                     response.read()
-                valid = True
+
+                console.print("  [green]✓[/] API key is valid")
+                return True
             except urllib.error.HTTPError as e:
                 if e.code == 401:
                     console.print("  [red]✗[/] Invalid API key")
@@ -329,9 +298,6 @@ class BaseSetupWizard:
             except Exception as e:
                 console.print(f"  [red]✗[/] Failed to validate API key: {e}")
                 return False
-
-        console.print("  [green]✓[/] API key is valid")
-        return valid
 
     def _get_cidr(self) -> str:
         console.print()
@@ -388,14 +354,7 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Project Name')}")
         console.print("  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]")
         console.print()
-        while True:
-            name = self._prompt("Enter project name", "pinecone-byoc", key="project_name").strip()
-            if re.fullmatch(r"[a-z][a-z0-9-]{1,38}", name):
-                return name
-            console.print(
-                "  [red]✗[/] Use 2-39 characters: lowercase letters, digits and dashes, "
-                "starting with a letter"
-            )
+        return self._prompt("Enter project name", "pinecone-byoc", key="project_name")
 
     def _setup_pulumi_backend(self) -> bool:
         console.print()
@@ -477,6 +436,8 @@ class AWSPreflightChecker:
         azs: list[str],
         cidr: str,
         vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
     ):
         import boto3
 
@@ -484,6 +445,8 @@ class AWSPreflightChecker:
         self.azs = azs
         self.cidr = cidr
         self.vpc_id = vpc_id
+        self.public_subnet_ids = public_subnet_ids or []
+        self.private_subnet_ids = private_subnet_ids or []
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -495,8 +458,18 @@ class AWSPreflightChecker:
             checks = [
                 ("VPC Exists", self._check_vpc_exists),
                 ("VPC DNS", self._check_vpc_dns),
-                ("Carve CIDR", self._check_carve_cidr),
-                ("Subnet Egress", self._check_carve_egress),
+                *(
+                    [
+                        ("Subnet AZ Coverage", self._check_adopt_az_coverage),
+                        ("ELB Subnet Tags", self._check_elb_subnet_tags),
+                        ("Subnet Egress", self._check_adopt_egress),
+                    ]
+                    if self.private_subnet_ids or self.public_subnet_ids
+                    else [
+                        ("Carve CIDR", self._check_carve_cidr),
+                        ("Subnet Egress", self._check_carve_egress),
+                    ]
+                ),
                 ("Availability Zones", self._check_az_availability),
                 ("EKS Clusters", self._check_eks_cluster_quota),
                 ("Network Load Balancers", self._check_nlb_quota),
@@ -835,6 +808,45 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("VPC DNS", False, "Failed to check", str(e))
 
+    def _check_adopt_egress(self):
+        try:
+            if not self.private_subnet_ids:
+                self._add_result("Subnet Egress", True, "no private subnets to check")
+                return
+            response = self.ec2.describe_route_tables(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )
+            explicit: dict[str, list] = {}
+            main_routes: list | None = None
+            for t in response.get("RouteTables", []):
+                routes = t.get("Routes", [])
+                for a in t.get("Associations", []):
+                    if a.get("Main"):
+                        main_routes = routes
+                    if a.get("SubnetId"):
+                        explicit[a["SubnetId"]] = routes
+
+            def has_egress(routes):
+                return routes is not None and any(
+                    r.get("DestinationCidrBlock") == "0.0.0.0/0" and r.get("State") == "active"
+                    for r in routes
+                )
+
+            no_egress = [
+                s for s in self.private_subnet_ids if not has_egress(explicit.get(s, main_routes))
+            ]
+            if no_egress:
+                self._add_result(
+                    "Subnet Egress",
+                    False,
+                    f"No default (0.0.0.0/0) route for: {', '.join(no_egress)}",
+                    "Private subnets need a NAT or Transit Gateway default route for node egress",
+                )
+            else:
+                self._add_result("Subnet Egress", True, "private subnets have egress routes")
+        except Exception as e:
+            self._add_result("Subnet Egress", False, "Failed to check", str(e))
+
     def _check_carve_cidr(self):
         try:
             carve = ipaddress.ip_network(self.cidr, strict=False)
@@ -938,9 +950,99 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
 
+    def _check_adopt_az_coverage(self):
+        try:
+            if not self.private_subnet_ids:
+                self._add_result(
+                    "Subnet AZ Coverage",
+                    False,
+                    "No private subnets selected",
+                    "Select a private subnet in each requested AZ",
+                )
+                return
+
+            selected = self.private_subnet_ids + self.public_subnet_ids
+            response = self.ec2.describe_subnets(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )
+            az_by_id = {s["SubnetId"]: s["AvailabilityZone"] for s in response["Subnets"]}
+
+            not_in_vpc = [s for s in selected if s not in az_by_id]
+            if not_in_vpc:
+                self._add_result(
+                    "Subnet AZ Coverage",
+                    False,
+                    f"Not in {self.vpc_id}: {', '.join(not_in_vpc)}",
+                    "Choose subnets that belong to the adopted VPC",
+                )
+                return
+
+            covered = {az_by_id[s] for s in self.private_subnet_ids}
+            missing = [az for az in self.azs if az not in covered]
+            self._add_result(
+                "Subnet AZ Coverage",
+                not missing,
+                f"private subnets cover {', '.join(sorted(covered))}"
+                if not missing
+                else f"No private subnet in: {', '.join(missing)}",
+                f"Select a private subnet in {', '.join(missing)}" if missing else None,
+            )
+        except Exception as e:
+            self._add_result("Subnet AZ Coverage", False, "Failed to check", str(e))
+
+    def _check_elb_subnet_tags(self):
+        try:
+            selected = self.private_subnet_ids + self.public_subnet_ids
+            if not selected:
+                self._add_result("ELB Subnet Tags", True, "no adopted subnets to check")
+                return
+
+            response = self.ec2.describe_subnets(SubnetIds=selected)
+            tags_by_id = {
+                s["SubnetId"]: {t["Key"] for t in s.get("Tags", [])} for s in response["Subnets"]
+            }
+            missing_private = [
+                s
+                for s in self.private_subnet_ids
+                if "kubernetes.io/role/internal-elb" not in tags_by_id.get(s, set())
+            ]
+            missing_public = [
+                s
+                for s in self.public_subnet_ids
+                if "kubernetes.io/role/elb" not in tags_by_id.get(s, set())
+            ]
+
+            problems = []
+            fixes = []
+            if missing_private:
+                problems.append(
+                    f"kubernetes.io/role/internal-elb missing on {', '.join(missing_private)}"
+                )
+                fixes.append(self._tag_fix_command(missing_private, "internal-elb"))
+            if missing_public:
+                problems.append(f"kubernetes.io/role/elb missing on {', '.join(missing_public)}")
+                fixes.append(self._tag_fix_command(missing_public, "elb"))
+
+            self._add_result(
+                "ELB Subnet Tags",
+                not problems,
+                "role tags present on selected subnets" if not problems else "; ".join(problems),
+                "\n    ".join(f for f in fixes if f) if problems else None,
+            )
+        except Exception as e:
+            self._add_result("ELB Subnet Tags", False, "Failed to check", str(e))
+
+    def _tag_fix_command(self, subnet_ids: list[str], role: str) -> str | None:
+        if not subnet_ids:
+            return None
+        return (
+            f"aws ec2 create-tags --region {self.region} "
+            f"--resources {' '.join(subnet_ids)} "
+            f"--tags Key=kubernetes.io/role/{role},Value=1"
+        )
+
 
 class AWSSetupWizard(BaseSetupWizard):
-    CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "gcp-project")
     TOTAL_STEPS = 16
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
@@ -971,7 +1073,7 @@ class AWSSetupWizard(BaseSetupWizard):
         region = self._get_region()
         vpc_id = self._get_vpc(region)
         cidr = self._get_cidr(vpc_id, region)
-        azs = self._get_azs(region)
+        azs = self._get_azs(region, vpc_id)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
         deletion_protection = self._get_deletion_protection()
@@ -983,6 +1085,8 @@ class AWSSetupWizard(BaseSetupWizard):
             azs,
             cidr,
             vpc_id,
+            self._adopted_public_ids,
+            self._adopted_private_ids,
         ):
             return False
 
@@ -1004,18 +1108,9 @@ class AWSSetupWizard(BaseSetupWizard):
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
             vpc_id=vpc_id,
+            public_subnet_ids=self._adopted_public_ids,
+            private_subnet_ids=self._adopted_private_ids,
         )
-
-    @staticmethod
-    def _parse_route_table_ids(value: str) -> dict[str, str] | None:
-        entries = [entry for entry in value.replace(" ", "").split(",") if entry]
-        parsed = {}
-        for entry in entries:
-            az, _, route_table_id = entry.partition("=")
-            if not az or not route_table_id.startswith("rtb-"):
-                raise ValueError(f"PINECONE_ROUTE_TABLE_IDS entry {entry!r} is not <az>=rtb-<id>")
-            parsed[az] = route_table_id
-        return parsed or None
 
     def _run_headless(self, output_dir: str) -> bool:
         console.print("  [dim]Running in headless mode (reading from environment)[/]")
@@ -1037,6 +1132,16 @@ class AWSSetupWizard(BaseSetupWizard):
         custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
         kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
         vpc_id = os.environ.get("PINECONE_EXISTING_VPC_ID", "") or None
+        public_subnet_ids = [
+            s.strip()
+            for s in os.environ.get("PINECONE_PUBLIC_SUBNET_IDS", "").split(",")
+            if s.strip()
+        ]
+        private_subnet_ids = [
+            s.strip()
+            for s in os.environ.get("PINECONE_PRIVATE_SUBNET_IDS", "").split(",")
+            if s.strip()
+        ]
         try:
             route_table_ids = self._parse_route_table_ids(
                 os.environ.get("PINECONE_ROUTE_TABLE_IDS", "")
@@ -1059,6 +1164,8 @@ class AWSSetupWizard(BaseSetupWizard):
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
             vpc_id=vpc_id,
+            public_subnet_ids=public_subnet_ids,
+            private_subnet_ids=private_subnet_ids,
             route_table_ids=route_table_ids,
             control_plane=control_plane,
         )
@@ -1161,7 +1268,7 @@ class AWSSetupWizard(BaseSetupWizard):
     def _get_vpc(self, region: str) -> str | None:
         console.print()
         console.print(f"  {self._step('VPC')}")
-        console.print("  [dim]Deploy into an existing VPC, or leave blank to create a new one[/]")
+        console.print("  [dim]Adopt an existing VPC, or leave blank to create a new one[/]")
         console.print()
 
         with Status("  [dim]Fetching VPCs...[/]", console=console, spinner="dots"):
@@ -1197,10 +1304,58 @@ class AWSSetupWizard(BaseSetupWizard):
             console.print(f"  [yellow]⚠[/] Could not fetch AZs from AWS: {e}")
             return [f"{region}a", f"{region}b", f"{region}c"]
 
-    def _get_azs(self, region: str) -> list[str]:
+    @staticmethod
+    def _parse_route_table_ids(value: str) -> dict[str, str] | None:
+        entries = [entry for entry in value.replace(" ", "").split(",") if entry]
+        parsed = {}
+        for entry in entries:
+            az, _, route_table_id = entry.partition("=")
+            if not az or not route_table_id.startswith("rtb-"):
+                raise ValueError(f"PINECONE_ROUTE_TABLE_IDS entry {entry!r} is not <az>=rtb-<id>")
+            parsed[az] = route_table_id
+        return parsed or None
+
+    def _fetch_subnets_for_vpc(self, region: str, vpc_id: str) -> list[tuple[str, str, str, str]]:
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch subnets for {vpc_id}: {e}")
+            return []
+        subnets = []
+        for s in response["Subnets"]:
+            name = next((t["Value"] for t in s.get("Tags", []) if t["Key"] == "Name"), "")
+            subnets.append((s["SubnetId"], s["AvailabilityZone"], s.get("CidrBlock", ""), name))
+        return subnets
+
+    def _get_azs(self, region: str, vpc_id: str | None = None) -> list[str]:
         console.print()
         console.print(f"  {self._step('Availability Zones')}")
         console.print()
+
+        self._adopted_public_ids = []
+        self._adopted_private_ids = []
+
+        if vpc_id:
+            with Status("  [dim]Fetching subnets for VPC...[/]", console=console, spinner="dots"):
+                subnets = self._fetch_subnets_for_vpc(region, vpc_id)
+            by_az: dict[str, list[tuple[str, str, str]]] = {}
+            for sid, az, cidr, name in subnets:
+                by_az.setdefault(az, []).append((sid, cidr, name))
+            available = sorted(by_az)
+            if available:
+                console.print(f"  [dim]AZs covered by {vpc_id}:[/] {', '.join(available)}")
+            else:
+                console.print(f"  [yellow]⚠[/] No subnets found in {vpc_id}")
+
+            azs_input = self._prompt(
+                "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
+            )
+            azs = [az.strip() for az in azs_input.split(",") if az.strip()]
+            self._adopted_public_ids, self._adopted_private_ids = self._select_subnets(azs, by_az)
+            return azs
 
         with Status("  [dim]Fetching availability zones...[/]", console=console, spinner="dots"):
             available = self._fetch_azs(region)
@@ -1209,7 +1364,43 @@ class AWSSetupWizard(BaseSetupWizard):
         azs_input = self._prompt(
             "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
         )
-        return [az.strip() for az in azs_input.split(",") if az.strip()]
+        azs = [az.strip() for az in azs_input.split(",") if az.strip()]
+        return azs
+
+    def _select_subnets(
+        self, azs: list[str], by_az: dict[str, list[tuple[str, str, str]]]
+    ) -> tuple[list[str], list[str]]:
+        console.print()
+        console.print(
+            "  [dim]Select a private subnet per AZ (required); public is optional "
+            "(Enter to skip). Tab cycles the AZ's subnets.[/]"
+        )
+        public_ids: list[str] = []
+        private_ids: list[str] = []
+        for az in azs:
+            az_subnets = by_az.get(az, [])
+            console.print()
+            console.print(f"  [dim]{az}:[/]")
+            for sid, cidr, name in az_subnets:
+                console.print(f"    [dim]{sid}   {name or '-'}   {cidr}[/]")
+            ids = [s[0] for s in az_subnets]
+            priv = self._prompt(
+                f"Private subnet in {az}",
+                ids[0] if ids else "",
+                key=f"private_subnet_{az}",
+                options=ids,
+            ).strip()
+            if priv:
+                private_ids.append(priv)
+            pub = self._prompt(
+                f"Public subnet in {az} (Enter to skip)",
+                "",
+                key=f"public_subnet_{az}",
+                options=ids,
+            ).strip()
+            if pub:
+                public_ids.append(pub)
+        return public_ids, private_ids
 
     @staticmethod
     def _suggest_carve_cidr(vpc_cidrs: list[str]) -> str:
@@ -1243,15 +1434,14 @@ class AWSSetupWizard(BaseSetupWizard):
         if vpc_id and region:
             with Status("  [dim]Reading VPC CIDR...[/]", console=console, spinner="dots"):
                 cidrs = self._fetch_vpc_cidrs(region, vpc_id)
-            default = self._suggest_carve_cidr(cidrs)
-            console.print("  [dim]A /16 for the subnets created in this VPC.[/]")
+            adopting = bool(self._adopted_private_ids or self._adopted_public_ids)
+            default = cidrs[0] if adopting and cidrs else self._suggest_carve_cidr(cidrs)
             console.print(
-                f"  [dim]{default} is free; it will be associated as a secondary CIDR. "
-                "Tab cycles the VPC's own ranges, or type one.[/]"
+                "  [dim]Suggested from the adopted VPC; Enter to accept, "
+                "Tab to cycle its CIDRs, or type a custom range[/]"
             )
             console.print()
-            options = [default] + [c for c in cidrs if c != default]
-            return self._prompt("VPC CIDR", default, key="cidr", options=options) or default
+            return self._prompt("VPC CIDR", default, key="cidr", options=cidrs) or default
         console.print(f"  [dim]{self.CIDR_DESC}[/]")
         console.print()
         return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="cidr")
@@ -1285,12 +1475,16 @@ class AWSSetupWizard(BaseSetupWizard):
         azs: list[str],
         cidr: str,
         vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
     ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AWSPreflightChecker(region, azs, cidr, vpc_id)
+        checker = AWSPreflightChecker(
+            region, azs, cidr, vpc_id, public_subnet_ids, private_subnet_ids
+        )
         if not checker.run_checks():
             console.print()
             console.print(
@@ -1314,6 +1508,8 @@ class AWSSetupWizard(BaseSetupWizard):
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
         vpc_id: str | None = None,
+        public_subnet_ids: list[str] | None = None,
+        private_subnet_ids: list[str] | None = None,
         route_table_ids: dict[str, str] | None = None,
         control_plane: dict[str, str] | None = None,
     ):
@@ -1350,7 +1546,6 @@ from pulumi_pinecone_byoc.aws import PineconeAWSCluster, PineconeAWSClusterArgs
 
 config = pulumi.Config()
 
-__CONTROL_PLANE__
 cluster = PineconeAWSCluster(
     name="pinecone-aws-cluster",
     args=PineconeAWSClusterArgs(
@@ -1359,6 +1554,8 @@ cluster = PineconeAWSCluster(
         region=config.require("region"),
         vpc_cidr=config.get("vpc-cidr"),
         existing_vpc_id=config.get("existing-vpc-id"),
+        public_subnet_ids=config.get_object("public-subnet-ids"),
+        private_subnet_ids=config.get_object("private-subnet-ids"),
         existing_route_table_ids=config.get_object("existing-route-table-ids"),
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
@@ -1366,7 +1563,10 @@ cluster = PineconeAWSCluster(
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
-        **control_plane,
+        global_env=config.get("global-env"),
+        api_url=config.get("api-url"),
+        auth0_domain=config.get("auth0-domain"),
+        gcp_project=config.get("gcp-project"),
     ),
 )
 
@@ -1379,7 +1579,10 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
 '''
 
-        self._write_main_py(output_dir, main_py)
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
 
         self._write_pyproject(output_dir, "aws", self._dev_source)
 
@@ -1399,10 +1602,19 @@ if config.get_bool("public-access-enabled") is False:
         for az in azs:
             config_content += f"    - {az}\n"
 
-        config_content += self._control_plane_config(project_name, control_plane)
+        for key, value in (control_plane or {}).items():
+            config_content += f"  {project_name}:{key}: {value}\n"
 
         if vpc_id:
             config_content += f"  {project_name}:existing-vpc-id: {vpc_id}\n"
+            if private_subnet_ids:
+                config_content += f"  {project_name}:private-subnet-ids:\n"
+                for sid in private_subnet_ids:
+                    config_content += f"    - {sid}\n"
+            if public_subnet_ids:
+                config_content += f"  {project_name}:public-subnet-ids:\n"
+                for sid in public_subnet_ids:
+                    config_content += f"    - {sid}\n"
 
         if route_table_ids:
             config_content += f"  {project_name}:existing-route-table-ids:\n"
@@ -1822,7 +2034,6 @@ class GCPPreflightChecker:
 
 
 class GCPSetupWizard(BaseSetupWizard):
-    CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "amp-aws-account-id")
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
     DEFAULT_CIDR = "10.112.0.0/16"
@@ -1912,7 +2123,6 @@ class GCPSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
-            control_plane=self._control_plane_overrides(),
         )
 
     def _validate_gcp_creds(self) -> str | None:
@@ -2056,7 +2266,6 @@ class GCPSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         labels: dict[str, str],
-        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -2090,7 +2299,6 @@ from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
 config = pulumi.Config()
 gcp_config = pulumi.Config("gcp")
 
-__CONTROL_PLANE__
 cluster = PineconeGCPCluster(
     "pinecone-byoc",
     PineconeGCPClusterArgs(
@@ -2103,7 +2311,6 @@ cluster = PineconeGCPCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         labels=config.get_object("labels") or {},
-        **control_plane,
     ),
 )
 
@@ -2116,7 +2323,10 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
 '''
 
-        self._write_main_py(output_dir, main_py)
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
 
         self._write_pyproject(output_dir, "gcp", self._dev_source)
 
@@ -2135,8 +2345,6 @@ if config.get_bool("public-access-enabled") is False:
 """
         for zone in zones:
             config_content += f"    - {zone}\n"
-
-        config_content += self._control_plane_config(project_name, control_plane)
 
         # add labels if provided (quote values to handle YAML special chars)
         if labels:
@@ -2678,13 +2886,6 @@ class AzurePreflightChecker:
 
 
 class AzureSetupWizard(BaseSetupWizard):
-    CONTROL_PLANE_KEYS = (
-        "global-env",
-        "api-url",
-        "auth0-domain",
-        "gcp-project",
-        "amp-aws-account-id",
-    )
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - Azure"
     HEADER_SUBTITLE = (
         "This wizard will set up everything you need to deploy Pinecone BYOC on Azure."
@@ -2778,7 +2979,6 @@ class AzureSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             {},
-            control_plane=self._control_plane_overrides(),
         )
 
     def _validate_azure_creds(self) -> str | None:
@@ -2926,7 +3126,6 @@ class AzureSetupWizard(BaseSetupWizard):
         deletion_protection: bool,
         public_access: bool,
         tags: dict[str, str],
-        control_plane: dict[str, str] | None = None,
     ):
         console.print()
 
@@ -2957,7 +3156,6 @@ from pulumi_pinecone_byoc.azure import PineconeAzureCluster, PineconeAzureCluste
 
 config = pulumi.Config()
 
-__CONTROL_PLANE__
 cluster = PineconeAzureCluster(
     "pinecone-byoc",
     PineconeAzureClusterArgs(
@@ -2970,7 +3168,6 @@ cluster = PineconeAzureCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         tags=config.get_object("tags"),
-        **control_plane,
     ),
 )
 
@@ -2985,7 +3182,10 @@ if config.get_bool("public-access-enabled") is False:
     pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
 '''
 
-        self._write_main_py(output_dir, main_py)
+        main_py_path = os.path.join(output_dir, "__main__.py")
+        with open(main_py_path, "w") as f:
+            f.write(main_py)
+        console.print("  [green]✓[/] Created __main__.py")
 
         self._write_pyproject(output_dir, "azure", self._dev_source)
 
@@ -3003,8 +3203,6 @@ if config.get_bool("public-access-enabled") is False:
 """
         for zone in zones:
             config_content += f'    - "{zone}"\n'
-
-        config_content += self._control_plane_config(project_name, control_plane)
 
         if tags:
             config_content += f"  {project_name}:tags:\n"

@@ -45,6 +45,7 @@ jobs:
           else
             matrix='{"include":[
               {"shape":"carve","tier":"network"},
+              {"shape":"public","tier":"network"},
               {"shape":"vanilla","tier":"network"},
               {"shape":"carve","tier":"e2e"}
             ]}'

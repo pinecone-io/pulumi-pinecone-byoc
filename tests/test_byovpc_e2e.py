@@ -7,7 +7,7 @@ fixture handed PINECONE_PUBLIC_ACCESS=true must answer; one that asked for no
 public access must stay unreachable. Deselected by default; each run takes tens of
 minutes and provisions real infrastructure.
 
-    pytest -m e2e tests/test_byovpc_e2e.py -k e2e_carve   -s
+    pytest -m e2e tests/test_byovpc_e2e.py -k "e2e_byovpc and carve" -s
 
 Requires PINECONE_API_KEY. Pass --keep-vpc to leave both stacks up.
 
@@ -95,9 +95,8 @@ def byoc_project(request, byovpc):
             streamer.join(timeout=10)
 
 
-@pytest.mark.parametrize("byovpc", ["carve"], indirect=True)
-def test_e2e_carve(byoc_project, byovpc):
-    print(f"\ndeployed BYOC with module-carved subnets: {byoc_project}")
+@pytest.mark.parametrize("byovpc", ["carve", "public"], indirect=True)
+def test_e2e_byovpc(byoc_project, byovpc):
     if parse_wizard_env(byovpc["wizard_env"])["PINECONE_PUBLIC_ACCESS"] == "true":
         assert_data_plane_answers(byoc_project)
     else:
