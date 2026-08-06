@@ -14,6 +14,10 @@ from pulumi_pinecone_byoc.aws.vpc import VPC
 
 config = pulumi.Config()
 
+# the same default the generated cluster program applies, so a carve that asked for
+# no ingress does not go looking for the customer's internet gateway
+public_access = config.get_bool("public-access-enabled")
+
 vpc = VPC(
     "pc-vpc",
     AWSConfig(
@@ -21,6 +25,7 @@ vpc = VPC(
         availability_zones=config.require_object("availability-zones"),
         vpc_cidr=config.require("vpc-cidr"),
         existing_vpc_id=config.get("existing-vpc-id"),
+        public_access=True if public_access is None else public_access,
     ),
 )
 

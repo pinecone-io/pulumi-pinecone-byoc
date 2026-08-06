@@ -222,27 +222,29 @@ class VPC(pulumi.ComponentResource):
         gateway, and the gateway in an adopted VPC is the customer's. We add a route
         table of our own that points at it rather than touching theirs.
         """
-        gateways = aws.ec2.get_internet_gateways(
-            filters=[{"name": "attachment.vpc-id", "values": [vpc_id]}]
-        )
-        if not gateways.ids:
-            raise ValueError(
-                f"VPC {vpc_id} has no internet gateway, so an internet-facing load "
-                "balancer cannot be placed in it. Attach one, or deploy with public "
-                "access disabled to reach the data plane over PrivateLink."
+        try:
+            gateway = aws.ec2.get_internet_gateway(
+                filters=[{"name": "attachment.vpc-id", "values": [vpc_id]}]
             )
+        except Exception as exc:
+            raise ValueError(
+                f"No internet gateway found attached to VPC {vpc_id}, so an "
+                "internet-facing load balancer cannot be placed in it. Attach one, or "
+                "deploy with public access disabled to reach the data plane over "
+                "PrivateLink."
+            ) from exc
 
-        public_rt = aws.ec2.RouteTable(
+        self.public_route_table = aws.ec2.RouteTable(
             f"{name}-carved-public-rt",
             vpc_id=vpc_id,
             tags=config.tags(Name=f"{config.resource_prefix}-carved-public-rt"),
             opts=child_opts,
         )
-        aws.ec2.Route(
+        self.public_route = aws.ec2.Route(
             f"{name}-carved-public-route",
-            route_table_id=public_rt.id,
+            route_table_id=self.public_route_table.id,
             destination_cidr_block="0.0.0.0/0",
-            gateway_id=gateways.ids[0],
+            gateway_id=gateway.id,
             opts=child_opts,
         )
 
@@ -263,7 +265,7 @@ class VPC(pulumi.ComponentResource):
             aws.ec2.RouteTableAssociation(
                 f"{name}-carved-public-rta-{az}",
                 subnet_id=subnet.id,
-                route_table_id=public_rt.id,
+                route_table_id=self.public_route_table.id,
                 opts=child_opts,
             )
 
