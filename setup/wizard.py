@@ -5,6 +5,7 @@ import contextlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -22,6 +23,12 @@ from rich.status import Status
 BLUE = "#002BFF"
 
 PINECONE_VERSION = "main-94a9e90"
+
+RFC1918_RANGES = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
 
 console = Console()
 
@@ -312,9 +319,7 @@ class BaseSetupWizard:
                 )
                 with urllib.request.urlopen(req, timeout=10) as response:
                     response.read()
-
-                console.print("  [green]✓[/] API key is valid")
-                return True
+                valid = True
             except urllib.error.HTTPError as e:
                 if e.code == 401:
                     console.print("  [red]✗[/] Invalid API key")
@@ -324,6 +329,9 @@ class BaseSetupWizard:
             except Exception as e:
                 console.print(f"  [red]✗[/] Failed to validate API key: {e}")
                 return False
+
+        console.print("  [green]✓[/] API key is valid")
+        return valid
 
     def _get_cidr(self) -> str:
         console.print()
@@ -380,7 +388,14 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Project Name')}")
         console.print("  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]")
         console.print()
-        return self._prompt("Enter project name", "pinecone-byoc", key="project_name")
+        while True:
+            name = self._prompt("Enter project name", "pinecone-byoc", key="project_name").strip()
+            if re.fullmatch(r"[a-z][a-z0-9-]{1,38}", name):
+                return name
+            console.print(
+                "  [red]✗[/] Use 2-39 characters: lowercase letters, digits and dashes, "
+                "starting with a letter"
+            )
 
     def _setup_pulumi_backend(self) -> bool:
         console.print()
@@ -456,12 +471,19 @@ class BaseSetupWizard:
 
 
 class AWSPreflightChecker:
-    def __init__(self, region: str, azs: list[str], cidr: str):
+    def __init__(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+    ):
         import boto3
 
         self.region = region
         self.azs = azs
         self.cidr = cidr
+        self.vpc_id = vpc_id
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -469,17 +491,29 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        checks = [
-            ("VPC Quota", self._check_vpc_quota),
-            ("Elastic IPs", self._check_eip_quota),
-            ("NAT Gateways", self._check_nat_gateway_quota),
-            ("Internet Gateways", self._check_igw_quota),
-            ("EKS Clusters", self._check_eks_cluster_quota),
-            ("Network Load Balancers", self._check_nlb_quota),
-            ("Availability Zones", self._check_az_availability),
-            ("Instance Types", self._check_instance_types),
-            ("VPC CIDR", self._check_cidr_conflicts),
-        ]
+        if self.vpc_id:
+            checks = [
+                ("VPC Exists", self._check_vpc_exists),
+                ("VPC DNS", self._check_vpc_dns),
+                ("Carve CIDR", self._check_carve_cidr),
+                ("Subnet Egress", self._check_carve_egress),
+                ("Availability Zones", self._check_az_availability),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Instance Types", self._check_instance_types),
+            ]
+        else:
+            checks = [
+                ("VPC Quota", self._check_vpc_quota),
+                ("Elastic IPs", self._check_eip_quota),
+                ("NAT Gateways", self._check_nat_gateway_quota),
+                ("Internet Gateways", self._check_igw_quota),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Availability Zones", self._check_az_availability),
+                ("Instance Types", self._check_instance_types),
+                ("VPC CIDR", self._check_cidr_conflicts),
+            ]
 
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
@@ -759,10 +793,155 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
 
+    def _check_vpc_exists(self):
+        try:
+            response = self.ec2.describe_vpcs(VpcIds=[self.vpc_id])
+            if response["Vpcs"]:
+                cidr = response["Vpcs"][0].get("CidrBlock", "?")
+                self._add_result("VPC Exists", True, f"{self.vpc_id} ({cidr})")
+            else:
+                self._add_result("VPC Exists", False, f"{self.vpc_id} not found in {self.region}")
+        except Exception as e:
+            self._add_result(
+                "VPC Exists",
+                False,
+                f"{self.vpc_id} not found in {self.region}",
+                str(e),
+            )
+
+    def _check_vpc_dns(self):
+        try:
+            support = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsSupport"
+            )["EnableDnsSupport"]["Value"]
+            hostnames = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsHostnames"
+            )["EnableDnsHostnames"]["Value"]
+
+            missing = []
+            if not support:
+                missing.append("enableDnsSupport")
+            if not hostnames:
+                missing.append("enableDnsHostnames")
+
+            self._add_result(
+                "VPC DNS",
+                not missing,
+                "DNS support and hostnames enabled"
+                if not missing
+                else f"Disabled: {', '.join(missing)}",
+                f"Enable {', '.join(missing)} on {self.vpc_id}" if missing else None,
+            )
+        except Exception as e:
+            self._add_result("VPC DNS", False, "Failed to check", str(e))
+
+    def _check_carve_cidr(self):
+        try:
+            carve = ipaddress.ip_network(self.cidr, strict=False)
+        except ValueError as e:
+            self._add_result("Carve CIDR", False, f"Invalid CIDR {self.cidr}", str(e))
+            return
+        if carve.prefixlen != 16:
+            self._add_result(
+                "Carve CIDR",
+                False,
+                f"{self.cidr} must be a /16",
+                "The subnet layout requires a /16 carve range",
+            )
+            return
+        try:
+            response = self.ec2.describe_vpcs(VpcIds=[self.vpc_id])
+            assoc = [
+                a["CidrBlock"]
+                for a in response["Vpcs"][0].get("CidrBlockAssociationSet", [])
+                if a.get("CidrBlockState", {}).get("State") == "associated"
+            ]
+            nets = [ipaddress.ip_network(c) for c in assoc]
+            taken = self.ec2.describe_subnets(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )["Subnets"]
+            clashes = [
+                s["SubnetId"]
+                for s in taken
+                if s.get("CidrBlock") and carve.overlaps(ipaddress.ip_network(s["CidrBlock"]))
+            ]
+            if clashes:
+                self._add_result(
+                    "Carve CIDR",
+                    False,
+                    f"{self.cidr} overlaps existing subnets: {', '.join(clashes)}",
+                    "Pick a range the VPC does not use yet; creating subnets there fails",
+                )
+                return
+            within = any(carve.subnet_of(n) for n in nets)
+            overlaps = any(carve.overlaps(n) for n in nets)
+            if within:
+                self._add_result(
+                    "Carve CIDR", True, f"{self.cidr} fits inside the VPC ({', '.join(assoc)})"
+                )
+            elif not overlaps:
+                self._add_result(
+                    "Carve CIDR",
+                    True,
+                    f"{self.cidr} will be associated to {self.vpc_id} as a secondary CIDR",
+                )
+            else:
+                self._add_result(
+                    "Carve CIDR",
+                    False,
+                    f"{self.cidr} partially overlaps a VPC CIDR: {', '.join(assoc)}",
+                    "Pick a /16 that is either inside an existing CIDR or fully disjoint",
+                )
+        except Exception as e:
+            self._add_result("Carve CIDR", False, "Failed to check", str(e))
+
+    def _check_carve_egress(self):
+        try:
+            response = self.ec2.describe_route_tables(
+                Filters=[
+                    {"Name": "vpc-id", "Values": [self.vpc_id]},
+                    {"Name": "association.main", "Values": ["true"]},
+                ]
+            )
+            tables = response.get("RouteTables", [])
+            if not tables:
+                self._add_result(
+                    "Subnet Egress", False, f"No main route table found for {self.vpc_id}"
+                )
+                return
+            routes = tables[0].get("Routes", [])
+            default = next(
+                (
+                    r
+                    for r in routes
+                    if r.get("DestinationCidrBlock") == "0.0.0.0/0" and r.get("State") == "active"
+                ),
+                None,
+            )
+            if default:
+                target = (
+                    default.get("NatGatewayId")
+                    or default.get("TransitGatewayId")
+                    or default.get("GatewayId")
+                    or default.get("VpcPeeringConnectionId")
+                    or "?"
+                )
+                self._add_result("Subnet Egress", True, f"main route table egresses via {target}")
+            else:
+                self._add_result(
+                    "Subnet Egress",
+                    False,
+                    f"{self.vpc_id} main route table has no default (0.0.0.0/0) route",
+                    "Carved subnets inherit the main route table; add a NAT or "
+                    "Transit Gateway default route to it, or the EKS nodes get no egress",
+                )
+        except Exception as e:
+            self._add_result("Subnet Egress", False, "Failed to check", str(e))
+
 
 class AWSSetupWizard(BaseSetupWizard):
     CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "gcp-project")
-    TOTAL_STEPS = 15
+    TOTAL_STEPS = 16
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/16"
@@ -790,15 +969,21 @@ class AWSSetupWizard(BaseSetupWizard):
             return False
 
         region = self._get_region()
+        vpc_id = self._get_vpc(region)
+        cidr = self._get_cidr(vpc_id, region)
         azs = self._get_azs(region)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
-        cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
         tags = self._get_custom_metadata()
 
-        if not self._run_preflight_checks(region, azs, cidr):
+        if not self._run_preflight_checks(
+            region,
+            azs,
+            cidr,
+            vpc_id,
+        ):
             return False
 
         project_name = self._get_project_name()
@@ -818,7 +1003,19 @@ class AWSSetupWizard(BaseSetupWizard):
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            vpc_id=vpc_id,
         )
+
+    @staticmethod
+    def _parse_route_table_ids(value: str) -> dict[str, str] | None:
+        entries = [entry for entry in value.replace(" ", "").split(",") if entry]
+        parsed = {}
+        for entry in entries:
+            az, _, route_table_id = entry.partition("=")
+            if not az or not route_table_id.startswith("rtb-"):
+                raise ValueError(f"PINECONE_ROUTE_TABLE_IDS entry {entry!r} is not <az>=rtb-<id>")
+            parsed[az] = route_table_id
+        return parsed or None
 
     def _run_headless(self, output_dir: str) -> bool:
         console.print("  [dim]Running in headless mode (reading from environment)[/]")
@@ -839,6 +1036,14 @@ class AWSSetupWizard(BaseSetupWizard):
         project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
         custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
         kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
+        vpc_id = os.environ.get("PINECONE_EXISTING_VPC_ID", "") or None
+        try:
+            route_table_ids = self._parse_route_table_ids(
+                os.environ.get("PINECONE_ROUTE_TABLE_IDS", "")
+            )
+        except ValueError as exc:
+            console.print(f"  [red]✗[/] {exc}")
+            return False
         control_plane = self._control_plane_overrides()
 
         return self._generate_project(
@@ -853,6 +1058,8 @@ class AWSSetupWizard(BaseSetupWizard):
             {},
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            vpc_id=vpc_id,
+            route_table_ids=route_table_ids,
             control_plane=control_plane,
         )
 
@@ -915,6 +1122,68 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
         return self._prompt("Enter AWS region", "us-east-1", key="region")
 
+    def _fetch_vpcs(self, region: str) -> list[tuple[str, str, str]]:
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_vpcs()
+            vpcs = []
+            for vpc in response["Vpcs"]:
+                name = next((t["Value"] for t in vpc.get("Tags", []) if t["Key"] == "Name"), "")
+                vpcs.append((vpc["VpcId"], name, vpc.get("CidrBlock", "")))
+            return vpcs
+        except Exception as e:
+            console.print(f"  [yellow]⚠[/] Could not fetch VPCs from AWS: {e}")
+            return []
+
+    def _fetch_vpc_cidrs(self, region: str, vpc_id: str) -> list[str]:
+        import boto3
+
+        try:
+            ec2 = boto3.client("ec2", region_name=region)
+            response = ec2.describe_vpcs(VpcIds=[vpc_id])
+            if not response["Vpcs"]:
+                return []
+            vpc = response["Vpcs"][0]
+            associated = [
+                a["CidrBlock"]
+                for a in vpc.get("CidrBlockAssociationSet", [])
+                if a.get("CidrBlockState", {}).get("State") == "associated"
+            ]
+            primary = vpc.get("CidrBlock")
+            if primary:
+                associated = [primary] + [c for c in associated if c != primary]
+            return associated
+        except Exception:
+            return []
+
+    def _get_vpc(self, region: str) -> str | None:
+        console.print()
+        console.print(f"  {self._step('VPC')}")
+        console.print("  [dim]Deploy into an existing VPC, or leave blank to create a new one[/]")
+        console.print()
+
+        with Status("  [dim]Fetching VPCs...[/]", console=console, spinner="dots"):
+            vpcs = self._fetch_vpcs(region)
+
+        if vpcs:
+            console.print(f"  [dim]Existing VPCs in {region}:[/]")
+            for vid, name, cidr in vpcs:
+                console.print(f"    [dim]{vid}   {name or '-'}   {cidr}[/]")
+            console.print(
+                "  [dim]Tab cycles through VPC IDs; Enter on a blank line creates a new one[/]"
+            )
+            console.print()
+
+        prompt = "Enter VPC ID (or press Enter to create a new one)"
+        if vpcs:
+            vpc_id = read_input_with_cycle(prompt, [vid for vid, _, _ in vpcs]).strip()
+        else:
+            vpc_id = self._prompt(prompt, "").strip()
+
+        return vpc_id or None
+
     def _fetch_azs(self, region: str) -> list[str]:
         import boto3
 
@@ -935,14 +1204,57 @@ class AWSSetupWizard(BaseSetupWizard):
 
         with Status("  [dim]Fetching availability zones...[/]", console=console, spinner="dots"):
             available = self._fetch_azs(region)
-
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         azs_input = self._prompt(
             "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
         )
-        azs = [az.strip() for az in azs_input.split(",")]
-        return azs
+        return [az.strip() for az in azs_input.split(",") if az.strip()]
+
+    @staticmethod
+    def _suggest_carve_cidr(vpc_cidrs: list[str]) -> str:
+        """A /16 the VPC does not already use, preferring its own RFC 1918 block.
+
+        Defaulting to a range the VPC already carries would put our subnets on
+        addresses its existing subnets may hold, which only fails once AWS rejects
+        CreateSubnet.
+        """
+        used = []
+        for cidr in vpc_cidrs:
+            try:
+                used.append(ipaddress.ip_network(cidr))
+            except ValueError:
+                continue
+        blocks = sorted(
+            RFC1918_RANGES,
+            key=lambda block: not any(net.subnet_of(block) for net in used),
+        )
+        for block in blocks:
+            if block.prefixlen > 16:
+                continue
+            for candidate in block.subnets(new_prefix=16):
+                if not any(candidate.overlaps(net) for net in used):
+                    return str(candidate)
+        return AWSSetupWizard.DEFAULT_CIDR
+
+    def _get_cidr(self, vpc_id: str | None = None, region: str | None = None) -> str:
+        console.print()
+        console.print(f"  {self._step('VPC CIDR Block')}")
+        if vpc_id and region:
+            with Status("  [dim]Reading VPC CIDR...[/]", console=console, spinner="dots"):
+                cidrs = self._fetch_vpc_cidrs(region, vpc_id)
+            default = self._suggest_carve_cidr(cidrs)
+            console.print("  [dim]A /16 for the subnets created in this VPC.[/]")
+            console.print(
+                f"  [dim]{default} is free; it will be associated as a secondary CIDR. "
+                "Tab cycles the VPC's own ranges, or type one.[/]"
+            )
+            console.print()
+            options = [default] + [c for c in cidrs if c != default]
+            return self._prompt("VPC CIDR", default, key="cidr", options=options) or default
+        console.print(f"  [dim]{self.CIDR_DESC}[/]")
+        console.print()
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="cidr")
 
     def _get_custom_ami_id(self) -> str | None:
         console.print()
@@ -967,12 +1279,18 @@ class AWSSetupWizard(BaseSetupWizard):
         arn = self._prompt("Enter KMS key ARN (or press Enter to skip)", "", key="kms_key_arn")
         return arn or None
 
-    def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
+    def _run_preflight_checks(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+    ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AWSPreflightChecker(region, azs, cidr)
+        checker = AWSPreflightChecker(region, azs, cidr, vpc_id)
         if not checker.run_checks():
             console.print()
             console.print(
@@ -995,6 +1313,8 @@ class AWSSetupWizard(BaseSetupWizard):
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
+        vpc_id: str | None = None,
+        route_table_ids: dict[str, str] | None = None,
         control_plane: dict[str, str] | None = None,
     ):
         console.print()
@@ -1038,6 +1358,8 @@ cluster = PineconeAWSCluster(
         pinecone_version=config.require("pinecone-version"),
         region=config.require("region"),
         vpc_cidr=config.get("vpc-cidr"),
+        existing_vpc_id=config.get("existing-vpc-id"),
+        existing_route_table_ids=config.get_object("existing-route-table-ids"),
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
@@ -1078,6 +1400,14 @@ if config.get_bool("public-access-enabled") is False:
             config_content += f"    - {az}\n"
 
         config_content += self._control_plane_config(project_name, control_plane)
+
+        if vpc_id:
+            config_content += f"  {project_name}:existing-vpc-id: {vpc_id}\n"
+
+        if route_table_ids:
+            config_content += f"  {project_name}:existing-route-table-ids:\n"
+            for az, route_table_id in route_table_ids.items():
+                config_content += f"    {az}: {route_table_id}\n"
 
         # add custom AMI ID if provided
         if custom_ami_id:
