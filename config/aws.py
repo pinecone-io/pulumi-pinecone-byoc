@@ -57,6 +57,10 @@ class AWSConfig(BaseConfig):
 
     # Networking
 
+    existing_vpc_id: str | None = None
+
+    existing_route_table_ids: dict[str, str] | None = None
+
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 
