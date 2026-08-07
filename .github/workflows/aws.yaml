@@ -2,6 +2,23 @@ name: E2E AWS
 
 on:
   workflow_call:
+    inputs:
+      shape:
+        description: >-
+          Which network shape to deploy. Only vanilla (the module creates its own
+          VPC) exists so far; the BYO-VPC shapes add themselves to the matrix.
+        type: string
+        default: vanilla
+      tier:
+        description: >-
+          e2e installs this commit from scratch; upgrade installs the baseline
+          release and upgrades it to this commit, which is two deploys.
+        type: string
+        default: upgrade
+      baseline:
+        description: git ref the upgrade tier installs before upgrading to this commit
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -13,7 +30,7 @@ env:
 jobs:
   up:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: ${{ inputs.tier == 'upgrade' && 240 || 150 }}
     environment: aws-e2e
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +40,13 @@ jobs:
       - name: Set stack prefix
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TIER: ${{ inputs.tier }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -54,17 +72,21 @@ jobs:
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
 
-      - name: Deploy and tear down
+      - name: Run and tear down (${{ inputs.tier }}, ${{ inputs.shape }})
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: uv run --extra aws pytest -m e2e -s --keep
+          UPGRADE_BASELINE_REF: ${{ inputs.baseline }}
+        run: |
+          uv run --extra aws pytest \
+            -m "${{ inputs.tier }}" \
+            -k "${{ inputs.shape }}" -s --keep
 
       - name: Upload run logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-logs
+          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-logs
           path: |
             .e2e-logs/
             .e2e/**/*.log
@@ -89,12 +111,13 @@ jobs:
       - name: Set stack prefix
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TIER: ${{ inputs.tier }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
