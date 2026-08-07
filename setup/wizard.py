@@ -34,6 +34,12 @@ class PreflightResult:
     details: str | None = None
 
 
+class HeadlessInputRequired(Exception):
+    def __init__(self, message: str):
+        super().__init__(message)
+        self.field = message
+
+
 # ---------------------------------------------------------------------------
 # Resumable answer state
 # ---------------------------------------------------------------------------
@@ -120,10 +126,12 @@ class BaseSetupWizard:
         stack_name: str = "prod",
         skip_install: bool = False,
         dev_source: str | None = None,
+        destroy: bool = False,
     ):
         self.results: list[PreflightResult] = []
         self._current_step = 0
         self._headless = headless
+        self._destroy = destroy
         self._stack_name = stack_name
         self._skip_install = skip_install
         # resumable answer state (created by _maybe_resume; None in headless)
@@ -153,6 +161,14 @@ class BaseSetupWizard:
         if key and self._state is not None:
             effective_default = self._state.get(key, effective_default)
 
+        if self._headless:
+            value = os.environ.get(key, "") if key else ""
+            if value:
+                return value
+            if default is not None:
+                return default
+            raise HeadlessInputRequired(message)
+
         if options:
             value = read_input_with_cycle(message, options, effective_default)
         else:
@@ -161,6 +177,10 @@ class BaseSetupWizard:
         if key and self._state is not None and not password:
             self._state.set(key, value)
         return value
+
+    @staticmethod
+    def _yes(response: str) -> bool:
+        return response.strip().lower() in ("", "y", "yes", "true", "1")
 
     def _zone_default(self, key: str, available: list[str]) -> str:
         if self._state is not None:
@@ -190,7 +210,7 @@ class BaseSetupWizard:
             )
             sys.exit(1)
 
-        saved_region = self._state.get("region")
+        saved_region = self._state.get("PINECONE_REGION")
         summary = self.CLOUD_NAME + (f", region {saved_region}" if saved_region else "")
         console.print()
         console.print(
@@ -209,6 +229,20 @@ class BaseSetupWizard:
         "amp-aws-account-id": "PINECONE_AMP_AWS_ACCOUNT_ID",
     }
     CONTROL_PLANE_KEYS: tuple[str, ...] = ()
+
+    def _validated_api_key(self, output_dir: str) -> str | None:
+        if not self._headless:
+            self._print_header()
+            self._maybe_resume(output_dir)
+
+        api_key = self._get_api_key()
+        if not api_key:
+            return None
+
+        if not self._validate_api_key(api_key):
+            return None
+
+        return api_key
 
     def _control_plane_overrides(self) -> dict[str, str]:
         return {
@@ -304,10 +338,12 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Validating API Key')}")
         console.print()
 
+        base = self._control_plane_overrides().get("api-url", "https://api.pinecone.io")
+
         with Status("  [dim]Checking API key...[/]", console=console, spinner="dots"):
             try:
                 req = urllib.request.Request(
-                    "https://api.pinecone.io/indexes",
+                    f"{base.rstrip('/')}/indexes",
                     headers={"Api-Key": api_key},
                 )
                 with urllib.request.urlopen(req, timeout=10) as response:
@@ -330,15 +366,19 @@ class BaseSetupWizard:
         console.print(f"  {self._step('VPC CIDR Block')}")
         console.print(f"  [dim]{self.CIDR_DESC}[/]")
         console.print()
-        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="cidr")
+        return self._prompt("Enter CIDR block", self.DEFAULT_CIDR, key="PINECONE_VPC_CIDR")
 
     def _get_deletion_protection(self) -> bool:
         console.print()
         console.print(f"  {self._step('Deletion Protection')}")
         console.print(f"  [dim]{self.DELETION_PROTECTION_DESC}[/]")
         console.print()
-        response = self._prompt("Enable deletion protection? (Y/n)", "Y", key="deletion_protection")
-        return response.lower() in ("y", "yes", "")
+        response = self._prompt(
+            "Enable deletion protection? (Y/n)",
+            "Y",
+            key="PINECONE_DELETION_PROTECTION",
+        )
+        return self._yes(response)
 
     def _get_public_access(self) -> bool:
         console.print()
@@ -346,8 +386,8 @@ class BaseSetupWizard:
         console.print("  [dim]Public access allows connections from the internet[/]")
         console.print(f"  [dim]{self.PRIVATE_ACCESS_DESC}[/]")
         console.print()
-        response = self._prompt("Enable public access? (Y/n)", "Y", key="public_access")
-        return response.lower() in ("y", "yes", "")
+        response = self._prompt("Enable public access? (Y/n)", "Y", key="PINECONE_PUBLIC_ACCESS")
+        return self._yes(response)
 
     def _get_custom_metadata(self) -> dict[str, str]:
         name = self.METADATA_NAME
@@ -359,7 +399,11 @@ class BaseSetupWizard:
         console.print("  [dim]Format: key=value, comma-separated (e.g., team=platform,env=prod)[/]")
         console.print()
 
-        input_val = self._prompt(f"Enter {name} (or press Enter to skip)", "", key=f"{name}_input")
+        input_val = self._prompt(
+            f"Enter {name} (or press Enter to skip)",
+            "",
+            key=f"PINECONE_{name.upper()}",
+        )
         if not input_val:
             return {}
 
@@ -380,7 +424,7 @@ class BaseSetupWizard:
         console.print(f"  {self._step('Project Name')}")
         console.print("  [dim]A short name for this deployment (e.g., 'pinecone-prod')[/]")
         console.print()
-        return self._prompt("Enter project name", "pinecone-byoc", key="project_name")
+        return self._prompt("Enter project name", "pinecone-byoc", key="PINECONE_PROJECT_NAME")
 
     def _setup_pulumi_backend(self) -> bool:
         console.print()
@@ -388,13 +432,13 @@ class BaseSetupWizard:
         console.print("  [dim]Where to store infrastructure state[/]")
         console.print()
 
-        backend = self._prompt("Backend (local/cloud)", "local", key="backend").lower()
+        backend = self._prompt("Backend (local/cloud)", "local", key="PULUMI_BACKEND").lower()
         use_local = backend != "cloud"
 
         if use_local:
             console.print()
             console.print("  [dim]Enter a passphrase to encrypt secrets (remember this!)[/]")
-            passphrase = self._prompt("Passphrase", password=True)
+            passphrase = self._prompt("Passphrase", password=True, key="PULUMI_CONFIG_PASSPHRASE")
             if not passphrase:
                 console.print("  [red]✗[/] Passphrase is required for local backend")
                 return False
@@ -773,17 +817,8 @@ class AWSSetupWizard(BaseSetupWizard):
     CLOUD_NAME = "AWS"
 
     def run(self, output_dir: str = ".") -> bool:
-        if self._headless:
-            return self._run_headless(output_dir)
-
-        self._print_header()
-        self._maybe_resume(output_dir)
-
-        api_key = self._get_api_key()
+        api_key = self._validated_api_key(output_dir)
         if not api_key:
-            return False
-
-        if not self._validate_api_key(api_key):
             return False
 
         if not self._validate_aws_creds():
@@ -798,7 +833,7 @@ class AWSSetupWizard(BaseSetupWizard):
         public_access = self._get_public_access()
         tags = self._get_custom_metadata()
 
-        if not self._run_preflight_checks(region, azs, cidr):
+        if not self._destroy and not self._run_preflight_checks(region, azs, cidr):
             return False
 
         project_name = self._get_project_name()
@@ -818,42 +853,7 @@ class AWSSetupWizard(BaseSetupWizard):
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
-        )
-
-    def _run_headless(self, output_dir: str) -> bool:
-        console.print("  [dim]Running in headless mode (reading from environment)[/]")
-
-        api_key = os.environ.get("PINECONE_API_KEY")
-        if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
-            return False
-
-        region = os.environ.get("PINECONE_REGION", "us-east-1")
-        azs_str = os.environ.get("PINECONE_AZS", f"{region}a,{region}b")
-        azs = [az.strip() for az in azs_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
-        deletion_protection = (
-            os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
-        )
-        public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
-        project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
-        custom_ami_id = os.environ.get("PINECONE_CUSTOM_AMI_ID", "") or None
-        kms_key_arn = os.environ.get("PINECONE_KMS_KEY_ARN", "") or None
-        control_plane = self._control_plane_overrides()
-
-        return self._generate_project(
-            output_dir,
-            project_name,
-            api_key,
-            region,
-            azs,
-            cidr,
-            deletion_protection,
-            public_access,
-            {},
-            custom_ami_id=custom_ami_id,
-            kms_key_arn=kms_key_arn,
-            control_plane=control_plane,
+            control_plane=self._control_plane_overrides(),
         )
 
     def _select_aws_profile(self) -> None:
@@ -865,12 +865,16 @@ class AWSSetupWizard(BaseSetupWizard):
             )
             return
 
-        available = boto3.Session().available_profiles
         default = os.environ.get("AWS_PROFILE") or "default"
+        if self._headless:
+            console.print(f"  [dim]Using AWS profile {default}[/]")
+            return
+
+        available = boto3.Session().available_profiles
         options = [default] + [p for p in available if p != default]
 
         console.print("  [dim]Tab cycles through configured profiles; Enter to accept[/]")
-        profile = self._prompt("AWS profile", default, key="aws_profile", options=options)
+        profile = self._prompt("AWS profile", default, key="AWS_PROFILE", options=options)
         console.print()
 
         if profile:
@@ -913,7 +917,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
         console.print(f"  {self._step('AWS Region')}")
         console.print()
-        return self._prompt("Enter AWS region", "us-east-1", key="region")
+        return self._prompt("Enter AWS region", "us-east-1", key="PINECONE_REGION")
 
     def _fetch_azs(self, region: str) -> list[str]:
         import boto3
@@ -939,7 +943,9 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         azs_input = self._prompt(
-            "Enter AZs (comma-separated)", self._zone_default("azs", available), key="azs"
+            "Enter AZs (comma-separated)",
+            self._zone_default("PINECONE_AZS", available),
+            key="PINECONE_AZS",
         )
         azs = [az.strip() for az in azs_input.split(",")]
         return azs
@@ -951,7 +957,11 @@ class AWSSetupWizard(BaseSetupWizard):
             "  [dim]Specify a custom AMI ID for EKS nodes (leave blank for default AWS AMI)[/]"
         )
         console.print()
-        ami_id = self._prompt("Enter AMI ID (or press Enter to skip)", "", key="custom_ami_id")
+        ami_id = self._prompt(
+            "Enter AMI ID (or press Enter to skip)",
+            "",
+            key="PINECONE_CUSTOM_AMI_ID",
+        )
         return ami_id or None
 
     def _get_kms_key_arn(self) -> str | None:
@@ -964,7 +974,11 @@ class AWSSetupWizard(BaseSetupWizard):
             "  [dim]Leave blank to use default AWS-managed encryption (AES256/default RDS key).[/]"
         )
         console.print()
-        arn = self._prompt("Enter KMS key ARN (or press Enter to skip)", "", key="kms_key_arn")
+        arn = self._prompt(
+            "Enter KMS key ARN (or press Enter to skip)",
+            "",
+            key="PINECONE_KMS_KEY_ARN",
+        )
         return arn or None
 
     def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
@@ -1502,17 +1516,8 @@ class GCPSetupWizard(BaseSetupWizard):
     CLOUD_NAME = "GCP"
 
     def run(self, output_dir: str = ".") -> bool:
-        if self._headless:
-            return self._run_headless(output_dir)
-
-        self._print_header()
-        self._maybe_resume(output_dir)
-
-        api_key = self._get_api_key()
+        api_key = self._validated_api_key(output_dir)
         if not api_key:
-            return False
-
-        if not self._validate_api_key(api_key):
             return False
 
         project_id = self._validate_gcp_creds()
@@ -1527,7 +1532,7 @@ class GCPSetupWizard(BaseSetupWizard):
         public_access = self._get_public_access()
         labels = self._get_custom_metadata()
 
-        if not self._run_preflight_checks(project_id, region, zones, cidr):
+        if not self._destroy and not self._run_preflight_checks(project_id, region, zones, cidr):
             return False
 
         project_name = self._get_project_name()
@@ -1546,42 +1551,6 @@ class GCPSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             labels,
-        )
-
-    def _run_headless(self, output_dir: str) -> bool:
-        console.print("  [dim]Running in headless mode (reading from environment)[/]")
-
-        api_key = os.environ.get("PINECONE_API_KEY")
-        if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
-            return False
-
-        project_id = os.environ.get("GCP_PROJECT")
-        if not project_id:
-            console.print("  [red]✗[/] GCP_PROJECT environment variable is required")
-            return False
-
-        region = os.environ.get("PINECONE_REGION", "us-central1")
-        zones_str = os.environ.get("PINECONE_AZS", f"{region}-a,{region}-b")
-        zones = [z.strip() for z in zones_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
-        deletion_protection = (
-            os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
-        )
-        public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
-        project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
-
-        return self._generate_project(
-            output_dir,
-            project_name,
-            api_key,
-            project_id,
-            region,
-            zones,
-            cidr,
-            deletion_protection,
-            public_access,
-            {},
             control_plane=self._control_plane_overrides(),
         )
 
@@ -1649,13 +1618,13 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print()
         console.print(f"  {self._step('GCP Project ID')}")
         console.print()
-        return self._prompt("Enter GCP project ID", detected_project, key="project_id")
+        return self._prompt("Enter GCP project ID", detected_project, key="GCP_PROJECT")
 
     def _get_region(self) -> str:
         console.print()
         console.print(f"  {self._step('GCP Region')}")
         console.print()
-        return self._prompt("Enter GCP region", "us-central1", key="region")
+        return self._prompt("Enter GCP region", "us-central1", key="PINECONE_REGION")
 
     def _fetch_zones(self, project_id: str, region: str) -> list[str]:
         try:
@@ -1692,7 +1661,9 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", self._zone_default("zones", available), key="zones"
+            "Enter zones (comma-separated)",
+            self._zone_default("PINECONE_AZS", available),
+            key="PINECONE_AZS",
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
@@ -2368,17 +2339,8 @@ class AzureSetupWizard(BaseSetupWizard):
     CLOUD_NAME = "Azure"
 
     def run(self, output_dir: str = ".") -> bool:
-        if self._headless:
-            return self._run_headless(output_dir)
-
-        self._print_header()
-        self._maybe_resume(output_dir)
-
-        api_key = self._get_api_key()
+        api_key = self._validated_api_key(output_dir)
         if not api_key:
-            return False
-
-        if not self._validate_api_key(api_key):
             return False
 
         subscription_id = self._validate_azure_creds()
@@ -2393,7 +2355,9 @@ class AzureSetupWizard(BaseSetupWizard):
         public_access = self._get_public_access()
         tags = self._get_custom_metadata()
 
-        if not self._run_preflight_checks(subscription_id, region, zones, cidr):
+        if not self._destroy and not self._run_preflight_checks(
+            subscription_id, region, zones, cidr
+        ):
             return False
 
         project_name = self._get_project_name()
@@ -2412,42 +2376,6 @@ class AzureSetupWizard(BaseSetupWizard):
             deletion_protection,
             public_access,
             tags,
-        )
-
-    def _run_headless(self, output_dir: str) -> bool:
-        console.print("  [dim]Running in headless mode (reading from environment)[/]")
-
-        api_key = os.environ.get("PINECONE_API_KEY")
-        if not api_key:
-            console.print("  [red]✗[/] PINECONE_API_KEY environment variable is required")
-            return False
-
-        subscription_id = os.environ.get("AZURE_SUBSCRIPTION_ID")
-        if not subscription_id:
-            console.print("  [red]✗[/] AZURE_SUBSCRIPTION_ID environment variable is required")
-            return False
-
-        region = os.environ.get("PINECONE_REGION", "eastus")
-        zones_str = os.environ.get("PINECONE_AZS", "1,2")
-        zones = [z.strip() for z in zones_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
-        deletion_protection = (
-            os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
-        )
-        public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true").lower() == "true"
-        project_name = os.environ.get("PINECONE_PROJECT_NAME", "pinecone-byoc")
-
-        return self._generate_project(
-            output_dir,
-            project_name,
-            api_key,
-            subscription_id,
-            region,
-            zones,
-            cidr,
-            deletion_protection,
-            public_access,
-            {},
             control_plane=self._control_plane_overrides(),
         )
 
@@ -2490,14 +2418,16 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Azure Subscription ID')}")
         console.print()
         return self._prompt(
-            "Enter Azure subscription ID", detected_subscription, key="subscription_id"
+            "Enter Azure subscription ID",
+            detected_subscription,
+            key="AZURE_SUBSCRIPTION_ID",
         )
 
     def _get_region(self) -> str:
         console.print()
         console.print(f"  {self._step('Azure Region')}")
         console.print()
-        return self._prompt("Enter Azure region", "eastus", key="region")
+        return self._prompt("Enter Azure region", "eastus", key="PINECONE_REGION")
 
     def _fetch_zones(self, subscription_id: str, region: str) -> list[str]:
         try:
@@ -2562,7 +2492,9 @@ class AzureSetupWizard(BaseSetupWizard):
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
         zones_input = self._prompt(
-            "Enter zones (comma-separated)", self._zone_default("zones", available), key="zones"
+            "Enter zones (comma-separated)",
+            self._zone_default("PINECONE_AZS", available),
+            key="PINECONE_AZS",
         )
         zones = [zone.strip() for zone in zones_input.split(",")]
         return zones
@@ -2813,6 +2745,7 @@ def run_setup(
     stack_name: str = "prod",
     skip_install: bool = False,
     dev_source: str | None = None,
+    destroy: bool = False,
 ) -> bool:
     try:
         if not cloud:
@@ -2838,12 +2771,18 @@ def run_setup(
             stack_name=stack_name,
             skip_install=skip_install,
             dev_source=dev_source,
+            destroy=destroy,
         )
         return wizard.run(output_dir)
 
     except KeyboardInterrupt:
         console.print()
         console.print("  [yellow]Setup cancelled by user[/]")
+        return False
+    except HeadlessInputRequired as e:
+        console.print()
+        console.print(f"  [red]✗[/] --headless cannot prompt for: {e.field}")
+        console.print("  [dim]Set it in the environment, or drop --headless to be asked.[/]")
         return False
     except Exception as e:
         console.print()
@@ -2875,6 +2814,12 @@ if __name__ == "__main__":
         help="Skip dependency installation and stack initialization.",
     )
     parser.add_argument(
+        "--destroy",
+        action="store_true",
+        help="Regenerate a project in order to tear it down. Skips the preflight checks, "
+        "which ask whether there is room to create what this stack already occupies.",
+    )
+    parser.add_argument(
         "--dev",
         nargs="?",
         const="",
@@ -2900,5 +2845,6 @@ if __name__ == "__main__":
         stack_name=args.stack_name,
         skip_install=args.skip_install,
         dev_source=dev_source,
+        destroy=args.destroy,
     )
     sys.exit(0 if success else 1)

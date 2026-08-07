@@ -37,6 +37,7 @@ def condemned_project(target, request):
             "PINECONE_DELETION_PROTECTION": "false",
         },
         skip_install=True,
+        destroy=True,
     )
     run("uv", "sync", cwd=project_dir)
 

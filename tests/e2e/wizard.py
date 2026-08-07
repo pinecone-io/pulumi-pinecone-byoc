@@ -12,7 +12,7 @@ def parse_wizard_env(wizard_env):
     )
 
 
-def generate_project(project_dir, stack, cloud, env, skip_install=False):
+def generate_project(project_dir, stack, cloud, env, skip_install=False, destroy=False):
     project_dir.mkdir(parents=True, exist_ok=True)
     args = [
         sys.executable,
@@ -27,6 +27,8 @@ def generate_project(project_dir, stack, cloud, env, skip_install=False):
     ]
     if skip_install:
         args.append("--skip-install")
+    if destroy:
+        args.append("--destroy")
     args += ["--dev", str(REPO_ROOT)]
-    run(*args, cwd=REPO_ROOT, env=env)
+    run(*args, cwd=REPO_ROOT, env={"PULUMI_BACKEND": "cloud", **env})
     return project_dir
