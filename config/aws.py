@@ -59,6 +59,10 @@ class AWSConfig(BaseConfig):
     public_subnet_mask: int = 20
     private_subnet_mask: int = 18
 
+    existing_vpc_id: str | None = None
+
+    existing_route_table_ids: dict[str, str] | None = None
+
     # Database
     database: DatabaseConfig = Field(default_factory=DatabaseConfig)
 

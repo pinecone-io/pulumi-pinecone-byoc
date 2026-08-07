@@ -62,6 +62,8 @@ class PineconeAWSClusterArgs:
 
     # networking
     vpc_cidr: str = "10.0.0.0/16"
+    existing_vpc_id: str | None = None
+    existing_route_table_ids: dict[str, str] | None = None
 
     # kubernetes
     kubernetes_version: str = "1.35"
@@ -564,6 +566,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cloud="aws",
             availability_zones=args.availability_zones,
             vpc_cidr=args.vpc_cidr,
+            existing_vpc_id=args.existing_vpc_id,
+            existing_route_table_ids=args.existing_route_table_ids,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
@@ -574,15 +578,15 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     @property
-    def vpc_id(self) -> pulumi.Output[str]:
+    def vpc_id(self) -> pulumi.Input[str]:
         return self._vpc.vpc_id
 
     @property
-    def private_subnet_ids(self) -> list[pulumi.Output[str]]:
+    def private_subnet_ids(self) -> list[pulumi.Input[str]]:
         return self._vpc.private_subnet_ids
 
     @property
-    def public_subnet_ids(self) -> list[pulumi.Output[str]]:
+    def public_subnet_ids(self) -> list[pulumi.Input[str]]:
         return self._vpc.public_subnet_ids
 
     @property
