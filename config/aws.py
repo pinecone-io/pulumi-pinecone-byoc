@@ -61,6 +61,8 @@ class AWSConfig(BaseConfig):
 
     existing_vpc_id: str | None = None
 
+    public_access: bool = True
+
     existing_route_table_ids: dict[str, str] | None = None
 
     # Database

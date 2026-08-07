@@ -107,8 +107,12 @@ class VPC(pulumi.ComponentResource):
                     )
                 )
 
+        self.public_subnets: list[aws.ec2.Subnet] = []
+        if config.public_access:
+            self._carve_public_subnets(name, config, vpc_id, subnet_deps, child_opts)
+
         self._vpc_id = vpc_id
-        self._public_subnet_ids = []
+        self._public_subnet_ids = [s.id for s in self.public_subnets]
         self._private_subnet_ids = [s.id for s in self.private_subnets]
         existing_cidrs = [a.cidr_block for a in vpc.cidr_block_associations]
         self._vpc_cidr_blocks = existing_cidrs + ([] if covered else [config.vpc_cidr])
@@ -213,6 +217,66 @@ class VPC(pulumi.ComponentResource):
                 "private_subnet_ids": self._private_subnet_ids,
             }
         )
+
+    def _carve_public_subnets(self, name, config, vpc_id, subnet_deps, child_opts) -> None:
+        """Public subnets for the internet-facing load balancer, in their VPC.
+
+        An ALB is only accepted in a subnet whose route table reaches an internet
+        gateway, and the gateway in an adopted VPC is the customer's. We add a route
+        table of our own that points at it rather than touching theirs.
+
+        A failed lookup is a plain Exception whatever went wrong, so the message is
+        the only thing that separates "they have no gateway" from a throttle or a
+        bad credential. Anything we cannot read that way is left alone.
+        """
+        try:
+            gateway = aws.ec2.get_internet_gateway(
+                filters=[{"name": "attachment.vpc-id", "values": [vpc_id]}]
+            )
+        except Exception as exc:
+            if "no matching" not in str(exc).lower():
+                raise
+            raise ValueError(
+                f"No internet gateway found attached to VPC {vpc_id}, so an "
+                "internet-facing load balancer cannot be placed in it. Attach one, or "
+                "deploy with public access disabled to reach the data plane over "
+                "PrivateLink."
+            ) from exc
+
+        self.public_route_table = aws.ec2.RouteTable(
+            f"{name}-carved-public-rt",
+            vpc_id=vpc_id,
+            tags=config.tags(Name=f"{config.resource_prefix}-carved-public-rt"),
+            opts=child_opts,
+        )
+        self.public_route = aws.ec2.Route(
+            f"{name}-carved-public-route",
+            route_table_id=self.public_route_table.id,
+            destination_cidr_block="0.0.0.0/0",
+            gateway_id=gateway.id,
+            opts=child_opts,
+        )
+
+        for i, az in enumerate(config.availability_zones):
+            subnet = aws.ec2.Subnet(
+                f"{name}-public-{az}",
+                vpc_id=vpc_id,
+                cidr_block=self._calculate_cidr(i, is_public=True),
+                availability_zone=az,
+                tags=config.tags(
+                    Name=f"{config.resource_prefix}-public-{az}",
+                    **{"kubernetes.io/role/elb": "1"},
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=subnet_deps),
+            )
+            self.public_subnets.append(subnet)
+
+            aws.ec2.RouteTableAssociation(
+                f"{name}-carved-public-rta-{az}",
+                subnet_id=subnet.id,
+                route_table_id=self.public_route_table.id,
+                opts=child_opts,
+            )
 
     @staticmethod
     def _validate_cidr(cidr: str) -> None:
