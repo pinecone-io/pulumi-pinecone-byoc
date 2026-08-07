@@ -1,4 +1,5 @@
 import sys
+from pathlib import Path
 
 from .commands import run
 from .paths import REPO_ROOT
@@ -12,11 +13,13 @@ def parse_wizard_env(wizard_env):
     )
 
 
-def generate_project(project_dir, stack, cloud, env, skip_install=False):
+def generate_project(
+    project_dir, stack, cloud, env, skip_install=False, source=REPO_ROOT, dev=True
+):
     project_dir.mkdir(parents=True, exist_ok=True)
     args = [
         sys.executable,
-        "setup/wizard.py",
+        str(Path(source) / "setup" / "wizard.py"),
         "--cloud",
         cloud,
         "--headless",
@@ -27,6 +30,7 @@ def generate_project(project_dir, stack, cloud, env, skip_install=False):
     ]
     if skip_install:
         args.append("--skip-install")
-    args += ["--dev", str(REPO_ROOT)]
-    run(*args, cwd=REPO_ROOT, env=env)
+    if dev:
+        args += ["--dev", str(source)]
+    run(*args, cwd=source, env=env)
     return project_dir
