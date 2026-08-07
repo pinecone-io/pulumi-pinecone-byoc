@@ -3,10 +3,10 @@ import os
 import threading
 
 import pytest
-from e2e.commands import pulumi, pulumi_json
+from e2e.commands import pulumi
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS
-from e2e.reachability import assert_answers, data_plane_host
+from e2e.reachability import assert_data_plane_answers
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 from e2e.wizard import generate_project
@@ -59,6 +59,4 @@ def vanilla_project(request):
 
 
 def test_e2e_vanilla(vanilla_project):
-    environment = pulumi_json("stack", "output", "--json", cwd=vanilla_project).get("environment")
-    assert environment, "the deploy exported no environment"
-    assert_answers(data_plane_host(environment))
+    assert_data_plane_answers(vanilla_project)

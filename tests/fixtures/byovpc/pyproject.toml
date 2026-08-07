@@ -1,0 +1,12 @@
+[project]
+name = "byovpc"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "pulumi>=3.216.0,<4.0.0",
+    "pulumi-aws>=7.14.0,<8.0.0",
+    "pulumi-pinecone-byoc[aws]",
+]
+
+[tool.uv.sources]
+pulumi-pinecone-byoc = { path = "../../..", editable = true }

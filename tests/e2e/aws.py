@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 
 import boto3
 
@@ -79,3 +80,34 @@ def find_cluster_for_vpc(vpc_id, region, baseline=None):
         if vpc_id is None or cluster.get("resourcesVpcConfig", {}).get("vpcId") == vpc_id:
             return name, cluster.get("status")
     return None, None
+
+
+TEST_TAG = "pinecone-byoc-test"
+
+
+def _delete_leftover_subnets(client, vpc_id):
+    subnets = client.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])["Subnets"]
+    for subnet in subnets:
+        try:
+            client.delete_subnet(SubnetId=subnet["SubnetId"])
+            logging.info("deleted leftover subnet %s in %s", subnet["SubnetId"], vpc_id)
+        except Exception as exc:  # noqa: BLE001 - best effort, the retry loop reports the VPC
+            logging.info("could not delete subnet %s: %s", subnet["SubnetId"], exc)
+
+
+def delete_vpc(client, vpc_id, attempts=12, wait_seconds=10):
+    """Delete a stand-in VPC, waiting out whatever is still detaching from it."""
+    for attempt in range(1, attempts + 1):
+        try:
+            client.delete_vpc(VpcId=vpc_id)
+            logging.info("deleted stand-in customer VPC %s", vpc_id)
+            return
+        except Exception as exc:  # noqa: BLE001 - retried below, re-raised on the last attempt
+            if "NotFound" in str(exc):
+                return
+            _delete_leftover_subnets(client, vpc_id)
+            if attempt == attempts:
+                logging.info("LEAKED stand-in customer VPC %s: %s", vpc_id, exc)
+                raise
+            logging.info("%s not deletable yet (attempt %s): %s", vpc_id, attempt, exc)
+            time.sleep(wait_seconds)

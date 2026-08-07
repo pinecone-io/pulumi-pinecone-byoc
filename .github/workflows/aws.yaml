@@ -1,7 +1,21 @@
-name: E2E AWS
+name: AWS
 
 on:
   workflow_call:
+    inputs:
+      shape:
+        description: >-
+          Which network shape to run. vanilla lets the module create its own VPC;
+          carve hands it a stand-in customer VPC to carve subnets out of.
+        type: string
+        default: vanilla
+      tier:
+        description: >-
+          network applies only the VPC component and its children with
+          `pulumi up --target` (minutes, no control plane); e2e deploys the whole
+          cluster (over an hour).
+        type: string
+        default: network
 
 permissions:
   contents: read
@@ -9,11 +23,12 @@ permissions:
 
 env:
   AWS_REGION: us-east-2
+  PINECONE_AZS: us-east-2a,us-east-2b
 
 jobs:
   up:
     runs-on: ubuntu-latest
-    timeout-minutes: 150
+    timeout-minutes: ${{ inputs.tier == 'e2e' && 150 || 40 }}
     environment: aws-e2e
     steps:
       - uses: actions/checkout@v4
@@ -23,12 +38,13 @@ jobs:
       - name: Set stack prefix
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TIER: ${{ inputs.tier }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -52,28 +68,30 @@ jobs:
         run: pulumi org set-default pinecone
 
       - name: Install kubectl
+        if: inputs.tier == 'e2e'
         uses: azure/setup-kubectl@v4
 
-      - name: Deploy and tear down
+      - name: Run and tear down (${{ inputs.tier }}, ${{ inputs.shape }})
         env:
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_API_KEY: ${{ inputs.tier == 'e2e' && secrets.PINECONE_API_KEY || '' }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: uv run --extra aws pytest -m e2e -s --keep
+        run: |
+          uv run --extra aws pytest \
+            -m "${{ inputs.tier }}" \
+            -k "${{ inputs.shape }}" -s --keep
 
       - name: Upload run logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-logs
+          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-logs
           path: |
             .e2e-logs/
             .e2e/**/*.log
           # both paths are dotted, and upload-artifact skips hidden files by default
           include-hidden-files: true
           if-no-files-found: warn
-          # a public repository publishes its artifacts too; the harness redacts what
-          # it writes, and these are kept only long enough to debug the run that made them
-          retention-days: 3
+          retention-days: 14
 
   down:
     needs: up
@@ -86,15 +104,23 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set stack prefix
+      - name: Set stack names
         run: |
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            prefix="ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            prefix="ci-aws-${TIER}-${GITHUB_SHA::7}"
+          fi
+          echo "E2E_STACK_PREFIX=$prefix" >> "$GITHUB_ENV"
+          if [ "$TIER" = e2e ]; then
+            echo "PROJECT_STACK=${prefix}-${SHAPE}-byoc" >> "$GITHUB_ENV"
+          else
+            echo "PROJECT_STACK=${prefix}-${SHAPE}-network" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          TIER: ${{ inputs.tier }}
+          SHAPE: ${{ inputs.shape }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -119,15 +145,43 @@ jobs:
 
       - name: Destroy leftovers
         env:
-          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PINECONE_API_KEY: ${{ inputs.tier == 'e2e' && secrets.PINECONE_API_KEY || 'unused-for-destroy' }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: uv run --extra aws pytest -m destroy -s
+        run: uv run --extra aws pytest -m destroy -s --destroy-stack "$PROJECT_STACK"
+
+      - name: Destroy fixture VPC stack
+        if: inputs.tier == 'e2e' && inputs.shape != 'vanilla'
+        working-directory: ./tests/fixtures/byovpc
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+        run: |
+          stack="${E2E_STACK_PREFIX}-${{ inputs.shape }}"
+          pulumi cancel --yes --stack "$stack" 2>/dev/null || true
+          pulumi install
+          pulumi destroy --yes --stack "$stack"
+          pulumi stack rm "$stack" --yes --force
+
+      - name: Delete stand-in customer VPCs
+        if: ${{ !cancelled() && inputs.tier == 'network' && inputs.shape != 'vanilla' }}
+        run: |
+          vpcs=$(aws ec2 describe-vpcs --region "$AWS_REGION" \
+            --filters "Name=tag:pinecone-byoc-test,Values=${E2E_STACK_PREFIX}-*" \
+            --query 'Vpcs[].VpcId' --output text)
+          for vpc in $vpcs; do
+            subnets=$(aws ec2 describe-subnets --region "$AWS_REGION" \
+              --filters "Name=vpc-id,Values=$vpc" --query 'Subnets[].SubnetId' --output text)
+            for subnet in $subnets; do
+              aws ec2 delete-subnet --region "$AWS_REGION" --subnet-id "$subnet" || true
+            done
+            echo "deleting stand-in customer VPC $vpc"
+            aws ec2 delete-vpc --region "$AWS_REGION" --vpc-id "$vpc"
+          done
 
       - name: Upload teardown logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-teardown-logs
+          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-teardown-logs
           path: |
             .e2e-logs/
             .e2e/**/*.log
