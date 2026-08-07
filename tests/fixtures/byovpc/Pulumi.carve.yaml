@@ -1,0 +1,7 @@
+config:
+  aws:region: us-east-2
+  byovpc:mode: carve
+  byovpc:vpc-cidr: 10.0.0.0/16
+  byovpc:azs:
+    - us-east-2a
+    - us-east-2b
