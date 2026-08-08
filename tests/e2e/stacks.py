@@ -1,8 +1,14 @@
 import getpass
+import json
 import os
+import re
+
+import boto3
 
 from .commands import pulumi, pulumi_json, pulumi_quiet
 from .paths import REPO_ROOT
+
+ARN_ACCOUNT = re.compile(r"arn:aws:[a-z0-9-]*:[a-z0-9-]*:(\d{12}):")
 
 
 def stack_name(*parts):
@@ -26,6 +32,31 @@ def find_stack(name):
 
 def project_of(qualified):
     return qualified.split("/")[-2]
+
+
+def stack_accounts(qualified):
+    export = pulumi_json("stack", "export", "--stack", qualified, cwd=REPO_ROOT)
+    return set(ARN_ACCOUNT.findall(json.dumps(export)))
+
+
+def caller_account():
+    return boto3.client("sts").get_caller_identity()["Account"]
+
+
+def refuse_foreign_account(qualified):
+    accounts = stack_accounts(qualified)
+    if not accounts:
+        return
+
+    caller = caller_account()
+    if caller not in accounts:
+        raise AssertionError(
+            f"{qualified} holds resources in {', '.join(sorted(accounts))}, "
+            f"but these credentials are for {caller}. Destroying from here would empty "
+            f"the state and leave the infrastructure running. "
+            f"Set AWS_PROFILE to a profile in {', '.join(sorted(accounts))} - a --profile "
+            f"flag does not reach the Pulumi SDK."
+        )
 
 
 def destroy_stack(cwd, stack=None):
