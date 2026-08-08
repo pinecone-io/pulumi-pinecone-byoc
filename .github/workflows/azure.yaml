@@ -191,7 +191,11 @@ jobs:
         working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi destroy --yes --stack "$STACK_NAME"
+        run: |
+          pulumi destroy --yes --stack "$STACK_NAME" && exit 0
+          echo "destroy failed, retrying once in 60s"
+          sleep 60
+          pulumi destroy --yes --stack "$STACK_NAME"
 
       - name: Pulumi stack rm
         working-directory: ./e2e-project
