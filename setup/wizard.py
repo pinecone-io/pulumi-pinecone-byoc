@@ -239,7 +239,7 @@ class BaseSetupWizard:
         if not api_key:
             return None
 
-        if not self._validate_api_key(api_key):
+        if not self._destroy and not self._validate_api_key(api_key):
             return None
 
         return api_key

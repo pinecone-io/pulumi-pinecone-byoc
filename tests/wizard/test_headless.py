@@ -31,6 +31,19 @@ def test_run_refuses_to_continue_past_any_failed_check(cls):
         assert gates_on(source, check), f"{cls.__name__}.run must stop on a failed {check}"
 
 
+@pytest.mark.parametrize("cls", CREDS, ids=lambda c: c.__name__)
+def test_destroy_does_not_validate_the_api_key(cls, monkeypatch):
+    wizard_ = cls(headless=True, destroy=True)
+    monkeypatch.setattr(wizard_, "_get_api_key", lambda: "pcsk_fake")
+    monkeypatch.setattr(
+        wizard_,
+        "_validate_api_key",
+        lambda key: pytest.fail("destroy must not validate the API key"),
+    )
+
+    assert wizard_._validated_api_key(".") == "pcsk_fake"
+
+
 def test_headless_never_reads_stdin():
     with pytest.raises(HeadlessInputRequired) as excinfo:
         AWSSetupWizard(headless=True)._prompt("Passphrase", password=True)
