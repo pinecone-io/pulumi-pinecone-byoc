@@ -47,6 +47,7 @@ jobs:
               - 'config/azure.py'
               - 'config/base.py'
               - 'config/__init__.py'
+              - '.github/workflows/azure.yaml'
 
   aws:
     needs: changes
