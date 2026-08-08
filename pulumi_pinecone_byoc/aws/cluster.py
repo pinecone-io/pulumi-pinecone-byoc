@@ -276,6 +276,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             config,
             self._eks,
             self._vpc.vpc_id,
+            self._vpc.lb_backend_security_group_id,
             cell_name=self._cell_name,
             hosted_zone_id=self._dns.zone_id,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks, self._dns]),

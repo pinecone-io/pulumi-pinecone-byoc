@@ -115,11 +115,29 @@ class VPC(pulumi.ComponentResource):
 
         self._create_route_tables(name, child_opts)
 
+        self.lb_backend_security_group = aws.ec2.SecurityGroup(
+            f"{name}-lb-backend-sg",
+            vpc_id=self.vpc.id,
+            description="Shared backend security group for load balancers",
+            egress=[
+                aws.ec2.SecurityGroupEgressArgs(
+                    protocol="-1",
+                    from_port=0,
+                    to_port=0,
+                    cidr_blocks=["0.0.0.0/0"],
+                    description="All outbound traffic",
+                ),
+            ],
+            tags=config.tags(Name=f"{config.resource_prefix}-lb-backend-sg"),
+            opts=child_opts,
+        )
+
         self.register_outputs(
             {
                 "vpc_id": self.vpc.id,
                 "public_subnet_ids": [s.id for s in self.public_subnets],
                 "private_subnet_ids": [s.id for s in self.private_subnets],
+                "lb_backend_security_group_id": self.lb_backend_security_group.id,
             }
         )
 
@@ -223,6 +241,10 @@ class VPC(pulumi.ComponentResource):
     @property
     def vpc_id(self) -> pulumi.Output[str]:
         return self.vpc.id
+
+    @property
+    def lb_backend_security_group_id(self) -> pulumi.Output[str]:
+        return self.lb_backend_security_group.id
 
     @property
     def public_subnet_ids(self) -> list[pulumi.Output[str]]:

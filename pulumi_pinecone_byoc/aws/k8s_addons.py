@@ -228,6 +228,7 @@ class K8sAddons(pulumi.ComponentResource):
         config: AWSConfig,
         eks: EKS,
         vpc_id: pulumi.Output[str],
+        lb_backend_security_group_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
         hosted_zone_id: pulumi.Input[str],
         opts: pulumi.ResourceOptions | None = None,
@@ -254,6 +255,7 @@ class K8sAddons(pulumi.ComponentResource):
             eks.provider,
             eks.cluster_name,
             vpc_id,
+            lb_backend_security_group_id,
             self.alb_controller_role.arn,
             pulumi.ResourceOptions(parent=self, depends_on=[self.alb_controller_role]),
         )
@@ -413,6 +415,7 @@ class K8sAddons(pulumi.ComponentResource):
         k8s_provider: pulumi.ProviderResource,
         cluster_name: pulumi.Output[str],
         vpc_id: pulumi.Output[str],
+        lb_backend_security_group_id: pulumi.Output[str],
         role_arn: pulumi.Output[str],
         opts: pulumi.ResourceOptions,
     ) -> Release:
@@ -442,6 +445,7 @@ class K8sAddons(pulumi.ComponentResource):
                         "create": False,
                     },
                     "vpcId": vpc_id,
+                    "backendSecurityGroup": lb_backend_security_group_id,
                     "clusterName": cluster_name,
                     "podLabels": {"app": "aws-lb-controller"},
                     # use self-signed certificate for webhook (no cert-manager)
