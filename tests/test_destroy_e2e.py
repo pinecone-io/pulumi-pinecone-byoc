@@ -6,7 +6,7 @@ from e2e.aws import cluster_from_outputs, grant_cluster_admin
 from e2e.commands import pulumi_json, run
 from e2e.paths import PROJECTS
 from e2e.settings import destroy_targets, e2e_azs
-from e2e.stacks import destroy_stack, find_stack, project_of
+from e2e.stacks import destroy_stack, find_stack, project_of, refuse_foreign_account
 from e2e.wizard import generate_project
 
 pytestmark = pytest.mark.destroy
@@ -23,6 +23,9 @@ def condemned_project(target, request):
     qualified = find_stack(target.stack)
     if qualified is None:
         pytest.skip(f"no stack named {target.stack} in the organization, nothing to destroy")
+
+    if target.cloud == "aws":
+        refuse_foreign_account(qualified)
 
     logging.info("found %s, regenerating its project to destroy it", qualified)
     project_dir = generate_project(
