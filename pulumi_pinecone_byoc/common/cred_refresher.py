@@ -81,15 +81,13 @@ for NS in $ALL_NAMESPACES; do
 
   echo "  [$NS] Updating regcred..."
 
-  # Delete existing secret if present
-  kubectl delete secret regcred -n "$NS" --ignore-not-found &>/dev/null
-
-  # Create new secret
   if kubectl create secret docker-registry regcred \
     --namespace="$NS" \
     --docker-server="$REGISTRY" \
     --docker-username={username} \
-    --docker-password="$PASSWORD" &>/dev/null; then
+    --docker-password="$PASSWORD" \
+    --dry-run=client -o yaml 2>/dev/null \
+    | kubectl apply -f - &>/dev/null; then
     echo "  [$NS] Success"
     SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
