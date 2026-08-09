@@ -41,6 +41,7 @@ jobs:
               - 'config/gcp.py'
               - 'config/base.py'
               - 'config/__init__.py'
+              - '.github/workflows/gcp.yaml'
             azure:
               - 'pulumi_pinecone_byoc/azure/**'
               - 'pulumi_pinecone_byoc/common/**'
