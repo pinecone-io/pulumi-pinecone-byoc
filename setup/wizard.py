@@ -23,6 +23,11 @@ BLUE = "#002BFF"
 
 PINECONE_VERSION = "main-94a9e90"
 
+MIN_VPC_PREFIX = 16
+MAX_VPC_PREFIX = 20
+
+DEFAULT_CIDR_SENTINEL = "default"
+
 console = Console()
 
 
@@ -324,6 +329,12 @@ class BaseSetupWizard:
             except Exception as e:
                 console.print(f"  [red]✗[/] Failed to validate API key: {e}")
                 return False
+
+    def _headless_cidr(self) -> str | None:
+        cidr = os.environ.get("PINECONE_VPC_CIDR")
+        if not cidr:
+            return None
+        return self.DEFAULT_CIDR if cidr == DEFAULT_CIDR_SENTINEL else cidr
 
     def _get_cidr(self) -> str:
         console.print()
@@ -707,13 +718,14 @@ class AWSPreflightChecker:
             )
             return
 
-        # must be /16 for subnet calculation
-        if target_net.prefixlen != 16:
+        if not MIN_VPC_PREFIX <= target_net.prefixlen <= MAX_VPC_PREFIX:
             self._add_result(
                 "VPC CIDR",
                 False,
-                f"CIDR must be a /16 (got /{target_net.prefixlen})",
-                "Subnet calculation requires a /16 network (e.g., 10.0.0.0/16)",
+                f"/{target_net.prefixlen} is outside what is currently supported",
+                f"A /{MIN_VPC_PREFIX} to /{MAX_VPC_PREFIX} is supported today "
+                f"(e.g. 10.0.0.0/{MIN_VPC_PREFIX} or 192.168.16.0/{MAX_VPC_PREFIX}); "
+                f"/{MAX_VPC_PREFIX} is the smallest range the subnet layout fits in",
             )
             return
 
@@ -728,7 +740,7 @@ class AWSPreflightChecker:
                 "VPC CIDR",
                 False,
                 f"{self.cidr} is not in an RFC 1918 private range",
-                "Use a /16 block like 10.0.0.0/16, 172.16.0.0/16, or 192.168.0.0/16. "
+                "Use a block inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. "
                 "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html",
             )
             return
@@ -765,8 +777,8 @@ class AWSSetupWizard(BaseSetupWizard):
     TOTAL_STEPS = 15
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
-    DEFAULT_CIDR = "10.0.0.0/16"
-    CIDR_DESC = "The IP range for your VPC (/16 from an RFC 1918 private range, must not conflict with existing VPCs)"
+    DEFAULT_CIDR = "10.0.0.0/20"
+    CIDR_DESC = "The IP range for your VPC (a /16 to /20 from an RFC 1918 private range, currently supported down to /20, must not conflict with existing VPCs)"
     DELETION_PROTECTION_DESC = "Protect RDS databases and S3 buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
@@ -831,7 +843,10 @@ class AWSSetupWizard(BaseSetupWizard):
         region = os.environ.get("PINECONE_REGION", "us-east-1")
         azs_str = os.environ.get("PINECONE_AZS", f"{region}a,{region}b")
         azs = [az.strip() for az in azs_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
+        cidr = self._headless_cidr()
+        if not cidr:
+            console.print("  [red]✗[/] PINECONE_VPC_CIDR environment variable is required")
+            return False
         deletion_protection = (
             os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
         )
@@ -1564,7 +1579,7 @@ class GCPSetupWizard(BaseSetupWizard):
         region = os.environ.get("PINECONE_REGION", "us-central1")
         zones_str = os.environ.get("PINECONE_AZS", f"{region}-a,{region}-b")
         zones = [z.strip() for z in zones_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
+        cidr = self._headless_cidr() or self.DEFAULT_CIDR
         deletion_protection = (
             os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
         )
@@ -2430,7 +2445,7 @@ class AzureSetupWizard(BaseSetupWizard):
         region = os.environ.get("PINECONE_REGION", "eastus")
         zones_str = os.environ.get("PINECONE_AZS", "1,2")
         zones = [z.strip() for z in zones_str.split(",")]
-        cidr = os.environ.get("PINECONE_VPC_CIDR", self.DEFAULT_CIDR)
+        cidr = self._headless_cidr() or self.DEFAULT_CIDR
         deletion_protection = (
             os.environ.get("PINECONE_DELETION_PROTECTION", "true").lower() == "true"
         )

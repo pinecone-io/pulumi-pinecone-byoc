@@ -1,7 +1,22 @@
+import os
 import sys
 
 from .commands import run
 from .paths import REPO_ROOT
+from .settings import e2e_azs
+
+
+def headless_env(config, region, project_name, **overrides):
+    """The answers a headless run needs; AWS refuses a run that names no CIDR."""
+    return {
+        "PINECONE_API_KEY": os.environ["PINECONE_API_KEY"],
+        "PINECONE_REGION": region,
+        "PINECONE_AZS": e2e_azs(config),
+        "PINECONE_VPC_CIDR": "default",
+        "PINECONE_PUBLIC_ACCESS": "true",
+        "PINECONE_PROJECT_NAME": project_name,
+        "PINECONE_DELETION_PROTECTION": "false",
+    } | overrides
 
 
 def parse_wizard_env(wizard_env):
