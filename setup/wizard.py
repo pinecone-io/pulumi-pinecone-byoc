@@ -26,6 +26,12 @@ PINECONE_VERSION = "main-94a9e90"
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
 
+RFC1918_RANGES = [
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+]
+
 DEFAULT_CIDR_SENTINEL = "default"
 
 console = Console()
@@ -514,7 +520,16 @@ class BaseSetupWizard:
 
 
 class AWSPreflightChecker:
-    def __init__(self, region: str, azs: list[str], cidr: str, non_interactive: bool = False):
+    def __init__(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+        route_table_ids: dict[str, str] | None = None,
+        public_access: bool = True,
+        non_interactive: bool = False,
+    ):
         import boto3
 
         self.non_interactive = non_interactive
@@ -522,6 +537,9 @@ class AWSPreflightChecker:
         self.region = region
         self.azs = azs
         self.cidr = cidr
+        self.vpc_id = vpc_id
+        self.route_table_ids = route_table_ids
+        self.public_access = public_access
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -529,17 +547,33 @@ class AWSPreflightChecker:
         self.servicequotas = boto3.client("service-quotas", region_name=region)
 
     def run_checks(self) -> bool:
-        checks = [
-            ("VPC Quota", self._check_vpc_quota),
-            ("Elastic IPs", self._check_eip_quota),
-            ("NAT Gateways", self._check_nat_gateway_quota),
-            ("Internet Gateways", self._check_igw_quota),
-            ("EKS Clusters", self._check_eks_cluster_quota),
-            ("Network Load Balancers", self._check_nlb_quota),
-            ("Availability Zones", self._check_az_availability),
-            ("Instance Types", self._check_instance_types),
-            ("VPC CIDR", self._check_cidr_conflicts),
-        ]
+        # deploying into their VPC asks nothing of our own VPC, gateway or EIP quota,
+        # and the range has to fit beside what they already carry rather than beside
+        # our other VPCs
+        if self.vpc_id:
+            checks = [
+                ("VPC Exists", self._check_vpc_exists),
+                ("VPC DNS", self._check_vpc_dns),
+                ("VPC CIDR", self._check_range_fits_their_vpc),
+                ("Subnet Egress", self._check_their_egress),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                *([("Internet Gateway", self._check_igw_attached)] if self.public_access else []),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Availability Zones", self._check_az_availability),
+                ("Instance Types", self._check_instance_types),
+            ]
+        else:
+            checks = [
+                ("VPC Quota", self._check_vpc_quota),
+                ("Elastic IPs", self._check_eip_quota),
+                ("NAT Gateways", self._check_nat_gateway_quota),
+                ("Internet Gateways", self._check_igw_quota),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Availability Zones", self._check_az_availability),
+                ("Instance Types", self._check_instance_types),
+                ("VPC CIDR", self._check_cidr_conflicts),
+            ]
 
         for name, check_fn in checks:
             with Status(f"  [dim]Checking {name}...[/]", console=console, spinner="dots"):
@@ -574,6 +608,162 @@ class AWSPreflightChecker:
                 return response["Quota"]["Value"]
             except Exception:
                 return None
+
+    def _check_vpc_exists(self):
+        try:
+            vpcs = self.ec2.describe_vpcs(VpcIds=[self.vpc_id]).get("Vpcs", [])
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result("VPC Exists", False, f"Could not read {self.vpc_id}", str(e))
+            return
+        if not vpcs:
+            self._add_result("VPC Exists", False, f"No VPC {self.vpc_id} in {self.region}")
+            return
+        self._add_result("VPC Exists", True, f"{self.vpc_id} in {self.region}")
+
+    def _check_vpc_dns(self):
+        try:
+            support = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsSupport"
+            )["EnableDnsSupport"]["Value"]
+            hostnames = self.ec2.describe_vpc_attribute(
+                VpcId=self.vpc_id, Attribute="enableDnsHostnames"
+            )["EnableDnsHostnames"]["Value"]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result("VPC DNS", False, "Failed to check", str(e))
+            return
+
+        if support and hostnames:
+            self._add_result("VPC DNS", True, "DNS support and hostnames are on")
+            return
+        self._add_result(
+            "VPC DNS",
+            False,
+            f"{self.vpc_id} has DNS support={support}, hostnames={hostnames}",
+            "EKS needs both; enable them on the VPC before deploying",
+        )
+
+    def _check_range_fits_their_vpc(self):
+        try:
+            vpcs = self.ec2.describe_vpcs(VpcIds=[self.vpc_id]).get("Vpcs", [])
+            theirs = [
+                association["CidrBlock"]
+                for association in vpcs[0].get("CidrBlockAssociationSet", [])
+                if association.get("CidrBlockState", {}).get("State") == "associated"
+            ]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result("VPC CIDR", False, "Failed to check", str(e))
+            return
+
+        ours = ipaddress.ip_network(self.cidr)
+        covered = [c for c in theirs if ours.subnet_of(ipaddress.ip_network(c))]
+        if covered:
+            self._add_result("VPC CIDR", True, f"{ours} is inside their {covered[0]}")
+            return
+
+        clashing = [c for c in theirs if ours.overlaps(ipaddress.ip_network(c))]
+        if clashing:
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"{ours} overlaps {', '.join(clashing)} without being inside it",
+                "Pick a range the VPC does not already carry, or one wholly inside one",
+            )
+            return
+        self._add_result("VPC CIDR", True, f"{ours} is free to associate with {self.vpc_id}")
+
+    def _check_their_egress(self):
+        """The tables our private subnets will use, not whichever is main.
+
+        With route tables named per AZ ours use those; with none named the module
+        detects the table their own subnets in that AZ use, and only falls back to
+        the main one when it finds nothing. Checking main alone answers about a
+        table our subnets may never touch.
+        """
+        named = self.route_table_ids or {}
+        try:
+            if named:
+                tables = self.ec2.describe_route_tables(RouteTableIds=sorted(set(named.values())))[
+                    "RouteTables"
+                ]
+            else:
+                tables = self.ec2.describe_route_tables(
+                    Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+                )["RouteTables"]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result("Subnet Egress", False, "Failed to check", str(e))
+            return
+
+        egressing = {}
+        for table in tables:
+            for route in table.get("Routes", []):
+                if route.get("DestinationCidrBlock") != "0.0.0.0/0":
+                    continue
+                if route.get("State") != "active":
+                    continue
+                target = (
+                    route.get("NatGatewayId")
+                    or route.get("TransitGatewayId")
+                    or route.get("VpcEndpointId")
+                    or route.get("NetworkInterfaceId")
+                    or route.get("InstanceId")
+                    or route.get("CoreNetworkArn")
+                )
+                # a peering connection routes nothing transitively, so the peer's NAT
+                # and gateway are unreachable and the packets are dropped
+                gateway = route.get("GatewayId") or ""
+                if not target and gateway.startswith("vgw-"):
+                    target = gateway
+                if target:
+                    egressing[table["RouteTableId"]] = target
+
+        # a table named for an AZ has to egress: passing on another one's leaves that
+        # zone's nodes unable to pull an image, an hour after this said yes
+        silent = sorted(set(named.values()) - set(egressing))
+        if named and silent:
+            self._add_result(
+                "Subnet Egress",
+                False,
+                f"{', '.join(silent)} has no default route that leaves",
+                "Every route table named in existing_route_table_ids serves an "
+                "availability zone the nodes run in, so each has to reach the registry",
+            )
+            return
+        if egressing:
+            self._add_result(
+                "Subnet Egress",
+                True,
+                ", ".join(f"{t} via {e}" for t, e in sorted(egressing.items())),
+            )
+            return
+        self._add_result(
+            "Subnet Egress",
+            False,
+            f"No route table in {self.vpc_id} egresses without an internet gateway",
+            "EKS nodes reach the registry through the customer's NAT, transit gateway "
+            "or firewall; a proxy or VPC endpoints instead of a default route is also "
+            "workable, in which case this check is safe to ignore",
+        )
+
+    def _check_igw_attached(self):
+        try:
+            gateways = self.ec2.describe_internet_gateways(
+                Filters=[{"Name": "attachment.vpc-id", "Values": [self.vpc_id]}]
+            )["InternetGateways"]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result("Internet Gateway", False, "Failed to check", str(e))
+            return
+        if gateways:
+            self._add_result(
+                "Internet Gateway", True, f"{gateways[0]['InternetGatewayId']} is attached"
+            )
+            return
+        self._add_result(
+            "Internet Gateway",
+            False,
+            f"No internet gateway attached to {self.vpc_id}",
+            "An internet-facing load balancer needs one; attach it, or deploy with "
+            "public access disabled to reach the data plane over PrivateLink",
+        )
 
     def _check_vpc_quota(self):
         quota = self._get_quota("vpc", "L-F678F1CE") or 5
@@ -845,12 +1035,16 @@ class AWSSetupWizard(BaseSetupWizard):
         azs = self._get_azs(region)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
-        cidr = self._get_cidr()
+        vpc_id = self._get_existing_vpc(region)
+        route_table_ids = self._get_route_table_ids(vpc_id)
+        cidr = self._get_cidr(vpc_id, region)
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
         tags = self._get_custom_metadata()
 
-        if not self._destroy and not self._run_preflight_checks(region, azs, cidr):
+        if not self._destroy and not self._run_preflight_checks(
+            region, azs, cidr, vpc_id, route_table_ids, public_access
+        ):
             return False
 
         project_name = self._get_project_name()
@@ -870,6 +1064,8 @@ class AWSSetupWizard(BaseSetupWizard):
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
+            vpc_id=vpc_id,
+            route_table_ids=route_table_ids,
             control_plane=self._control_plane_overrides(),
         )
 
@@ -930,7 +1126,107 @@ class AWSSetupWizard(BaseSetupWizard):
         )
         return True
 
-    def _get_cidr(self) -> str:
+    def _fetch_vpcs(self, region: str) -> list[tuple[str, str, str]]:
+        import boto3
+
+        client = boto3.Session().client("ec2", region_name=region)
+        found = []
+        for vpc in client.describe_vpcs().get("Vpcs", []):
+            name = next(
+                (t["Value"] for t in vpc.get("Tags", []) if t["Key"] == "Name"),
+                "",
+            )
+            found.append((vpc["VpcId"], vpc.get("CidrBlock", ""), name))
+        return found
+
+    def _fetch_vpc_cidrs(self, region: str, vpc_id: str) -> list[str]:
+        import boto3
+
+        client = boto3.Session().client("ec2", region_name=region)
+        vpcs = client.describe_vpcs(VpcIds=[vpc_id]).get("Vpcs", [])
+        if not vpcs:
+            return []
+        return [
+            association["CidrBlock"]
+            for association in vpcs[0].get("CidrBlockAssociationSet", [])
+            if association.get("CidrBlockState", {}).get("State") == "associated"
+        ]
+
+    def _get_existing_vpc(self, region: str) -> str | None:
+        console.print()
+        console.print(f"  {self._step('Existing VPC')}")
+        console.print("  [dim]Deploy into a VPC you already have, or leave blank to")
+        console.print("  [dim]let the module create one[/]")
+        console.print()
+
+        options = None
+        if not self._non_interactive:
+            try:
+                options = [vpc_id for vpc_id, _, _ in self._fetch_vpcs(region)]
+                for vpc_id, cidr, name in self._fetch_vpcs(region):
+                    console.print(f"    [dim]{vpc_id}  {cidr}  {name}[/]")
+            except Exception as exc:  # noqa: BLE001 - discovery is a convenience
+                console.print(f"  [dim]Could not list VPCs: {exc}[/]")
+
+        vpc_id = self._prompt(
+            "Enter VPC id (blank to create one)",
+            "",
+            key="PINECONE_EXISTING_VPC_ID",
+            options=options,
+        ).strip()
+        return vpc_id or None
+
+    def _get_route_table_ids(self, vpc_id: str | None) -> dict[str, str] | None:
+        if not vpc_id:
+            return None
+        value = self._prompt(
+            "Route tables per AZ, <az>=rtb-id (blank to detect)",
+            "",
+            key="PINECONE_ROUTE_TABLE_IDS",
+        ).strip()
+        return self._parse_route_table_ids(value)
+
+    @staticmethod
+    def _parse_route_table_ids(value: str) -> dict[str, str] | None:
+        entries = [entry for entry in value.replace(" ", "").split(",") if entry]
+        parsed = {}
+        for entry in entries:
+            az, _, route_table_id = entry.partition("=")
+            if not az or not route_table_id.startswith("rtb-"):
+                raise ValueError(f"PINECONE_ROUTE_TABLE_IDS entry {entry!r} is not <az>=rtb-<id>")
+            parsed[az] = route_table_id
+        return parsed or None
+
+    @staticmethod
+    def _suggest_cidr(vpc_cidrs: list[str]) -> str:
+        """A /16 the VPC does not already use, preferring its own RFC 1918 block.
+
+        Defaulting to a range the VPC already carries would put our subnets on
+        addresses its existing subnets may hold, which only fails once AWS rejects
+        CreateSubnet.
+        """
+        used = []
+        for cidr in vpc_cidrs:
+            try:
+                used.append(ipaddress.ip_network(cidr))
+            except ValueError:
+                continue
+        blocks = sorted(
+            RFC1918_RANGES,
+            key=lambda block: not any(net.subnet_of(block) for net in used),
+        )
+        for block in blocks:
+            if block.prefixlen > MIN_VPC_PREFIX:
+                continue
+            for candidate in block.subnets(new_prefix=MIN_VPC_PREFIX):
+                if not any(candidate.overlaps(net) for net in used):
+                    return str(candidate)
+        return AWSSetupWizard.DEFAULT_CIDR
+
+    def _get_cidr(self, vpc_id: str | None = None, region: str | None = None) -> str:
+        if vpc_id and region and not self._non_interactive:
+            with contextlib.suppress(Exception):
+                self.DEFAULT_CIDR = self._suggest_cidr(self._fetch_vpc_cidrs(region, vpc_id))
         if self._non_interactive and self._non_interactive_cidr() is None:
             raise NonInteractiveInputRequired("VPC CIDR block", "PINECONE_VPC_CIDR")
         return super()._get_cidr()
@@ -1003,12 +1299,28 @@ class AWSSetupWizard(BaseSetupWizard):
         )
         return arn or None
 
-    def _run_preflight_checks(self, region: str, azs: list[str], cidr: str) -> bool:
+    def _run_preflight_checks(
+        self,
+        region: str,
+        azs: list[str],
+        cidr: str,
+        vpc_id: str | None = None,
+        route_table_ids: dict[str, str] | None = None,
+        public_access: bool = True,
+    ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
         console.print()
 
-        checker = AWSPreflightChecker(region, azs, cidr, non_interactive=self._non_interactive)
+        checker = AWSPreflightChecker(
+            region,
+            azs,
+            cidr,
+            vpc_id=vpc_id,
+            route_table_ids=route_table_ids,
+            public_access=public_access,
+            non_interactive=self._non_interactive,
+        )
         if not checker.run_checks():
             console.print()
             console.print(
@@ -1031,6 +1343,8 @@ class AWSSetupWizard(BaseSetupWizard):
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
+        vpc_id: str | None = None,
+        route_table_ids: dict[str, str] | None = None,
         control_plane: dict[str, str] | None = None,
     ):
         console.print()
@@ -1080,6 +1394,8 @@ cluster = PineconeAWSCluster(
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
+        existing_vpc_id=config.get("existing-vpc-id"),
+        existing_route_table_ids=config.get_object("existing-route-table-ids"),
         **control_plane,
     ),
 )
@@ -1122,6 +1438,14 @@ if config.get_bool("public-access-enabled") is False:
         # add customer KMS key ARN if provided
         if kms_key_arn:
             config_content += f"  {project_name}:kms-key-arn: {kms_key_arn}\n"
+
+        # the VPC to deploy into, and which of their route tables our subnets use
+        if vpc_id:
+            config_content += f"  {project_name}:existing-vpc-id: {vpc_id}\n"
+        if route_table_ids:
+            config_content += f"  {project_name}:existing-route-table-ids:\n"
+            for az, route_table_id in route_table_ids.items():
+                config_content += f"    {az}: {route_table_id}\n"
 
         # add tags if provided (quote values to handle YAML special chars)
         if tags:
