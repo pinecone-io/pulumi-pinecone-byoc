@@ -19,10 +19,21 @@ PROGRAM_DIR = Path(__file__).resolve().parent / "program"
 
 SHAPES = ["private", "existing", "module"]
 
+E2E_STANDIN = ("byovpc", "vpc")
+
 
 @pytest.mark.parametrize("shape", SHAPES)
 def test_the_vpc_suite_leaves_no_stack_behind(shape):
     stack = stack_name("network", shape)
+    if find_stack(stack) is None:
+        pytest.skip(f"no stack named {stack} in the organization, nothing to destroy")
+
+    logging.info("destroying %s left behind in %s", stack, PROGRAM_DIR)
+    destroy_stack(PROGRAM_DIR, stack)
+
+
+def test_the_e2e_leaves_no_stand_in_vpc_behind():
+    stack = stack_name(*E2E_STANDIN)
     if find_stack(stack) is None:
         pytest.skip(f"no stack named {stack} in the organization, nothing to destroy")
 

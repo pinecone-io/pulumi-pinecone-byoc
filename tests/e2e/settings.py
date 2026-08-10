@@ -109,7 +109,11 @@ def _cloud_of(stack, override):
 
 
 def destroy_targets(config):
-    stacks = config.getoption("--destroy-stack") or [stack_name("vanilla", "byoc")]
+    # every cluster an e2e run can leave, so a teardown needs no flags to find them
+    stacks = config.getoption("--destroy-stack") or [
+        stack_name("vanilla", "byoc"),
+        stack_name("byovpc", "byoc"),
+    ]
     cloud_override = config.getoption("--destroy-cloud")
     region = config.getoption("--destroy-region") or aws_region(config)
     return [DestroyTarget(s, _cloud_of(s, cloud_override), region) for s in stacks]
