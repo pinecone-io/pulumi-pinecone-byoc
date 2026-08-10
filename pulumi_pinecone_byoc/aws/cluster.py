@@ -62,6 +62,8 @@ class PineconeAWSClusterArgs:
 
     # networking
     vpc_cidr: str = "10.0.0.0/16"
+    existing_vpc_id: str | None = None
+    existing_route_table_ids: dict[str, str] | None = None
 
     # kubernetes
     kubernetes_version: str = "1.35"
@@ -73,6 +75,7 @@ class PineconeAWSClusterArgs:
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
     deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
+    network_only: bool = False
 
     # pinecone specific
     api_url: str = CONTROL_PLANE_DEFAULTS["api_url"]
@@ -107,6 +110,19 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         child_opts = pulumi.ResourceOptions(parent=self)
         config = self._build_config(args)
         self._config = config
+
+        self._vpc = VPC(f"{config.resource_prefix}-vpc", config, opts=child_opts)
+
+        if args.network_only:
+            self.register_outputs(
+                {
+                    "region": args.region,
+                    "vpc_id": self._vpc.vpc_id,
+                    "private_subnet_ids": self._vpc.private_subnet_ids,
+                    "public_subnet_ids": self._vpc.public_subnet_ids,
+                }
+            )
+            return
 
         self._environment = Environment(
             f"{config.resource_prefix}-environment",
@@ -168,8 +184,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
-
-        self._vpc = VPC(f"{config.resource_prefix}-vpc", config, opts=child_opts)
 
         self._eks = EKS(
             f"{config.resource_prefix}-eks",
@@ -565,6 +579,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cloud="aws",
             availability_zones=args.availability_zones,
             vpc_cidr=args.vpc_cidr,
+            existing_vpc_id=args.existing_vpc_id,
+            existing_route_table_ids=args.existing_route_table_ids,
+            public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
@@ -575,15 +592,15 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         )
 
     @property
-    def vpc_id(self) -> pulumi.Output[str]:
+    def vpc_id(self) -> pulumi.Input[str]:
         return self._vpc.vpc_id
 
     @property
-    def private_subnet_ids(self) -> list[pulumi.Output[str]]:
+    def private_subnet_ids(self) -> list[pulumi.Input[str]]:
         return self._vpc.private_subnet_ids
 
     @property
-    def public_subnet_ids(self) -> list[pulumi.Output[str]]:
+    def public_subnet_ids(self) -> list[pulumi.Input[str]]:
         return self._vpc.public_subnet_ids
 
     @property

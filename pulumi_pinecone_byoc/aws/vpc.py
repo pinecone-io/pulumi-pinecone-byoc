@@ -11,23 +11,7 @@ import pulumi_aws as aws
 
 from config.aws import AWSConfig
 
-MIN_VPC_PREFIX = 16
-MAX_VPC_PREFIX = 20
-
-# AWS refuses to load balance in anything narrower than a /27, and wants eight
-# addresses free to scale into
-PUBLIC_PREFIX_ON_A_SLICE = 26
-
-# the VPC is cut into sixteen slots; a public subnet takes one, a private subnet four
-SLOT_BITS = 4
-PRIVATE_SLOTS = 4
-PRIVATE_FIRST_SLOT = 4
-
-RFC1918_RANGES = [
-    ipaddress.IPv4Network("10.0.0.0/8"),
-    ipaddress.IPv4Network("172.16.0.0/12"),
-    ipaddress.IPv4Network("192.168.0.0/16"),
-]
+from . import vpc_route, vpc_subnet
 
 
 class VPC(pulumi.ComponentResource):
@@ -48,7 +32,14 @@ class VPC(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
         self.config = config
-        self._validate_cidr(config.vpc_cidr)
+
+        if config.existing_vpc_id:
+            self._create_subnets_in_existing_vpc(name, config, config.existing_vpc_id)
+        else:
+            self._create(name, config)
+
+    def _create(self, name: str, config: AWSConfig) -> None:
+        vpc_subnet.validate_vpc_cidr(config.vpc_cidr)
         if len(config.availability_zones) > 3:
             raise ValueError(
                 f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
@@ -77,22 +68,15 @@ class VPC(pulumi.ComponentResource):
         self.nat_gateways: list[aws.ec2.NatGateway] = []
 
         for i, az in enumerate(config.availability_zones):
-            # calculate CIDR blocks for each subnet
-            # public subnets get smaller blocks, private subnets get larger blocks
-            public_cidr = str(self._calculate_cidr(config.vpc_cidr, i, is_public=True))
-            private_cidr = str(self._calculate_cidr(config.vpc_cidr, i, is_public=False))
-
-            public_subnet = aws.ec2.Subnet(
-                f"{name}-public-{az}",
-                vpc_id=self.vpc.id,
-                cidr_block=public_cidr,
-                availability_zone=az,
-                map_public_ip_on_launch=True,
-                tags=config.tags(
-                    Name=f"{config.resource_prefix}-public-{az}",
-                    **{"kubernetes.io/role/elb": "1"},
-                ),
+            public_subnet = vpc_subnet.create(
+                name,
+                config,
+                self.vpc.id,
+                az,
+                i,
+                is_public=True,
                 opts=child_opts,
+                map_public_ip=True,
             )
             self.public_subnets.append(public_subnet)
 
@@ -112,24 +96,168 @@ class VPC(pulumi.ComponentResource):
             )
             self.nat_gateways.append(nat)
 
-            private_subnet = aws.ec2.Subnet(
-                f"{name}-private-{az}",
-                vpc_id=self.vpc.id,
-                cidr_block=private_cidr,
-                availability_zone=az,
-                tags=config.tags(
-                    Name=f"{config.resource_prefix}-private-{az}",
-                    **{"kubernetes.io/role/internal-elb": "1"},
-                ),
+            private_subnet = vpc_subnet.create(
+                name,
+                config,
+                self.vpc.id,
+                az,
+                i,
+                is_public=False,
                 opts=child_opts,
             )
             self.private_subnets.append(private_subnet)
 
         self._create_route_tables(name, child_opts)
 
+        self._create_lb_backend_sg(name, config, self.vpc.id, child_opts)
+
+        self._register_outputs(self.vpc.id)
+
+    def _create_subnets_in_existing_vpc(self, name: str, config: AWSConfig, vpc_id: str) -> None:
+        vpc = aws.ec2.get_vpc(id=vpc_id)
+        vpc_subnet.validate_vpc_cidr(config.vpc_cidr)
+        if len(config.availability_zones) > 3:
+            raise ValueError(
+                f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
+                "Subnet layout does not fit more than 3 AZs in the range we associate."
+            )
+
+        child_opts = pulumi.ResourceOptions(parent=self)
+
+        ours = ipaddress.IPv4Network(config.vpc_cidr)
+        theirs = [
+            ipaddress.IPv4Network(a.cidr_block)
+            for a in vpc.cidr_block_associations
+            if a.cidr_block != config.vpc_cidr
+        ]
+        covered = ours.subnet_of(ipaddress.IPv4Network(vpc.cidr_block)) or any(
+            ours.subnet_of(theirs_net) for theirs_net in theirs
+        )
+        subnet_deps: list[pulumi.Resource] = []
+        if not covered:
+            self.cidr_association = aws.ec2.VpcIpv4CidrBlockAssociation(
+                f"{name}-cidr",
+                vpc_id=vpc_id,
+                cidr_block=config.vpc_cidr,
+                opts=child_opts,
+            )
+            subnet_deps = [self.cidr_association]
+
+        route_tables = config.existing_route_table_ids or {}
+        missing = [az for az in config.availability_zones if az not in route_tables]
+        if route_tables and missing:
+            raise ValueError(
+                f"existing_route_table_ids is missing a route table for {', '.join(missing)}. "
+                "Give one per availability zone, or none at all to detect the route table "
+                "their own subnets in that zone egress through."
+            )
+        if not route_tables:
+            route_tables = vpc_route.detect(vpc_id, config.availability_zones)
+
+        self.private_subnets: list[aws.ec2.Subnet] = []
+        self.private_route_table_associations: list[aws.ec2.RouteTableAssociation] = []
+        for i, az in enumerate(config.availability_zones):
+            private_subnet = vpc_subnet.create(
+                name,
+                config,
+                vpc_id,
+                az,
+                i,
+                is_public=False,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=subnet_deps),
+            )
+            self.private_subnets.append(private_subnet)
+
+            if az in route_tables:
+                self.private_route_table_associations.append(
+                    aws.ec2.RouteTableAssociation(
+                        f"{name}-private-rta-{az}",
+                        subnet_id=private_subnet.id,
+                        route_table_id=route_tables[az],
+                        opts=child_opts,
+                    )
+                )
+
+        self.public_subnets: list[aws.ec2.Subnet] = []
+        if config.public_access:
+            self._create_public_subnets_in_existing_vpc(
+                name, config, vpc_id, subnet_deps, child_opts
+            )
+
+        self._create_lb_backend_sg(name, config, vpc_id, child_opts)
+
+        self._register_outputs(vpc_id)
+
+    def _create_public_subnets_in_existing_vpc(
+        self, name, config, vpc_id, subnet_deps, child_opts
+    ) -> None:
+        """Public subnets for the internet-facing load balancer, in their VPC.
+
+        An ALB is only accepted in a subnet whose route table reaches an internet
+        gateway, and the gateway in an adopted VPC is the customer's. We add a route
+        table of our own that points at it rather than touching theirs.
+
+        A failed lookup is a plain Exception whatever went wrong, so the message is
+        the only thing that separates "they have no gateway" from a throttle or a
+        bad credential. Anything we cannot read that way is left alone.
+        """
+        try:
+            gateway = aws.ec2.get_internet_gateway(
+                filters=[{"name": "attachment.vpc-id", "values": [vpc_id]}]
+            )
+        except Exception as exc:
+            if "no matching" not in str(exc).lower():
+                raise
+            raise ValueError(
+                f"No internet gateway found attached to VPC {vpc_id}, so an "
+                "internet-facing load balancer cannot be placed in it. Attach one, or "
+                "deploy with public access disabled to reach the data plane over "
+                "PrivateLink."
+            ) from exc
+
+        self.public_route_table = aws.ec2.RouteTable(
+            f"{name}-existing-public-rt",
+            vpc_id=vpc_id,
+            tags=config.tags(Name=f"{config.resource_prefix}-existing-public-rt"),
+            opts=child_opts,
+        )
+        self.public_route = aws.ec2.Route(
+            f"{name}-existing-public-route",
+            route_table_id=self.public_route_table.id,
+            destination_cidr_block="0.0.0.0/0",
+            gateway_id=gateway.id,
+            opts=child_opts,
+        )
+
+        for i, az in enumerate(config.availability_zones):
+            subnet = vpc_subnet.create(
+                name,
+                config,
+                vpc_id,
+                az,
+                i,
+                is_public=True,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=subnet_deps),
+            )
+            self.public_subnets.append(subnet)
+
+            aws.ec2.RouteTableAssociation(
+                f"{name}-existing-public-rta-{az}",
+                subnet_id=subnet.id,
+                route_table_id=self.public_route_table.id,
+                opts=child_opts,
+            )
+
+    def _create_lb_backend_sg(
+        self,
+        name: str,
+        config: AWSConfig,
+        vpc_id: pulumi.Input[str],
+        opts: pulumi.ResourceOptions,
+    ) -> None:
         self.lb_backend_security_group = aws.ec2.SecurityGroup(
             f"{name}-lb-backend-sg",
-            vpc_id=self.vpc.id,
+            vpc_id=vpc_id,
             description="Shared backend security group for load balancers",
             egress=[
                 aws.ec2.SecurityGroupEgressArgs(
@@ -141,57 +269,22 @@ class VPC(pulumi.ComponentResource):
                 ),
             ],
             tags=config.tags(Name=f"{config.resource_prefix}-lb-backend-sg"),
-            opts=child_opts,
+            opts=opts,
         )
+
+    def _register_outputs(self, vpc_id: pulumi.Input[str]) -> None:
+        self._vpc_id = vpc_id
+        self._public_subnet_ids = [s.id for s in self.public_subnets]
+        self._private_subnet_ids = [s.id for s in self.private_subnets]
 
         self.register_outputs(
             {
-                "vpc_id": self.vpc.id,
-                "public_subnet_ids": [s.id for s in self.public_subnets],
-                "private_subnet_ids": [s.id for s in self.private_subnets],
+                "vpc_id": self._vpc_id,
+                "public_subnet_ids": self._public_subnet_ids,
+                "private_subnet_ids": self._private_subnet_ids,
                 "lb_backend_security_group_id": self.lb_backend_security_group.id,
             }
         )
-
-    @staticmethod
-    def _validate_cidr(cidr: str) -> None:
-        try:
-            network = ipaddress.IPv4Network(cidr)
-        except (ValueError, ipaddress.AddressValueError) as e:
-            raise ValueError(f"Invalid VPC CIDR '{cidr}': {e}") from e
-
-        if not MIN_VPC_PREFIX <= network.prefixlen <= MAX_VPC_PREFIX:
-            raise ValueError(
-                f"VPC CIDR must be between a /{MIN_VPC_PREFIX} and a /{MAX_VPC_PREFIX} "
-                f"(got /{network.prefixlen}). The subnet layout needs sixteen slots, and a "
-                f"/{MAX_VPC_PREFIX} is the smallest range that still leaves a workable subnet "
-                "per availability zone."
-            )
-
-        if not any(network.subnet_of(rfc1918) for rfc1918 in RFC1918_RANGES):
-            raise ValueError(
-                f"VPC CIDR '{cidr}' is not in an RFC 1918 private range. "
-                "Use a block inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. "
-                "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html"
-            )
-
-    @staticmethod
-    def _calculate_cidr(vpc_cidr: str, index: int, is_public: bool) -> ipaddress.IPv4Network:
-        network = ipaddress.IPv4Network(vpc_cidr)
-        slots = list(network.subnets(prefixlen_diff=SLOT_BITS))
-
-        if is_public:
-            slot = slots[index]
-            prefix = (
-                network.prefixlen + SLOT_BITS
-                if network.prefixlen == MIN_VPC_PREFIX
-                else max(PUBLIC_PREFIX_ON_A_SLICE, slot.prefixlen)
-            )
-        else:
-            slot = slots[PRIVATE_FIRST_SLOT + index * PRIVATE_SLOTS]
-            prefix = network.prefixlen + PRIVATE_SLOTS // 2
-
-        return ipaddress.IPv4Network((slot.network_address, prefix))
 
     def _create_route_tables(self, name: str, opts: pulumi.ResourceOptions):
         public_rt = aws.ec2.RouteTable(
@@ -258,24 +351,24 @@ class VPC(pulumi.ComponentResource):
         )
 
     @property
-    def vpc_id(self) -> pulumi.Output[str]:
-        return self.vpc.id
+    def vpc_id(self) -> pulumi.Input[str]:
+        return self._vpc_id
 
     @property
     def lb_backend_security_group_id(self) -> pulumi.Output[str]:
         return self.lb_backend_security_group.id
 
     @property
-    def public_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.public_subnets]
+    def public_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._public_subnet_ids
 
     @property
-    def private_subnet_ids(self) -> list[pulumi.Output[str]]:
-        return [s.id for s in self.private_subnets]
+    def private_subnet_ids(self) -> list[pulumi.Input[str]]:
+        return self._private_subnet_ids
 
     @property
     def private_subnet_cidrs(self) -> list[str]:
         return [
-            str(self._calculate_cidr(self.config.vpc_cidr, i, is_public=False))
+            str(vpc_subnet.cidr(self.config.vpc_cidr, i, is_public=False))
             for i in range(len(self.config.availability_zones))
         ]

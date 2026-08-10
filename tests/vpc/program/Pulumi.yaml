@@ -1,0 +1,3 @@
+name: pinecone-byoc-network
+description: The module's network on its own, with network_only, and nothing after it.
+runtime: python
