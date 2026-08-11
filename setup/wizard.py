@@ -21,7 +21,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-94a9e90"
+PINECONE_VERSION = "main-e59b176"
 
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
