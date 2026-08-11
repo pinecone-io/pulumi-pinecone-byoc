@@ -150,6 +150,14 @@ class BaseSetupWizard:
         self._state: WizardState | None = None
         self._dev_source = dev_source
 
+    @staticmethod
+    def _in_columns(values: list[str], per_line: int = 5) -> list[str]:
+        width = max((len(value) for value in values), default=0)
+        return [
+            "  ".join(value.ljust(width) for value in values[start : start + per_line]).rstrip()
+            for start in range(0, len(values), per_line)
+        ]
+
     def _step(self, title: str) -> str:
         self._current_step += 1
         return f"[{BLUE}]Step {self._current_step}/{self.TOTAL_STEPS}[/] · {title}"
@@ -400,13 +408,18 @@ class BaseSetupWizard:
         )
         return self._yes(response)
 
-    def _get_public_access(self) -> bool:
+    def _get_public_access(self, default: str = "Y", note: str = "") -> bool:
         console.print()
         console.print(f"  {self._step('Network Access')}")
         console.print("  [dim]Public access allows connections from the internet[/]")
         console.print(f"  [dim]{self.PRIVATE_ACCESS_DESC}[/]")
+        if note:
+            console.print(f"  [dim]{note}[/]")
         console.print()
-        response = self._prompt("Enable public access? (Y/n)", "Y", key="PINECONE_PUBLIC_ACCESS")
+        label = "Y/n" if self._yes(default) else "y/N"
+        response = self._prompt(
+            f"Enable public access? ({label})", default, key="PINECONE_PUBLIC_ACCESS"
+        )
         return self._yes(response)
 
     def _get_custom_metadata(self) -> dict[str, str]:
@@ -643,6 +656,10 @@ class AWSPreflightChecker:
         )
 
     def _check_range_fits_their_vpc(self):
+        ours = self._laid_out_range()
+        if ours is None:
+            return
+
         try:
             vpcs = self.ec2.describe_vpcs(VpcIds=[self.vpc_id]).get("Vpcs", [])
             theirs = [
@@ -654,10 +671,24 @@ class AWSPreflightChecker:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
             return
 
-        ours = ipaddress.ip_network(self.cidr)
         covered = [c for c in theirs if ours.subnet_of(ipaddress.ip_network(c))]
         if covered:
             self._add_result("VPC CIDR", True, f"{ours} is inside their {covered[0]}")
+            return
+
+        family = [
+            block
+            for block in RFC1918_RANGES
+            if any(ipaddress.ip_network(c).subnet_of(block) for c in theirs)
+        ]
+        if family and not any(ours.subnet_of(block) for block in family):
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"{ours} is not in {', '.join(str(b) for b in family)}, which {self.vpc_id} uses",
+                "AWS refuses a secondary CIDR outside the RFC 1918 range the VPC "
+                "already numbers from; pick one inside it",
+            )
             return
 
         clashing = [c for c in theirs if ours.overlaps(ipaddress.ip_network(c))]
@@ -671,78 +702,105 @@ class AWSPreflightChecker:
             return
         self._add_result("VPC CIDR", True, f"{ours} is free to associate with {self.vpc_id}")
 
-    def _check_their_egress(self):
-        """The tables our private subnets will use, not whichever is main.
+    @staticmethod
+    def _egress_target(route):
+        """What a default route leaves by, or nothing when it cannot leave.
 
-        With route tables named per AZ ours use those; with none named the module
-        detects the table their own subnets in that AZ use, and only falls back to
-        the main one when it finds nothing. Checking main alone answers about a
-        table our subnets may never touch.
+        A peering connection routes nothing transitively, so the peer's NAT and
+        gateway are unreachable; an internet gateway is how their public subnets get
+        out, not their private ones.
         """
-        named = self.route_table_ids or {}
+        if route.get("DestinationCidrBlock") != "0.0.0.0/0" or route.get("State") != "active":
+            return None
+        target = (
+            route.get("NatGatewayId")
+            or route.get("TransitGatewayId")
+            or route.get("VpcEndpointId")
+            or route.get("NetworkInterfaceId")
+            or route.get("InstanceId")
+            or route.get("CoreNetworkArn")
+        )
+        gateway = route.get("GatewayId") or ""
+        return target or (gateway if gateway.startswith("vgw-") else None)
+
+    def _egress_of(self, table):
+        for route in table.get("Routes", []):
+            target = self._egress_target(route)
+            if target:
+                return target
+        return None
+
+    def _check_their_egress(self):
+        """Every zone the nodes run in, not whichever table happens to leave.
+
+        With tables named per AZ ours use those; with none named the module detects
+        the table their own subnets in that zone use. Either way a zone whose table
+        cannot reach the registry is a zone whose nodes cannot pull an image, and it
+        has to fail here rather than an hour later.
+        """
         try:
-            if named:
-                tables = self.ec2.describe_route_tables(RouteTableIds=sorted(set(named.values())))[
-                    "RouteTables"
-                ]
+            if self.route_table_ids:
+                by_zone = {
+                    az: self.ec2.describe_route_tables(RouteTableIds=[table_id])["RouteTables"]
+                    for az, table_id in self.route_table_ids.items()
+                }
             else:
-                tables = self.ec2.describe_route_tables(
-                    Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
-                )["RouteTables"]
+                by_zone = {az: self._their_tables_in(az) for az in self.azs}
         except Exception as e:  # noqa: BLE001 - reported as a failed check
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
             return
 
-        egressing = {}
-        for table in tables:
-            for route in table.get("Routes", []):
-                if route.get("DestinationCidrBlock") != "0.0.0.0/0":
-                    continue
-                if route.get("State") != "active":
-                    continue
-                target = (
-                    route.get("NatGatewayId")
-                    or route.get("TransitGatewayId")
-                    or route.get("VpcEndpointId")
-                    or route.get("NetworkInterfaceId")
-                    or route.get("InstanceId")
-                    or route.get("CoreNetworkArn")
-                )
-                # a peering connection routes nothing transitively, so the peer's NAT
-                # and gateway are unreachable and the packets are dropped
-                gateway = route.get("GatewayId") or ""
-                if not target and gateway.startswith("vgw-"):
-                    target = gateway
-                if target:
-                    egressing[table["RouteTableId"]] = target
+        egressing, silent = {}, []
+        for az, tables in by_zone.items():
+            leaving = {t["RouteTableId"]: self._egress_of(t) for t in tables}
+            leaving = {k: v for k, v in leaving.items() if v}
+            if not leaving and not self.route_table_ids:
+                # our subnets are associated with nothing, so what they inherit is the
+                # main table - which egresses in a VPC whose own subnets are public
+                inherited = {t["RouteTableId"]: self._egress_of(t) for t in self._main_table()}
+                leaving = {k: f"{v} inherited" for k, v in inherited.items() if v}
+            if leaving:
+                egressing[az] = ", ".join(f"{k} via {v}" for k, v in sorted(leaving.items()))
+            else:
+                silent.append(az)
 
-        # a table named for an AZ has to egress: passing on another one's leaves that
-        # zone's nodes unable to pull an image, an hour after this said yes
-        silent = sorted(set(named.values()) - set(egressing))
-        if named and silent:
+        if silent:
             self._add_result(
                 "Subnet Egress",
                 False,
-                f"{', '.join(silent)} has no default route that leaves",
-                "Every route table named in existing_route_table_ids serves an "
-                "availability zone the nodes run in, so each has to reach the registry",
-            )
-            return
-        if egressing:
-            self._add_result(
-                "Subnet Egress",
-                True,
-                ", ".join(f"{t} via {e}" for t, e in sorted(egressing.items())),
+                f"nothing egresses from {', '.join(sorted(silent))}",
+                "EKS nodes reach the registry through the customer's NAT, transit "
+                "gateway, virtual private gateway or firewall, and every zone they run "
+                "in needs one; a proxy or VPC endpoints instead of a default route is "
+                "also workable, in which case this check is safe to ignore",
             )
             return
         self._add_result(
-            "Subnet Egress",
-            False,
-            f"No route table in {self.vpc_id} egresses without an internet gateway",
-            "EKS nodes reach the registry through the customer's NAT, transit gateway "
-            "or firewall; a proxy or VPC endpoints instead of a default route is also "
-            "workable, in which case this check is safe to ignore",
+            "Subnet Egress", True, "; ".join(f"{az}: {v}" for az, v in sorted(egressing.items()))
         )
+
+    def _their_tables_in(self, az: str):
+        """The tables their own subnets in that zone use."""
+        subnets = self.ec2.describe_subnets(
+            Filters=[
+                {"Name": "vpc-id", "Values": [self.vpc_id]},
+                {"Name": "availability-zone", "Values": [az]},
+            ]
+        )["Subnets"]
+        ids = [s["SubnetId"] for s in subnets]
+        if not ids:
+            return []
+        return self.ec2.describe_route_tables(
+            Filters=[{"Name": "association.subnet-id", "Values": ids}]
+        )["RouteTables"]
+
+    def _main_table(self):
+        return self.ec2.describe_route_tables(
+            Filters=[
+                {"Name": "vpc-id", "Values": [self.vpc_id]},
+                {"Name": "association.main", "Values": ["true"]},
+            ]
+        )["RouteTables"]
 
     def _check_igw_attached(self):
         try:
@@ -945,7 +1003,12 @@ class AWSPreflightChecker:
         except Exception as e:
             self._add_result("Instance Types", False, "Failed to check", str(e))
 
-    def _check_cidr_conflicts(self):
+    def _laid_out_range(self):
+        """The range as a network, or None having said why it is not one we can use.
+
+        Whose VPC it goes in does not change what the layout needs of it, so both
+        shapes ask this before asking anything of the cloud.
+        """
         try:
             target_net = ipaddress.ip_network(self.cidr)
         except ValueError:
@@ -955,7 +1018,7 @@ class AWSPreflightChecker:
                 f"Invalid CIDR: {self.cidr}",
                 "Enter a valid CIDR block (e.g., 10.0.0.0/16)",
             )
-            return
+            return None
 
         if not MIN_VPC_PREFIX <= target_net.prefixlen <= MAX_VPC_PREFIX:
             self._add_result(
@@ -966,15 +1029,10 @@ class AWSPreflightChecker:
                 f"(e.g. 10.0.0.0/{MIN_VPC_PREFIX} or 192.168.16.0/{MAX_VPC_PREFIX}); "
                 f"/{MAX_VPC_PREFIX} is the smallest range the subnet layout fits in",
             )
-            return
+            return None
 
-        # must be RFC 1918 private range (AWS rejects CIDRs in 100.64.0.0/10 and other reserved ranges)
-        rfc1918_ranges = [
-            ipaddress.ip_network("10.0.0.0/8"),
-            ipaddress.ip_network("172.16.0.0/12"),
-            ipaddress.ip_network("192.168.0.0/16"),
-        ]
-        if not any(target_net.subnet_of(r) for r in rfc1918_ranges):
+        # AWS rejects CIDRs in 100.64.0.0/10 and other reserved ranges
+        if not any(target_net.subnet_of(block) for block in RFC1918_RANGES):
             self._add_result(
                 "VPC CIDR",
                 False,
@@ -982,6 +1040,12 @@ class AWSPreflightChecker:
                 "Use a block inside 10.0.0.0/8, 172.16.0.0/12 or 192.168.0.0/16. "
                 "See https://docs.aws.amazon.com/vpc/latest/userguide/vpc-cidr-blocks.html",
             )
+            return None
+        return target_net
+
+    def _check_cidr_conflicts(self):
+        target_net = self._laid_out_range()
+        if target_net is None:
             return
 
         # check overlap with existing VPCs
@@ -1013,7 +1077,7 @@ class AWSPreflightChecker:
 
 class AWSSetupWizard(BaseSetupWizard):
     CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "gcp-project")
-    TOTAL_STEPS = 15
+    TOTAL_STEPS = 16
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/20"
@@ -1036,10 +1100,12 @@ class AWSSetupWizard(BaseSetupWizard):
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
         vpc_id = self._get_existing_vpc(region)
-        route_table_ids = self._get_route_table_ids(vpc_id)
+        if vpc_id:
+            self.TOTAL_STEPS += 1  # egress, asked only of a VPC we did not create
+        route_table_ids = self._get_route_table_ids(region, vpc_id, azs)
         cidr = self._get_cidr(vpc_id, region)
         deletion_protection = self._get_deletion_protection()
-        public_access = self._get_public_access()
+        public_access = self._get_public_access(vpc_id=vpc_id, region=region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
@@ -1086,6 +1152,9 @@ class AWSSetupWizard(BaseSetupWizard):
         available = boto3.Session().available_profiles
         options = [default] + [p for p in available if p != default]
 
+        for line in self._in_columns(options):
+            console.print(f"    [dim]{line}[/]")
+        console.print()
         console.print("  [dim]Tab cycles through configured profiles; Enter to accept[/]")
         profile = self._prompt("AWS profile", default, key="AWS_PROFILE", options=options)
         console.print()
@@ -1162,10 +1231,11 @@ class AWSSetupWizard(BaseSetupWizard):
         options = None
         if not self._non_interactive:
             try:
-                options = [vpc_id for vpc_id, _, _ in self._fetch_vpcs(region)]
-                for vpc_id, cidr, name in self._fetch_vpcs(region):
+                found = self._fetch_vpcs(region)
+                options = [vpc_id for vpc_id, _, _ in found]
+                for vpc_id, cidr, name in found:
                     console.print(f"    [dim]{vpc_id}  {cidr}  {name}[/]")
-            except Exception as exc:  # noqa: BLE001 - discovery is a convenience
+            except Exception as exc:  # noqa: BLE001 - listing is a convenience
                 console.print(f"  [dim]Could not list VPCs: {exc}[/]")
 
         vpc_id = self._prompt(
@@ -1176,15 +1246,126 @@ class AWSSetupWizard(BaseSetupWizard):
         ).strip()
         return vpc_id or None
 
-    def _get_route_table_ids(self, vpc_id: str | None) -> dict[str, str] | None:
+    def _detect_route_tables(self, region: str, vpc_id: str, azs: list[str]):
+        """Per zone, the tables their own subnets there use and what each leaves by.
+
+        The same question the module asks itself at deploy time, asked early so the
+        answer can be shown rather than demanded.
+        """
+        import boto3
+
+        client = boto3.Session().client("ec2", region_name=region)
+
+        def leaves_by(table):
+            """The default route's target, and whether a private subnet can use it.
+
+            An internet gateway carries 0.0.0.0/0 and still leaves a private subnet
+            with no way out, and a peering connection routes nothing transitively.
+            Both are worth naming rather than reporting the zone as empty.
+            """
+            for route in table.get("Routes", []):
+                if route.get("DestinationCidrBlock") != "0.0.0.0/0":
+                    continue
+                if route.get("State") != "active":
+                    continue
+                target = (
+                    route.get("NatGatewayId")
+                    or route.get("TransitGatewayId")
+                    or route.get("VpcEndpointId")
+                    or route.get("NetworkInterfaceId")
+                    or route.get("InstanceId")
+                    or route.get("CoreNetworkArn")
+                )
+                gateway = route.get("GatewayId") or ""
+                target = target or (gateway if gateway.startswith("vgw-") else None)
+                if target:
+                    return target, True
+                unusable = gateway or route.get("VpcPeeringConnectionId")
+                if unusable:
+                    return unusable, False
+            return None, False
+
+        main = client.describe_route_tables(
+            Filters=[
+                {"Name": "vpc-id", "Values": [vpc_id]},
+                {"Name": "association.main", "Values": ["true"]},
+            ]
+        )["RouteTables"]
+
+        found = {}
+        for az in azs:
+            subnets = client.describe_subnets(
+                Filters=[
+                    {"Name": "vpc-id", "Values": [vpc_id]},
+                    {"Name": "availability-zone", "Values": [az]},
+                ]
+            )["Subnets"]
+            ids = [s["SubnetId"] for s in subnets]
+            tables = (
+                client.describe_route_tables(
+                    Filters=[{"Name": "association.subnet-id", "Values": ids}]
+                )["RouteTables"]
+                if ids
+                else []
+            )
+            seen = {
+                table["RouteTableId"]: (*leaves_by(table), False)
+                for table in tables
+                if leaves_by(table)[0] is not None
+            }
+            if not any(usable for _, usable, _ in seen.values()):
+                # a subnet we associate with nothing inherits the main table
+                seen |= {
+                    table["RouteTableId"]: (*leaves_by(table), True)
+                    for table in main
+                    if leaves_by(table)[1]
+                }
+            found[az] = seen
+        return found
+
+    def _get_route_table_ids(
+        self, region: str, vpc_id: str | None, azs: list[str]
+    ) -> dict[str, str] | None:
         if not vpc_id:
             return None
-        value = self._prompt(
-            "Route tables per AZ, <az>=rtb-id (blank to detect)",
-            "",
-            key="PINECONE_ROUTE_TABLE_IDS",
-        ).strip()
-        return self._parse_route_table_ids(value)
+        if self._non_interactive:
+            return self._parse_route_table_ids(os.environ.get("PINECONE_ROUTE_TABLE_IDS", ""))
+
+        try:
+            found = self._detect_route_tables(region, vpc_id, azs)
+        except Exception as exc:  # noqa: BLE001 - the prompt still stands without it
+            console.print(f"  [dim]Could not read route tables: {exc}[/]")
+            found = dict.fromkeys(azs, {})
+
+        console.print()
+        console.print(f"  {self._step('Egress')}")
+        console.print("  [dim]The route table each zone's nodes leave by: the one carrying")
+        console.print("  [dim]0.0.0.0/0 to your NAT, transit gateway or firewall[/]")
+
+        chosen = {}
+        for az in azs:
+            seen = found.get(az, {})
+            console.print()
+            for table_id, (target, usable, inherited) in seen.items():
+                why = (
+                    "  inherited, leave blank to keep it"
+                    if inherited
+                    else ""
+                    if usable
+                    else "  a private subnet cannot use this"
+                )
+                console.print(f"    [dim]{table_id}  0.0.0.0/0 -> {target}{why}[/]")
+            if not seen:
+                console.print(f"    [dim]nothing in {az} carries 0.0.0.0/0[/]")
+            offer = [t for t, (_, usable, inherited) in seen.items() if usable and not inherited]
+            answer = self._prompt(
+                f"Route table for {az}",
+                next(iter(offer), ""),
+                options=offer or None,
+            ).strip()
+            if answer:
+                chosen[az] = answer
+        return chosen or None
 
     @staticmethod
     def _parse_route_table_ids(value: str) -> dict[str, str] | None:
@@ -1198,12 +1379,12 @@ class AWSSetupWizard(BaseSetupWizard):
         return parsed or None
 
     @staticmethod
-    def _suggest_cidr(vpc_cidrs: list[str]) -> str:
-        """A /16 the VPC does not already use, preferring its own RFC 1918 block.
+    def _suggest_cidr(vpc_cidrs: list[str]) -> str | None:
+        """A free /16 from the RFC 1918 block their VPC already numbers from.
 
-        Defaulting to a range the VPC already carries would put our subnets on
-        addresses its existing subnets may hold, which only fails once AWS rejects
-        CreateSubnet.
+        A range they carry is where their own subnets live, and one from another
+        block cannot be associated at all: AWS refuses a secondary CIDR outside the
+        primary's RFC 1918 range. Nothing free there is nothing to suggest.
         """
         used = []
         for cidr in vpc_cidrs:
@@ -1211,22 +1392,55 @@ class AWSSetupWizard(BaseSetupWizard):
                 used.append(ipaddress.ip_network(cidr))
             except ValueError:
                 continue
-        blocks = sorted(
-            RFC1918_RANGES,
-            key=lambda block: not any(net.subnet_of(block) for net in used),
-        )
-        for block in blocks:
+        for block in RFC1918_RANGES:
+            if not any(net.subnet_of(block) for net in used):
+                continue
             if block.prefixlen > MIN_VPC_PREFIX:
                 continue
             for candidate in block.subnets(new_prefix=MIN_VPC_PREFIX):
                 if not any(candidate.overlaps(net) for net in used):
                     return str(candidate)
-        return AWSSetupWizard.DEFAULT_CIDR
+        return None
+
+    def _internet_gateway(self, region: str, vpc_id: str) -> str | None:
+        import boto3
+
+        client = boto3.Session().client("ec2", region_name=region)
+        found = client.describe_internet_gateways(
+            Filters=[{"Name": "attachment.vpc-id", "Values": [vpc_id]}]
+        )["InternetGateways"]
+        return found[0]["InternetGatewayId"] if found else None
+
+    def _get_public_access(
+        self,
+        default: str = "Y",
+        note: str = "",
+        vpc_id: str | None = None,
+        region: str | None = None,
+    ) -> bool:
+        """An internet-facing load balancer needs an internet gateway in their VPC.
+
+        Offering public access by default in a VPC that has none is offering a
+        deployment that cannot come up, so ask the VPC first and let the answer pick
+        the default.
+        """
+        if vpc_id and region and not self._non_interactive:
+            with contextlib.suppress(Exception):
+                gateway = self._internet_gateway(region, vpc_id)
+                note = (
+                    f"{gateway} is attached, so a public load balancer can go in {vpc_id}"
+                    if gateway
+                    else f"{vpc_id} has no internet gateway; a public load balancer needs one"
+                )
+                default = "Y" if gateway else "n"
+        return super()._get_public_access(default, note)
 
     def _get_cidr(self, vpc_id: str | None = None, region: str | None = None) -> str:
         if vpc_id and region and not self._non_interactive:
             with contextlib.suppress(Exception):
-                self.DEFAULT_CIDR = self._suggest_cidr(self._fetch_vpc_cidrs(region, vpc_id))
+                suggested = self._suggest_cidr(self._fetch_vpc_cidrs(region, vpc_id))
+                if suggested:
+                    self.DEFAULT_CIDR = suggested
         if self._non_interactive and self._non_interactive_cidr() is None:
             raise NonInteractiveInputRequired("VPC CIDR block", "PINECONE_VPC_CIDR")
         return super()._get_cidr()
