@@ -2,6 +2,11 @@ name: E2E AWS
 
 on:
   workflow_call:
+    inputs:
+      shape:
+        description: which e2e shape to deploy; empty lets the PR labels decide
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -65,8 +70,10 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: >-
           uv run --extra aws pytest -m e2e -s --keep
-          -k ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc')
-          && 'byovpc' || 'vanilla' }}
+          -k ${{ inputs.shape
+          || (contains(github.event.pull_request.labels.*.name, 'test:e2e:private') && 'private')
+          || (contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc') && 'byovpc')
+          || 'vanilla' }}
 
       - name: Upload run logs
         if: always()

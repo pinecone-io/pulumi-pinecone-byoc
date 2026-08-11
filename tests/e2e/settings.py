@@ -109,9 +109,11 @@ def _cloud_of(stack, override):
 
 
 def destroy_targets(config):
-    # every cluster an e2e run can leave, so a teardown needs no flags to find them
+    # every shape a run can deploy; the destroy test skips the ones that are not there,
+    # so the teardown job needs no flag telling it which shape ran
     stacks = config.getoption("--destroy-stack") or [
         stack_name("vanilla", "byoc"),
+        stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")

@@ -11,6 +11,16 @@ def data_plane_host(environment):
     return f"probe.svc.{environment}.pinecone.io"
 
 
+def private_data_plane_host(environment):
+    """The same data plane, over PrivateLink.
+
+    The private certificate and the endpoint service's private DNS name both sit
+    under .private, so this only resolves from a VPC with an endpoint to the
+    service - which is the whole point of the shape.
+    """
+    return f"probe.svc.private.{environment}.pinecone.io"
+
+
 def assert_answers(host, timeout_seconds=900, poll_seconds=15):
     deadline = time.time() + timeout_seconds
     last = ""
