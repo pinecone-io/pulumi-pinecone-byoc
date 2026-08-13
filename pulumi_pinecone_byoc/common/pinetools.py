@@ -3,6 +3,8 @@
 import pulumi
 import pulumi_kubernetes as k8s
 
+INSTALL_DEADLINE_SECONDS = 1800
+
 WAIT_FOR_REGCRED_SCRIPT = """
 echo "Waiting for regcred secret in pc-control-plane namespace..."
 for i in $(seq 1 60); do
@@ -103,6 +105,10 @@ class Pinetools(pulumi.ComponentResource):
                     name="PINECONE_IMAGE_VERSION",
                     value=pinecone_version,
                 ),
+                k8s.core.v1.EnvVarArgs(
+                    name="PINETOOLS_PROCESS_BUDGET_SECONDS",
+                    value=str(INSTALL_DEADLINE_SECONDS),
+                ),
             ],
             resources=k8s.core.v1.ResourceRequirementsArgs(
                 requests={"ephemeral-storage": "1Gi", "memory": "512Mi", "cpu": "100m"},
@@ -142,7 +148,7 @@ class Pinetools(pulumi.ComponentResource):
         ) -> k8s.batch.v1.JobSpecArgs:
             return k8s.batch.v1.JobSpecArgs(
                 backoff_limit=1,
-                active_deadline_seconds=1800,
+                active_deadline_seconds=INSTALL_DEADLINE_SECONDS,
                 ttl_seconds_after_finished=300,
                 template=k8s.core.v1.PodTemplateSpecArgs(
                     spec=make_pod_spec(init_containers),
