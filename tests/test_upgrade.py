@@ -29,6 +29,8 @@ STATEFUL = (
 )
 DESTRUCTIVE = ("replace", "create-replacement", "delete-replaced", "replace-delete", "delete")
 
+SOURCE_PINECONE_VERSION = os.environ.get("UPGRADE_SOURCE_VERSION", "main-8c39fad")
+
 
 def baseline_ref():
     if os.environ.get("UPGRADE_BASELINE_REF"):
@@ -133,6 +135,19 @@ def pin_published_module(project_dir, ref):
     logging.info(f"baseline pinned to pulumi-pinecone-byoc=={version}")
 
 
+def install_the_source_version(project_dir, stack):
+    pulumi(
+        "config",
+        "set",
+        "pinecone-version",
+        SOURCE_PINECONE_VERSION,
+        "--stack",
+        stack,
+        cwd=project_dir,
+    )
+    logging.info(f"baseline installs pinecone {SOURCE_PINECONE_VERSION}")
+
+
 def upgrade_in_place(baseline_dir, candidate_dir, stack):
     shutil.rmtree(candidate_dir, ignore_errors=True)
     shutil.copytree(
@@ -196,6 +211,7 @@ def upgraded(request, baseline_source):
     )
     pin_published_module(baseline_dir, baseline_ref())
     teach_the_baseline_its_control_plane(baseline_dir, baseline_source, stack)
+    install_the_source_version(baseline_dir, stack)
     candidate_dir = PROJECTS / f"{stack}-candidate"
 
     stop_streaming = threading.Event()
