@@ -3,7 +3,7 @@ import os
 import threading
 
 from .commands import pulumi
-from .installer import supervise_pinetools_logs
+from .installer import capture_failed_deploy, supervise_pinetools_logs
 from .paths import PROJECTS
 from .settings import keep_stacks
 from .stacks import destroy_stack, stack_name
@@ -34,7 +34,11 @@ def deployed_project(request, shape, **answers):
     streamer.start()
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        try:
+            pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        except BaseException:
+            capture_failed_deploy(os.environ["AWS_REGION"])
+            raise
         yield project_dir
     finally:
         try:
