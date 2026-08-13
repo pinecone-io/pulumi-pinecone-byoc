@@ -381,6 +381,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             domain=self._subdomain,
             region=config.region,
             public_access_enabled=args.public_access_enabled,
+            # this cloud still builds its Flexible Server pair; fdb is AWS-only so far
+            data_plane_backend="postgres",
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
                 parent=self,

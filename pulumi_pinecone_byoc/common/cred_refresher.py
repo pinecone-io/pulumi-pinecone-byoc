@@ -3,7 +3,9 @@
 import pulumi
 import pulumi_kubernetes as k8s
 
-EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system"
+# foundationdb: an fdb cell pulls the operator and the FDB images through regcred
+# like everything else, and that namespace is not a pc-* one the script discovers
+EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system foundationdb"
 
 REGISTRY_CONFIG = {
     "ecr": {

@@ -58,7 +58,9 @@ class PineconeAWSClusterArgs:
 
     # aws specific
     region: str = "us-east-1"
-    availability_zones: list[str] = field(default_factory=lambda: ["us-east-1a", "us-east-1b"])
+    availability_zones: list[str] = field(
+        default_factory=lambda: ["us-east-1a", "us-east-1b", "us-east-1c"]
+    )
 
     # networking
     vpc_cidr: str = "10.0.0.0/16"
@@ -73,6 +75,9 @@ class PineconeAWSClusterArgs:
     parent_dns_zone_name: str = "byoc.pinecone.io"
 
     # features
+    # "fdb" runs the data plane on the FoundationDB pinecone-db installs in the
+    # cluster and provisions no database; "postgres" provisions the RDS pair
+    data_plane_backend: str = "fdb"
     public_access_enabled: bool = True  # false = private access only via privatelink
     deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
     network_only: bool = False
@@ -107,6 +112,17 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:PineconeAWSCluster", name, None, opts)
 
         self.args = args
+        if args.data_plane_backend not in ("postgres", "fdb"):
+            raise ValueError(
+                f"data_plane_backend must be 'postgres' or 'fdb', got {args.data_plane_backend!r}"
+            )
+        if args.data_plane_backend == "fdb" and len(args.availability_zones) < 3:
+            raise ValueError(
+                "data_plane_backend='fdb' requires at least 3 availability zones for "
+                f"zone fault domains, got {args.availability_zones!r}. With fewer, the "
+                "FoundationDB CR silently degrades to hostname fault domains and "
+                "nothing downstream validates it"
+            )
         child_opts = pulumi.ResourceOptions(parent=self)
         config = self._build_config(args)
         self._config = config
@@ -276,13 +292,18 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
-        self._rds = RDS(
-            f"{config.resource_prefix}-rds",
-            config,
-            self._vpc,
-            cell_name=self._cell_name,
-            kms_key_arn=args.kms_key_arn,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
+        # an fdb cell keeps its stores in FoundationDB, so there is no database to build
+        self._rds = (
+            RDS(
+                f"{config.resource_prefix}-rds",
+                config,
+                self._vpc,
+                cell_name=self._cell_name,
+                kms_key_arn=args.kms_key_arn,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
+            )
+            if args.data_plane_backend == "postgres"
+            else None
         )
 
         self._k8s_addons = K8sAddons(
@@ -349,11 +370,13 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cpgw_api_key=self._cpgw_api_key.key,
             gcps_api_key=self._api_key.value,
             dd_api_key=self._datadog_api_key.api_key,
-            control_db=self._rds.control_db,
-            system_db=self._rds.system_db,
+            control_db=self._rds.control_db if self._rds is not None else None,
+            system_db=self._rds.system_db if self._rds is not None else None,
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self._eks, self._api_key, self._datadog_api_key, self._rds],
+                depends_on=[
+                    r for r in [self._eks, self._api_key, self._datadog_api_key, self._rds] if r
+                ],
             ),
         )
 
@@ -418,6 +441,11 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         pulumi_outputs = {
             "cell_name": self._cell_name,
+            # helmfile reads .Values.config from here, not from pc-cluster-information:
+            # this is the copy that turns FoundationDB on and stops mounting exdb
+            # credentials. pinetools reads the other one to skip the Postgres jobs, and
+            # a cell with only one of the two gets half an fdb deploy
+            "data_plane_backend": args.data_plane_backend,
             "org_name": self._environment.org_name,
             "cloud": "aws",
             "region": args.region,
@@ -458,9 +486,11 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             domain=self._subdomain,
             region=args.region,
             public_access_enabled=args.public_access_enabled,
+            data_plane_backend=args.data_plane_backend,
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._eks, self._dns, self._s3, self._rds]
+                parent=self,
+                depends_on=[r for r in [self._eks, self._dns, self._s3, self._rds] if r],
             ),
         )
 
@@ -510,8 +540,12 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "cluster_endpoint": self._eks.cluster.eks_cluster.endpoint,
                 "kubeconfig": self._eks.kubeconfig,
                 "data_bucket": self._s3.data_bucket_name,
-                "control_db_endpoint": self._rds.control_db.endpoint,
-                "system_db_endpoint": self._rds.system_db.endpoint,
+                "control_db_endpoint": (
+                    self._rds.control_db.endpoint if self._rds is not None else None
+                ),
+                "system_db_endpoint": (
+                    self._rds.system_db.endpoint if self._rds is not None else None
+                ),
                 "certificate_arn": self._dns.certificate_arn,
                 "environment_id": self._environment.id,
                 "environment_name": self._environment.env_name,
@@ -636,28 +670,28 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._s3.wal_bucket_name
 
     @property
-    def control_db(self) -> RDSInstance:
-        return self._rds.control_db
+    def control_db(self) -> RDSInstance | None:
+        return self._rds.control_db if self._rds is not None else None
 
     @property
-    def system_db(self) -> RDSInstance:
-        return self._rds.system_db
+    def system_db(self) -> RDSInstance | None:
+        return self._rds.system_db if self._rds is not None else None
 
     @property
-    def control_db_endpoint(self) -> pulumi.Output[str]:
-        return self._rds.control_db.endpoint
+    def control_db_endpoint(self) -> pulumi.Output[str] | None:
+        return self._rds.control_db.endpoint if self._rds is not None else None
 
     @property
-    def system_db_endpoint(self) -> pulumi.Output[str]:
-        return self._rds.system_db.endpoint
+    def system_db_endpoint(self) -> pulumi.Output[str] | None:
+        return self._rds.system_db.endpoint if self._rds is not None else None
 
     @property
-    def control_db_connection_secret_arn(self) -> pulumi.Output[str]:
-        return self._rds.control_db.connection_secret_arn
+    def control_db_connection_secret_arn(self) -> pulumi.Output[str] | None:
+        return self._rds.control_db.connection_secret_arn if self._rds is not None else None
 
     @property
-    def system_db_connection_secret_arn(self) -> pulumi.Output[str]:
-        return self._rds.system_db.connection_secret_arn
+    def system_db_connection_secret_arn(self) -> pulumi.Output[str] | None:
+        return self._rds.system_db.connection_secret_arn if self._rds is not None else None
 
     @property
     def certificate_arn(self) -> pulumi.Output[str]:

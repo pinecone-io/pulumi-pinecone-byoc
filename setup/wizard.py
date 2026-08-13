@@ -23,6 +23,12 @@ BLUE = "#002BFF"
 
 PINECONE_VERSION = "main-e59b176"
 
+# "postgres" builds RDS; "fdb" keeps every store in the FoundationDB that
+# pinecone-db installs in the cluster, and builds no database at all
+DATA_PLANE_BACKEND = "fdb"
+# FoundationDB keeps three replicas, one per zone, so an fdb cell needs three
+ZONES_NEEDED = 3 if DATA_PLANE_BACKEND == "fdb" else 2
+
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
 MAX_AZS = 3
@@ -240,12 +246,12 @@ class BaseSetupWizard:
     def _yes(response: str) -> bool:
         return response.strip().lower() in ("", "y", "yes", "true", "1")
 
-    def _zone_default(self, key: str, available: list[str]) -> str:
+    def _zone_default(self, key: str, available: list[str], count: int = 2) -> str:
         if self._state is not None:
             saved = self._state.get(key)
             if saved and not all(z.strip() in available for z in saved.split(",")):
                 self._state.unset(key)
-        return ",".join(available[:2])
+        return ",".join(available[:count])
 
     def _maybe_resume(self, output_dir: str) -> None:
         """Load prior answers and, if present, offer to resume."""
@@ -1175,7 +1181,14 @@ class AWSPreflightChecker:
 
     def _check_instance_types(self):
         # check all instance types needed for the cluster
-        instance_types = ["m6idn.large", "i7ie.large", "m6idn.xlarge", "r6in.large"]
+        # r6i.large is the shape the byoc FoundationDB profile asks for
+        instance_types = [
+            "m6idn.large",
+            "i7ie.large",
+            "m6idn.xlarge",
+            "r6in.large",
+            "r6i.large",
+        ]
         all_available = True
         unavailable = []
 
@@ -1688,7 +1701,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         azs_input = self._prompt(
             "Enter AZs (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
+            self._zone_default("PINECONE_AZS", available, count=ZONES_NEEDED),
             key="PINECONE_AZS",
         )
         azs = [az.strip() for az in azs_input.split(",")]
@@ -1817,6 +1830,7 @@ cluster = PineconeAWSCluster(
         region=config.require("region"),
         vpc_cidr=config.get("vpc-cidr"),
         availability_zones=config.require_object("availability-zones"),
+        data_plane_backend=config.get("data-plane-backend") or "fdb",
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         custom_ami_id=config.get("custom-ami-id"),
@@ -1852,6 +1866,7 @@ if config.get_bool("public-access-enabled") is False:
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
+  {project_name}:data-plane-backend: {DATA_PLANE_BACKEND}
   {project_name}:availability-zones:
 """
         for az in azs:
