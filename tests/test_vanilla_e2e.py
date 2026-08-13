@@ -4,7 +4,7 @@ import threading
 
 import pytest
 from e2e.commands import pulumi, pulumi_json
-from e2e.installer import supervise_pinetools_logs
+from e2e.installer import capture_failed_deploy, supervise_pinetools_logs
 from e2e.paths import PROJECTS
 from e2e.reachability import assert_answers, data_plane_host
 from e2e.settings import keep_stacks
@@ -33,7 +33,11 @@ def vanilla_project(request):
     streamer.start()
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        try:
+            pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        except BaseException:
+            capture_failed_deploy(os.environ["AWS_REGION"])
+            raise
         yield project_dir
     finally:
         try:
