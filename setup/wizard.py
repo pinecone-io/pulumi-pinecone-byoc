@@ -541,6 +541,7 @@ class AWSPreflightChecker:
         vpc_id: str | None = None,
         route_table_ids: dict[str, str] | None = None,
         public_access: bool = True,
+        tags: dict[str, str] | None = None,
         non_interactive: bool = False,
     ):
         import boto3
@@ -553,6 +554,7 @@ class AWSPreflightChecker:
         self.vpc_id = vpc_id
         self.route_table_ids = route_table_ids
         self.public_access = public_access
+        self.tags = tags or {}
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -568,6 +570,7 @@ class AWSPreflightChecker:
                 ("VPC Exists", self._check_vpc_exists),
                 ("VPC DNS", self._check_vpc_dns),
                 ("VPC CIDR", self._check_range_fits_their_vpc),
+                ("VPC Permissions", self._check_permissions),
                 ("Subnet Egress", self._check_their_egress),
                 ("EKS Clusters", self._check_eks_cluster_quota),
                 *([("Internet Gateway", self._check_igw_attached)] if self.public_access else []),
@@ -821,6 +824,94 @@ class AWSPreflightChecker:
             f"No internet gateway attached to {self.vpc_id}",
             "An internet-facing load balancer needs one; attach it, or deploy with "
             "public access disabled to reach the data plane over PrivateLink",
+        )
+
+    def _refused(self, name: str, call, **kwargs) -> str | None:
+        """The action's name if it was refused, nothing if allowed or unanswered.
+
+        A dry run creates nothing and evaluates the whole policy chain, SCP included.
+        Only UnauthorizedOperation is a refusal: a throttle or a rejected argument
+        leaves the question open, and must not be why a deploy is stopped.
+        """
+        try:
+            call(DryRun=True, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - the code is the answer, whatever the class
+            if getattr(exc, "response", {}).get("Error", {}).get("Code") == "UnauthorizedOperation":
+                return name
+        return None
+
+    def _check_permissions(self):
+        """Whether this credential may build in a VPC someone else's policies cover.
+
+        A role scoped to their own networking is denied our subnets long before it is
+        denied our cluster, and the deploy would find out an hour in.
+        """
+        try:
+            ipaddress.ip_network(self.cidr)
+        except ValueError:
+            self._add_result("VPC Permissions", True, "not checked: the range is not a CIDR")
+            return
+
+        # a policy conditioned on tags refuses a probe that does not carry them, and
+        # the ones the module adds at deploy time are not known here
+        tag_spec = (
+            [
+                {
+                    "ResourceType": "subnet",
+                    "Tags": [{"Key": k, "Value": v} for k, v in self.tags.items()],
+                }
+            ]
+            if self.tags
+            else []
+        )
+        probes = [
+            (
+                "ec2:CreateSubnet",
+                self.ec2.create_subnet,
+                {
+                    "VpcId": self.vpc_id,
+                    "CidrBlock": self.cidr,
+                    "AvailabilityZone": self.azs[0],
+                    "TagSpecifications": tag_spec,
+                },
+            ),
+            (
+                "ec2:CreateSecurityGroup",
+                self.ec2.create_security_group,
+                {
+                    "VpcId": self.vpc_id,
+                    "GroupName": "pinecone-preflight-lb-backend-sg",
+                    "Description": "Shared backend security group for load balancers",
+                },
+            ),
+        ]
+        if self.public_access:
+            probes.append(
+                ("ec2:CreateRouteTable", self.ec2.create_route_table, {"VpcId": self.vpc_id})
+            )
+        for table_id in sorted(set((self.route_table_ids or {}).values())):
+            probes.append(
+                (
+                    f"ec2:AssociateRouteTable on {table_id}",
+                    self.ec2.associate_route_table,
+                    # no subnet of ours exists yet; authorization is decided before the
+                    # lookup, so a scoped policy answers and a NotFound reads as unknown
+                    {"RouteTableId": table_id, "SubnetId": "subnet-" + "0" * 17},
+                )
+            )
+
+        refused = [name for name, call, kwargs in probes if self._refused(name, call, **kwargs)]
+        if not refused:
+            self._add_result("VPC Permissions", True, f"the layout is permitted in {self.vpc_id}")
+            return
+        self._add_result(
+            "VPC Permissions",
+            False,
+            f"{', '.join(refused)} refused",
+            f"Grant these on {self.vpc_id}, or leave the VPC blank to deploy into one of "
+            "our own. Not covered either way: ec2:AssociateVpcCidrBlock and "
+            "ec2:ModifySubnetAttribute have no dry run, and a policy conditioned on the "
+            "tags the module adds at deploy time cannot be answered from here.",
         )
 
     def _check_vpc_quota(self):
@@ -1109,7 +1200,7 @@ class AWSSetupWizard(BaseSetupWizard):
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
-            region, azs, cidr, vpc_id, route_table_ids, public_access
+            region, azs, cidr, vpc_id, route_table_ids, public_access, tags
         ):
             return False
 
@@ -1521,6 +1612,7 @@ class AWSSetupWizard(BaseSetupWizard):
         vpc_id: str | None = None,
         route_table_ids: dict[str, str] | None = None,
         public_access: bool = True,
+        tags: dict[str, str] | None = None,
     ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
@@ -1533,6 +1625,7 @@ class AWSSetupWizard(BaseSetupWizard):
             vpc_id=vpc_id,
             route_table_ids=route_table_ids,
             public_access=public_access,
+            tags=tags,
             non_interactive=self._non_interactive,
         )
         if not checker.run_checks():

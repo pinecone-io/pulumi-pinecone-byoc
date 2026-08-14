@@ -19,8 +19,32 @@ def checker(**kwargs):
     made.vpc_id = kwargs.get("vpc_id", "vpc-theirs")
     made.route_table_ids = kwargs.get("route_table_ids")
     made.public_access = kwargs.get("public_access", True)
+    made.tags = kwargs.get("tags", {})
     made.non_interactive = True
+    if "ec2" in kwargs:
+        made.ec2 = kwargs["ec2"]
     return made
+
+
+class DryRuns:
+    """An ec2 client that answers a dry run the way EC2 does, without a credential."""
+
+    def __init__(self, answers):
+        self.answers = answers
+        self.asked: list[tuple[str, dict]] = []
+
+    def __getattr__(self, operation):
+        def call(**kwargs):
+            self.asked.append((operation, kwargs))
+            raise ClientError({"Error": {"Code": self.answers.get(operation, "DryRunOperation")}})
+
+        return call
+
+
+class ClientError(Exception):
+    def __init__(self, response):
+        super().__init__(response["Error"]["Code"])
+        self.response = response
 
 
 @pytest.mark.parametrize(
@@ -366,3 +390,64 @@ def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=No
             return {"InternetGateways": internet_gateways or []}
 
     return Fake()
+
+
+def test_a_vpc_that_permits_the_layout_passes_the_check():
+    made = checker(ec2=DryRuns({}))
+    made._check_permissions()
+
+    assert made.results[-1].passed
+    assert "vpc-theirs" in made.results[-1].message
+
+
+def test_a_refused_subnet_fails_the_check_and_names_the_action():
+    made = checker(ec2=DryRuns({"create_subnet": "UnauthorizedOperation"}))
+    made._check_permissions()
+
+    result = made.results[-1]
+    assert not result.passed, "the wizard has someone to ask, so it stops"
+    assert "ec2:CreateSubnet" in result.message
+    assert "ec2:AssociateVpcCidrBlock" in result.details
+
+
+@pytest.mark.parametrize("code", ["RequestLimitExceeded", "InvalidSubnetRange"])
+def test_an_answer_that_is_not_a_refusal_does_not_fail_the_check(code):
+    made = checker(ec2=DryRuns(dict.fromkeys(["create_subnet", "create_route_table"], code)))
+    made._check_permissions()
+
+    assert made.results[-1].passed
+
+
+def test_their_route_tables_are_each_asked_about():
+    client = DryRuns({})
+    made = checker(ec2=client, route_table_ids={"us-east-2a": "rtb-1", "us-east-2b": "rtb-1"})
+    made._check_permissions()
+
+    asked = [
+        kwargs["RouteTableId"] for name, kwargs in client.asked if name == "associate_route_table"
+    ]
+    assert asked == ["rtb-1"], "one probe per table, not per zone"
+
+
+@pytest.mark.parametrize("public_access", [True, False], ids=["public", "private"])
+def test_only_an_ingress_deploy_asks_to_make_a_route_table(public_access):
+    client = DryRuns({})
+    checker(ec2=client, public_access=public_access)._check_permissions()
+
+    made_table = [name for name, _ in client.asked if name == "create_route_table"]
+    assert bool(made_table) is public_access
+
+
+def test_the_probe_carries_the_tags_they_asked_for():
+    client = DryRuns({})
+    checker(ec2=client, tags={"team": "search"})._check_permissions()
+
+    spec = next(kwargs for name, kwargs in client.asked if name == "create_subnet")
+    assert spec["TagSpecifications"][0]["Tags"] == [{"Key": "team", "Value": "search"}]
+
+
+def test_a_range_that_is_not_a_cidr_is_not_reported_as_a_permission_problem():
+    made = checker(cidr="not-a-cidr", ec2=DryRuns({}))
+    made._check_permissions()
+
+    assert made.results[-1].passed, "the CIDR check already failed the run by itself"
