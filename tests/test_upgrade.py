@@ -100,6 +100,12 @@ CONTROL_PLANE_ARGS = {
 }
 
 
+def _passes(arg, generated):
+    # a generator recent enough to know the argument spells it either as a literal
+    # keyword or as a key of the control_plane dict it splats into the call
+    return f"{arg}=" in generated or f'"{arg}":' in generated
+
+
 def teach_the_baseline_its_control_plane(project_dir, source, stack):
     program = project_dir / "__main__.py"
     generated = program.read_text()
@@ -107,7 +113,7 @@ def teach_the_baseline_its_control_plane(project_dir, source, stack):
     missing = {
         arg: os.environ[env]
         for arg, env in CONTROL_PLANE_ARGS.items()
-        if f"{arg}=" not in generated and f"    {arg}:" in accepted and os.environ.get(env)
+        if not _passes(arg, generated) and f"    {arg}:" in accepted and os.environ.get(env)
     }
     if not missing:
         logging.info("baseline already carries its own control plane settings")
