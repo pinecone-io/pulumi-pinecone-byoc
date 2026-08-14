@@ -29,6 +29,7 @@ class CreateEnvironmentResponse(BaseModel):
     name: str
     org_id: str
     org_name: str
+    domain: str | None = None
 
 
 class CreateServiceAccountResponse(BaseModel):
@@ -153,6 +154,7 @@ def create_environment(
     api_url: str,
     secret: str,
     is_public_endpoint_enabled: bool = True,
+    domain: str | None = None,
 ) -> CreateEnvironmentResponse:
     body = {
         "cloud": cloud,
@@ -160,6 +162,8 @@ def create_environment(
         "global_env": global_env,
         "is_public_endpoint_enabled": is_public_endpoint_enabled,
     }
+    if domain is not None:
+        body["domain"] = domain
     resp = request(
         "POST",
         f"{cpgw_bootstrap_url(api_url)}/environments",
@@ -171,6 +175,15 @@ def create_environment(
         environment = CreateEnvironmentResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}") from e
+
+    # An older control plane ignores an unknown field, creates the cell on the default
+    # zone and still answers 200. Left unchecked the installer would go on to serve the
+    # cell under the customer's zone while every advertised host names ours.
+    if environment.domain != domain:
+        raise PineconeApiError(
+            500,
+            f"control plane recorded domain {environment.domain!r}, expected {domain!r}",
+        )
 
     return environment
 

@@ -69,7 +69,7 @@ class PineconeAWSClusterArgs:
     node_pools: list[NodePool] | None = None
 
     # dns
-    parent_dns_zone_name: str = "byoc.pinecone.io"
+    domain: str = "pinecone.io"
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
@@ -132,6 +132,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 api_url=args.api_url,
                 secret=args.pinecone_api_key,
                 is_public_endpoint_enabled=args.public_access_enabled,
+                domain=args.domain if args.domain != "pinecone.io" else None,
             ),
             opts=child_opts,
         )
@@ -269,7 +270,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._dns = DNS(
             f"{config.resource_prefix}-dns",
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            parent_zone_name=args.parent_dns_zone_name,
+            parent_zone_name=f"byoc.{args.domain}",
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
@@ -326,6 +327,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             k8s_provider=self._eks.provider,
             cluster_security_group_id=self._eks.cluster_security_group_id,
             cell_name=self._cell_name,
+            domain=args.domain,
             public_access_enabled=args.public_access_enabled,
             opts=pulumi.ResourceOptions(
                 parent=self,
@@ -568,7 +570,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
-            parent_zone_name=args.parent_dns_zone_name,
+            parent_zone_name=f"byoc.{args.domain}",
             custom_ami_id=args.custom_ami_id,
             kms_key_arn=args.kms_key_arn,
             custom_tags=args.tags or {},

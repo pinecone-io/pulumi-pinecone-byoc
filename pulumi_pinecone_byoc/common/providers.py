@@ -61,6 +61,7 @@ class EnvironmentArgs:
         api_url: pulumi.Input[str],
         secret: pulumi.Input[str],
         is_public_endpoint_enabled: pulumi.Input[bool] = True,
+        domain: pulumi.Input[str] | None = None,
     ):
         self.cloud = cloud
         self.region = region
@@ -68,6 +69,7 @@ class EnvironmentArgs:
         self.api_url = api_url
         self.secret = secret
         self.is_public_endpoint_enabled = is_public_endpoint_enabled
+        self.domain = domain
 
 
 class EnvironmentProvider(ResourceProvider):
@@ -82,6 +84,7 @@ class EnvironmentProvider(ResourceProvider):
             props["secret"],
         )
         is_public_endpoint_enabled = props.get("is_public_endpoint_enabled", True)
+        domain = props.get("domain")
         environment = asyncio.run(
             asyncio.to_thread(
                 create_environment,
@@ -91,6 +94,7 @@ class EnvironmentProvider(ResourceProvider):
                 api_url=api_url,
                 secret=secret,
                 is_public_endpoint_enabled=is_public_endpoint_enabled,
+                domain=domain,
             )
         )
 
@@ -123,6 +127,8 @@ class EnvironmentProvider(ResourceProvider):
             "is_public_endpoint_enabled", True
         ):
             replaces.append("is_public_endpoint_enabled")
+        if _olds.get("domain") != _news.get("domain"):
+            replaces.append("domain")
         return DiffResult(
             changes=len(replaces) > 0 or _olds.get("cloud") != _news.get("cloud"),
             replaces=replaces,
@@ -184,6 +190,7 @@ class Environment(Resource):
             "api_url": args.api_url,
             "secret": args.secret,
             "is_public_endpoint_enabled": args.is_public_endpoint_enabled,
+            "domain": args.domain,
         }
         super().__init__(
             EnvironmentProvider(),

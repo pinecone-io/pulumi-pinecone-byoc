@@ -47,10 +47,13 @@ class NLB(pulumi.ComponentResource):
         k8s_provider: pulumi.ProviderResource,
         cluster_security_group_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
+        domain: str = "pinecone.io",
         public_access_enabled: bool = True,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:NLB", name, None, opts)
+
+        wildcard_host = f"*.{domain}"
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
@@ -140,17 +143,17 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/tags": tags_str,
             }
 
-        def build_http2_annotations(cert_arn: str, subdomain: str, subnets: str) -> dict:
+        def build_http2_annotations(cert_arn: str, subdomain: str, subnets: str, fqdn: str) -> dict:
             return {
                 **_base_annotations(cert_arn, subdomain, subnets),
                 "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP2",
                 "alb.ingress.kubernetes.io/conditions.gateway-proxy": '[{"field":"http-header","httpHeaderConfig":{"httpHeaderName": "Content-Type", "values":["application/grpc"]}}]',
-                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{subdomain}.pinecone.io",
+                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{fqdn}",
                 "alb.ingress.kubernetes.io/group.order": "1",
             }
 
         http2_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain, private_subnets
+            dns.private_certificate_arn, dns.subdomain, private_subnets, dns.fqdn
         ).apply(lambda args: build_http2_annotations(*args))
 
         # private ingress for HTTP2/gRPC traffic
@@ -164,7 +167,7 @@ class NLB(pulumi.ComponentResource):
             spec=k8s.networking.v1.IngressSpecArgs(
                 rules=[
                     k8s.networking.v1.IngressRuleArgs(
-                        host="*.pinecone.io",
+                        host=wildcard_host,
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
                                 k8s.networking.v1.HTTPIngressPathArgs(
@@ -237,7 +240,7 @@ class NLB(pulumi.ComponentResource):
                         ),
                     ),
                     k8s.networking.v1.IngressRuleArgs(
-                        host="*.pinecone.io",
+                        host=wildcard_host,
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
                                 k8s.networking.v1.HTTPIngressPathArgs(
@@ -353,15 +356,12 @@ class NLB(pulumi.ComponentResource):
 
         # PrivateLink setup for private endpoint access
         # consumers create VPC endpoints to this service and get DNS resolution via PrivateLink
-        subdomain = dns.subdomain
         self.vpc_endpoint_service = aws.ec2.VpcEndpointService(
             f"{name}-vpces",
             acceptance_required=False,
             allowed_principals=["*"],
             network_load_balancer_arns=[self.nlb.arn],
-            private_dns_name=pulumi.Output.from_input(subdomain).apply(
-                lambda s: f"*.private.{s}.byoc.pinecone.io"
-            ),
+            private_dns_name=dns.fqdn.apply(lambda f: f"*.private.{f}"),
             opts=child_opts,
         )
 
@@ -491,7 +491,7 @@ class NLB(pulumi.ComponentResource):
                 spec=k8s.networking.v1.IngressSpecArgs(
                     rules=[
                         k8s.networking.v1.IngressRuleArgs(
-                            host="*.pinecone.io",
+                            host=wildcard_host,
                             http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                                 paths=[
                                     k8s.networking.v1.HTTPIngressPathArgs(
@@ -562,7 +562,7 @@ class NLB(pulumi.ComponentResource):
                 spec=k8s.networking.v1.IngressSpecArgs(
                     rules=[
                         k8s.networking.v1.IngressRuleArgs(
-                            host="*.pinecone.io",
+                            host=wildcard_host,
                             http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                                 paths=[
                                     k8s.networking.v1.HTTPIngressPathArgs(
