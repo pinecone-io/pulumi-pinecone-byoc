@@ -11,7 +11,7 @@ import pulumi_aws as aws
 
 from config.aws import AWSConfig
 
-from . import vpc_route, vpc_subnet
+from . import vpc_perms, vpc_route, vpc_subnet
 
 
 class VPC(pulumi.ComponentResource):
@@ -153,6 +153,8 @@ class VPC(pulumi.ComponentResource):
             )
         if not route_tables:
             route_tables = vpc_route.detect(vpc_id, config.availability_zones)
+
+        vpc_perms.warn(config, vpc_id, route_tables)
 
         self.private_subnets: list[aws.ec2.Subnet] = []
         self.private_route_table_associations: list[aws.ec2.RouteTableAssociation] = []

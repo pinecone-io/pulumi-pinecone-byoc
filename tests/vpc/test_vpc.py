@@ -88,6 +88,12 @@ class Engine(pulumi.runtime.Mocks):
         return {}
 
 
+@pytest.fixture(autouse=True)
+def permitted(ec2):
+    """Their VPC allows everything, unless a test says otherwise."""
+    return ec2()
+
+
 @pytest.fixture
 def engine():
     mocks = Engine()
@@ -282,6 +288,17 @@ def test_a_lookup_that_failed_for_another_reason_is_not_reported_as_a_missing_ga
 
     with pytest.raises(Exception, match="RequestLimitExceeded"):
         in_existing_vpc(public_access=True)
+
+
+def test_a_vpc_that_refuses_our_subnets_warns_and_deploys_anyway(engine, ec2, monkeypatch):
+    ec2(create_subnet="UnauthorizedOperation")
+    warnings = []
+    monkeypatch.setattr(pulumi.log, "warn", lambda message, *_, **__: warnings.append(message))
+
+    vpc = in_existing_vpc(public_access=False)
+
+    assert len(vpc.private_subnets) == 2
+    assert "ec2:CreateSubnet" in warnings[0]
 
 
 def cluster(**kwargs):
