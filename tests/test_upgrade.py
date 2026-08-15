@@ -12,7 +12,7 @@ from e2e.indexes import delete_project_indexes
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS, REPO_ROOT
 from e2e.settings import e2e_azs, keep_stacks
-from e2e.stacks import destroy_stack, find_stack, stack_name
+from e2e.stacks import DEFAULT_SHAPE, STACK_SUFFIX, destroy_stack, find_stack, stack_name
 from e2e.wizard import generate_project
 
 STATEFUL = (
@@ -215,7 +215,7 @@ def baseline(pytestconfig, baseline_source):
     creating a second one, so the second run reproduces the project the first
     one deployed instead of carrying it between machines.
     """
-    stack = stack_name("vanilla", "byoc")
+    stack = stack_name(DEFAULT_SHAPE, STACK_SUFFIX)
     env = {
         "PINECONE_API_KEY": os.environ["PINECONE_API_KEY"],
         "PINECONE_REGION": os.environ["AWS_REGION"],

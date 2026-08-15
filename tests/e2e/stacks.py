@@ -10,6 +10,12 @@ from .paths import REPO_ROOT
 
 ARN_ACCOUNT = re.compile(r"arn:aws:[a-z0-9-]*:[a-z0-9-]*:(\d{12}):")
 
+# every stack the harness deploys is <prefix>-<shape>-byoc, and the teardown finds
+# it by building that name a second time - so it is one constant, not a literal
+# each caller spells for itself
+STACK_SUFFIX = "byoc"
+DEFAULT_SHAPE = "vanilla"
+
 
 def stack_name(*parts):
     prefix = os.environ.get("E2E_STACK_PREFIX") or os.environ.get("USER") or getpass.getuser()
