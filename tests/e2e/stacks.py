@@ -83,8 +83,10 @@ def refuse_foreign_account(qualified):
         )
 
 
-def destroy_stack(cwd, stack=None):
-    scoped = (["--stack", stack] if stack else []) + ["--yes"]
-    pulumi_quiet("cancel", *scoped, cwd=cwd)
-    pulumi("destroy", "--yes", "--skip-preview", *(["--stack", stack] if stack else []), cwd=cwd)
-    pulumi_quiet("stack", "rm", *([stack] if stack else []), "--yes", cwd=cwd)
+def destroy_stack(cwd, stack):
+    """Every call names the stack. A pulumi command that does not is aimed by
+    whatever `stack select` last wrote into the workspace, which is invisible
+    state shared by every project in it - and here it aims a destroy."""
+    pulumi_quiet("cancel", "--stack", stack, "--yes", cwd=cwd)
+    pulumi("destroy", "--yes", "--skip-preview", "--stack", stack, cwd=cwd)
+    pulumi_quiet("stack", "rm", stack, "--yes", cwd=cwd)

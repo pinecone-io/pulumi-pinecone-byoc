@@ -7,6 +7,7 @@ import sys
 import threading
 
 import pytest
+import yaml
 from e2e.commands import pulumi, pulumi_json, run
 from e2e.indexes import delete_project_indexes
 from e2e.installer import supervise_pinetools_logs
@@ -14,6 +15,8 @@ from e2e.paths import PROJECTS, REPO_ROOT
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import DEFAULT_SHAPE, STACK_SUFFIX, destroy_stack, find_stack, stack_name
 from e2e.wizard import generate_project
+
+pytestmark = pytest.mark.cloud
 
 STATEFUL = (
     "aws:ec2/vpc:Vpc",
@@ -69,8 +72,8 @@ def resolve(ref):
     return resolved.stdout.strip()
 
 
-def plan_steps(project_dir):
-    plan = pulumi_json("preview", "--json", cwd=project_dir)
+def plan_steps(project_dir, stack):
+    plan = pulumi_json("preview", "--json", "--stack", stack, cwd=project_dir)
     return [step for step in plan.get("steps", []) if step.get("urn")]
 
 
@@ -173,7 +176,6 @@ def upgrade_in_place(baseline_dir, candidate_dir, stack):
         cwd=REPO_ROOT,
     )
     run("uv", "sync", cwd=candidate_dir)
-    pulumi("stack", "select", stack, cwd=candidate_dir)
 
 
 @contextlib.contextmanager
@@ -240,12 +242,40 @@ def baseline(pytestconfig, baseline_source):
     return baseline_dir, stack
 
 
-@pytest.mark.upgrade
+@pytest.mark.wizard
+def test_wizard_generates_a_project_that_plans(baseline):
+    """Everything the wizard decides, before an hour of deploying tests it.
+
+    Preflight refusals, a program that does not import, a stack the generator
+    left without config: all of it fails here in a minute, on a runner that
+    provisioned nothing, instead of forty minutes into `up`.
+    """
+    baseline_dir, stack = baseline
+    pulumi("preview", "--stack", stack, cwd=baseline_dir)
+
+    candidate_dir = PROJECTS / f"{stack}-candidate"
+    upgrade_in_place(baseline_dir, candidate_dir, stack)
+    assert_the_key_survived(candidate_dir, stack)
+    pulumi("preview", "--stack", stack, cwd=candidate_dir)
+
+
+def assert_the_key_survived(project_dir, stack):
+    """The upgrade merges the encrypted key across, and never prints it.
+
+    Reading it back would put a live credential in the log, so this asserts the
+    shape: the key is present, and it is still the encrypted form.
+    """
+    config = yaml.safe_load((project_dir / f"Pulumi.{stack}.yaml").read_text())["config"]
+    keys = [key for key in config if key.endswith(":pinecone-api-key")]
+    assert keys, f"the upgrade dropped pinecone-api-key from Pulumi.{stack}.yaml"
+    assert "secure" in config[keys[0]], "pinecone-api-key is no longer stored encrypted"
+
+
 @pytest.mark.baseline
 def test_baseline_vanilla_installs(baseline):
     baseline_dir, stack = baseline
     with streaming_pinetools_logs():
-        pulumi("up", "--yes", "--skip-preview", cwd=baseline_dir)
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=baseline_dir)
     logging.info(f"baseline {stack} is up; the upgrade runs against it")
 
 
@@ -261,7 +291,7 @@ def test_upgrade_vanilla(request, baseline):
     upgrade_in_place(baseline_dir, candidate_dir, stack)
 
     try:
-        planned = plan_steps(candidate_dir)
+        planned = plan_steps(candidate_dir, stack)
         logging.info(f"upgrade plan: {describe(planned)}")
         logging.info(f"upgrade plan detail:\n{detail(planned)}")
 
@@ -275,9 +305,9 @@ def test_upgrade_vanilla(request, baseline):
         )
 
         with streaming_pinetools_logs():
-            pulumi("up", "--yes", "--skip-preview", cwd=candidate_dir)
+            pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=candidate_dir)
 
-        settled = [step for step in plan_steps(candidate_dir) if step["op"] != "same"]
+        settled = [step for step in plan_steps(candidate_dir, stack) if step["op"] != "same"]
         assert not settled, (
             "the upgraded program does not converge; a second preview still wants:\n"
             + ("\n".join(f"{step['op']} {step['urn']}" for step in settled))
@@ -286,10 +316,10 @@ def test_upgrade_vanilla(request, baseline):
         if keep_stacks(request):
             message = (
                 f"leaving upgrade stack {stack} up - destroy it with: "
-                f"cd {candidate_dir} && pulumi destroy --yes"
+                f"pulumi destroy --yes -C {candidate_dir} --stack {stack}"
             )
             print(f"\n{message}")
             logging.info(message)
         else:
-            delete_project_indexes(candidate_dir)
-            destroy_stack(candidate_dir)
+            delete_project_indexes(candidate_dir, stack)
+            destroy_stack(candidate_dir, stack)

@@ -33,7 +33,7 @@ from e2e.stacks import destroy_stack, stack_name
 from e2e.wizard import generate_project, non_interactive_env
 from wizard import AWSSetupWizard
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 PROGRAM_DIR = REPO_ROOT / "tests" / "vpc" / "program"
 

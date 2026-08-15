@@ -16,7 +16,7 @@ from e2e.stacks import (
 )
 from e2e.wizard import generate_project, non_interactive_env
 
-pytestmark = pytest.mark.destroy
+pytestmark = [pytest.mark.cloud, pytest.mark.destroy]
 
 VPC_PROGRAM_DIR = Path(__file__).resolve().parent / "vpc" / "program"
 E2E_STANDIN = ("byovpc", "vpc")

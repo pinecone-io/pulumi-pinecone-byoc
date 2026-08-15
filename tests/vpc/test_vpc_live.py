@@ -22,7 +22,7 @@ from e2e.commands import pulumi, pulumi_json
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 
-pytestmark = pytest.mark.network
+pytestmark = [pytest.mark.cloud, pytest.mark.network]
 
 PROGRAM_DIR = Path(__file__).resolve().parent / "program"
 

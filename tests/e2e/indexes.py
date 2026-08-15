@@ -9,10 +9,10 @@ import requests
 INDEX_API_VERSION = os.environ.get("PINECONE_API_VERSION", "2025-04")
 
 
-def project_credentials(project_dir):
+def project_credentials(project_dir, stack):
     # --show-secrets prints every secret in the stack: subprocess.run, never run()
     exported = subprocess.run(
-        ["pulumi", "stack", "export", "--show-secrets"],
+        ["pulumi", "stack", "export", "--show-secrets", "--stack", stack],
         cwd=project_dir,
         capture_output=True,
         text=True,
@@ -44,9 +44,9 @@ def _list_indexes(api_url, headers):
     return [index["name"] for index in listed.json().get("indexes", [])]
 
 
-def delete_project_indexes(project_dir, timeout_seconds=600, poll_seconds=15):
+def delete_project_indexes(project_dir, stack, timeout_seconds=600, poll_seconds=15):
     try:
-        api_key, api_url = project_credentials(project_dir)
+        api_key, api_url = project_credentials(project_dir, stack)
         if not api_key or not api_url:
             logging.info("[cleanup] no project api key in state, skipping index cleanup")
             return
