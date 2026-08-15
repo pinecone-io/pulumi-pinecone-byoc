@@ -215,7 +215,7 @@ def baseline(pytestconfig, baseline_source):
     creating a second one, so the second run reproduces the project the first
     one deployed instead of carrying it between machines.
     """
-    stack = stack_name("vanilla", "upgrade")
+    stack = stack_name("vanilla", "byoc")
     env = {
         "PINECONE_API_KEY": os.environ["PINECONE_API_KEY"],
         "PINECONE_REGION": os.environ["AWS_REGION"],

@@ -30,6 +30,24 @@ def find_stack(name):
     return None
 
 
+def stacks_under_prefix():
+    """Every stack this run named, found by asking the backend rather than by guessing.
+
+    A teardown that looks for one name it computes the same way the deploy did
+    cannot tell a stack it failed to find from a stack that was never created,
+    which is how an upgrade run kept a cluster alive for a day behind a green
+    `down` job.
+    """
+    prefix = os.environ.get("E2E_STACK_PREFIX")
+    if not prefix:
+        return []
+    names = (
+        stack["name"].rsplit("/", 1)[-1]
+        for stack in pulumi_json("stack", "ls", "--all", "--json", cwd=REPO_ROOT)
+    )
+    return sorted(name for name in names if name.startswith(f"{prefix}-"))
+
+
 def project_of(qualified):
     return qualified.split("/")[-2]
 

@@ -12,6 +12,7 @@ from e2e.stacks import (
     project_of,
     refuse_foreign_account,
     stack_name,
+    stacks_under_prefix,
 )
 from e2e.wizard import generate_project, non_interactive_env
 
@@ -96,3 +97,12 @@ def test_the_e2e_leaves_no_stand_in_vpc_behind():
 
     logging.info("destroying %s left behind in %s", stack, VPC_PROGRAM_DIR)
     destroy_stack(VPC_PROGRAM_DIR, stack)
+
+
+def test_the_run_left_nothing_behind():
+    leftovers = stacks_under_prefix()
+    assert not leftovers, (
+        "the teardown named a stack this run did not create, and these are still up:\n"
+        + "\n".join(f"  {name}" for name in leftovers)
+        + "\ndestroy each with: pytest -m destroy --destroy-stack <name>"
+    )
