@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 import shutil
@@ -11,10 +12,8 @@ from e2e.indexes import delete_project_indexes
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS, REPO_ROOT
 from e2e.settings import e2e_azs, keep_stacks
-from e2e.stacks import destroy_stack, stack_name
+from e2e.stacks import destroy_stack, find_stack, stack_name
 from e2e.wizard import generate_project
-
-pytestmark = pytest.mark.upgrade
 
 STATEFUL = (
     "aws:ec2/vpc:Vpc",
@@ -177,7 +176,19 @@ def upgrade_in_place(baseline_dir, candidate_dir, stack):
     pulumi("stack", "select", stack, cwd=candidate_dir)
 
 
-@pytest.fixture
+@contextlib.contextmanager
+def streaming_pinetools_logs():
+    stop = threading.Event()
+    streamer = threading.Thread(target=supervise_pinetools_logs, args=(None, stop), daemon=True)
+    streamer.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        streamer.join(timeout=10)
+
+
+@pytest.fixture(scope="session")
 def baseline_source():
     sha = resolve(baseline_ref())
     path = PROJECTS / f"baseline-{sha[:12]}"
@@ -194,13 +205,21 @@ def baseline_source():
         )
 
 
-@pytest.fixture
-def upgraded(request, baseline_source):
+@pytest.fixture(scope="session")
+def baseline(pytestconfig, baseline_source):
+    """The baseline project, generated from inputs alone.
+
+    Installing and upgrading are separate jobs on separate runners, so this
+    runs twice against one deployment. Every answer here is a constant or comes
+    from the environment, and the wizard selects the stack it finds rather than
+    creating a second one, so the second run reproduces the project the first
+    one deployed instead of carrying it between machines.
+    """
     stack = stack_name("vanilla", "upgrade")
     env = {
         "PINECONE_API_KEY": os.environ["PINECONE_API_KEY"],
         "PINECONE_REGION": os.environ["AWS_REGION"],
-        "PINECONE_AZS": e2e_azs(request.config),
+        "PINECONE_AZS": e2e_azs(pytestconfig),
         "PINECONE_VPC_CIDR": "10.0.0.0/16",
         "PINECONE_PUBLIC_ACCESS": "true",
         "PINECONE_PROJECT_NAME": stack,
@@ -218,54 +237,59 @@ def upgraded(request, baseline_source):
     pin_published_module(baseline_dir, baseline_ref())
     teach_the_baseline_its_control_plane(baseline_dir, baseline_source, stack)
     install_the_source_version(baseline_dir, stack)
-    candidate_dir = PROJECTS / f"{stack}-candidate"
+    return baseline_dir, stack
 
-    stop_streaming = threading.Event()
-    streamer = threading.Thread(
-        target=supervise_pinetools_logs, args=(None, stop_streaming), daemon=True
+
+@pytest.mark.upgrade
+@pytest.mark.baseline
+def test_baseline_vanilla_installs(baseline):
+    baseline_dir, stack = baseline
+    with streaming_pinetools_logs():
+        pulumi("up", "--yes", "--skip-preview", cwd=baseline_dir)
+    logging.info(f"baseline {stack} is up; the upgrade runs against it")
+
+
+@pytest.mark.upgrade
+def test_upgrade_vanilla(request, baseline):
+    baseline_dir, stack = baseline
+    assert find_stack(stack), (
+        f"{stack} is not deployed; the upgrade upgrades a running baseline, so run "
+        '`pytest -m "upgrade and baseline"` first (in CI, the up job)'
     )
-    streamer.start()
+
+    candidate_dir = PROJECTS / f"{stack}-candidate"
+    upgrade_in_place(baseline_dir, candidate_dir, stack)
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=baseline_dir)
-        upgrade_in_place(baseline_dir, candidate_dir, stack)
-        yield candidate_dir
+        planned = plan_steps(candidate_dir)
+        logging.info(f"upgrade plan: {describe(planned)}")
+        logging.info(f"upgrade plan detail:\n{detail(planned)}")
+
+        destructive = [
+            f"{step['op']} {step['urn']}"
+            for step in planned
+            if step["op"] in DESTRUCTIVE and step["urn"].split("::")[2].split("$")[-1] in STATEFUL
+        ]
+        assert not destructive, (
+            "upgrading must not take the deployment's state with it:\n" + "\n".join(destructive)
+        )
+
+        with streaming_pinetools_logs():
+            pulumi("up", "--yes", "--skip-preview", cwd=candidate_dir)
+
+        settled = [step for step in plan_steps(candidate_dir) if step["op"] != "same"]
+        assert not settled, (
+            "the upgraded program does not converge; a second preview still wants:\n"
+            + ("\n".join(f"{step['op']} {step['urn']}" for step in settled))
+        )
     finally:
-        try:
-            if keep_stacks(request):
-                message = (
-                    f"leaving upgrade stack {stack} up - destroy it with: "
-                    f"cd {candidate_dir} && pulumi destroy --yes"
-                )
-                print(f"\n{message}")
-                logging.info(message)
-            else:
-                target = candidate_dir if (candidate_dir / "Pulumi.yaml").exists() else baseline_dir
-                delete_project_indexes(target)
-                destroy_stack(target)
-        finally:
-            stop_streaming.set()
-            streamer.join(timeout=10)
-
-
-def test_upgrade_vanilla(upgraded):
-    planned = plan_steps(upgraded)
-    logging.info(f"upgrade plan: {describe(planned)}")
-    logging.info(f"upgrade plan detail:\n{detail(planned)}")
-
-    destructive = [
-        f"{step['op']} {step['urn']}"
-        for step in planned
-        if step["op"] in DESTRUCTIVE and step["urn"].split("::")[2].split("$")[-1] in STATEFUL
-    ]
-    assert not destructive, "upgrading must not take the deployment's state with it:\n" + "\n".join(
-        destructive
-    )
-
-    pulumi("up", "--yes", "--skip-preview", cwd=upgraded)
-
-    settled = [step for step in plan_steps(upgraded) if step["op"] != "same"]
-    assert not settled, (
-        "the upgraded program does not converge; a second preview still wants:\n"
-        + ("\n".join(f"{step['op']} {step['urn']}" for step in settled))
-    )
+        if keep_stacks(request):
+            message = (
+                f"leaving upgrade stack {stack} up - destroy it with: "
+                f"cd {candidate_dir} && pulumi destroy --yes"
+            )
+            print(f"\n{message}")
+            logging.info(message)
+        else:
+            delete_project_indexes(candidate_dir)
+            destroy_stack(candidate_dir)

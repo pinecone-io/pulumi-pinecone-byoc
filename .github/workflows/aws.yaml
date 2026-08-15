@@ -28,49 +28,24 @@ env:
   AWS_REGION: us-east-2
 
 jobs:
+  # the deploy the rest of the run works against: the baseline release for the
+  # upgrade tier, this commit for e2e. It keeps its stacks, and `down` has them.
   up:
     runs-on: ubuntu-latest
-    timeout-minutes: ${{ inputs.tier == 'upgrade' && 240 || 150 }}
+    timeout-minutes: 150
     environment: aws-e2e
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Set stack prefix
-        run: |
-          if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          else
-            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          fi
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TIER: ${{ inputs.tier }}
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: ./.github/actions/aws-e2e-runner
         with:
-          role-to-assume: ${{ secrets.AWS_E2E_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 43200
-
-      - uses: astral-sh/setup-uv@v5
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Pulumi CLI
-        uses: pulumi/actions@v6
-
-      - name: Set default Pulumi org
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi org set-default pinecone
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
+          tier: ${{ inputs.tier }}
+          region: ${{ env.AWS_REGION }}
+          role-arn: ${{ secrets.AWS_E2E_ROLE_ARN }}
+          pulumi-token: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
 
       - name: Deploy the network on its own
         if: inputs.tier == 'e2e'
@@ -78,14 +53,15 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: uv run --extra aws pytest -m network -s
 
-      - name: Run and tear down (${{ inputs.tier }}, ${{ inputs.shape }})
+      - name: Deploy (${{ inputs.tier }}, ${{ inputs.shape }})
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           UPGRADE_BASELINE_REF: ${{ inputs.baseline }}
+          MARKER: ${{ inputs.tier == 'upgrade' && 'upgrade and baseline' || 'e2e' }}
         run: |
           uv run --extra aws pytest \
-            -m "${{ inputs.tier }}" \
+            -m "$MARKER" \
             -k "${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc')
                 && 'byovpc' || inputs.shape }}" -s --keep
 
@@ -93,7 +69,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-logs
+          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-up-logs
           path: |
             .e2e-logs/
             .e2e/**/*.log
@@ -104,8 +80,51 @@ jobs:
           # it writes, and these are kept only long enough to debug the run that made them
           retention-days: 3
 
-  down:
+  # the upgrade runs on its own runner against the deployment `up` left behind,
+  # so a failure here re-runs from a live baseline instead of building one again
+  upgrade:
     needs: up
+    if: inputs.tier == 'upgrade'
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    environment: aws-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: ./.github/actions/aws-e2e-runner
+        with:
+          tier: ${{ inputs.tier }}
+          region: ${{ env.AWS_REGION }}
+          role-arn: ${{ secrets.AWS_E2E_ROLE_ARN }}
+          pulumi-token: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
+
+      - name: Upgrade (${{ inputs.shape }})
+        env:
+          PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          UPGRADE_BASELINE_REF: ${{ inputs.baseline }}
+        run: |
+          uv run --extra aws pytest \
+            -m "upgrade and not baseline" \
+            -k "${{ inputs.shape }}" -s --keep
+
+      - name: Upload run logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.tier }}-aws-${{ inputs.shape }}-upgrade-logs
+          path: |
+            .e2e-logs/
+            .e2e/**/*.log
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 3
+
+  down:
+    needs: [up, upgrade]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -115,37 +134,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set stack prefix
-        run: |
-          if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          else
-            echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
-          fi
-        env:
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          TIER: ${{ inputs.tier }}
-
-      - name: Configure AWS credentials (OIDC)
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: ./.github/actions/aws-e2e-runner
         with:
-          role-to-assume: ${{ secrets.AWS_E2E_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-duration-seconds: 43200
-
-      - uses: astral-sh/setup-uv@v5
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Install Pulumi CLI
-        uses: pulumi/actions@v6
-
-      - name: Set default Pulumi org
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: pulumi org set-default pinecone
+          tier: ${{ inputs.tier }}
+          region: ${{ env.AWS_REGION }}
+          role-arn: ${{ secrets.AWS_E2E_ROLE_ARN }}
+          pulumi-token: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          pr-number: ${{ github.event.pull_request.number }}
 
       - name: Destroy leftovers
         env:
