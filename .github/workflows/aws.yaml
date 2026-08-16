@@ -79,7 +79,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-logs
+          name: e2e-aws-logs${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
           path: |
             .e2e-logs/
             .e2e/**/*.log
@@ -142,7 +142,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-teardown-logs
+          name: e2e-aws-teardown-logs${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
           path: |
             .e2e-logs/
             .e2e/**/*.log
