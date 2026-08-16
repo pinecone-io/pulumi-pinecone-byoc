@@ -26,6 +26,15 @@ PINECONE_VERSION = "main-94a9e90"
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
 
+# the layout, mirrored from pulumi_pinecone_byoc.aws.vpc_subnet: bootstrap.sh fetches
+# this file and autocomplete.py into a directory with no package in it, so the module
+# cannot be imported here. tests/wizard/test_existing_vpc.py holds the two to the same
+# answer
+PUBLIC_PREFIX_ON_A_SLICE = 26
+SLOT_BITS = 4
+PRIVATE_SLOTS = 4
+PRIVATE_FIRST_SLOT = 4
+
 RFC1918_RANGES = [
     ipaddress.ip_network("10.0.0.0/8"),
     ipaddress.ip_network("172.16.0.0/12"),
@@ -35,6 +44,24 @@ RFC1918_RANGES = [
 # every subnet the module creates carries it, so one that has it is ours from an
 # earlier run rather than theirs to keep clear of
 MANAGED_BY = ("pinecone:managed-by", "pulumi")
+
+
+def subnet_cidr(vpc_cidr, index: int, is_public: bool):
+    network = ipaddress.ip_network(vpc_cidr)
+    slots = list(network.subnets(prefixlen_diff=SLOT_BITS))
+
+    if is_public:
+        slot = slots[index]
+        prefix = (
+            network.prefixlen + SLOT_BITS
+            if network.prefixlen == MIN_VPC_PREFIX
+            else max(PUBLIC_PREFIX_ON_A_SLICE, slot.prefixlen)
+        )
+    else:
+        slot = slots[PRIVATE_FIRST_SLOT + index * PRIVATE_SLOTS]
+        prefix = network.prefixlen + PRIVATE_SLOTS // 2
+
+    return ipaddress.ip_network((slot.network_address, prefix))
 
 
 def _is_ours(subnet) -> bool:
@@ -687,19 +714,29 @@ class AWSPreflightChecker:
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
             return
 
-        # a range they carry can still be one they use, and the module lays its
-        # subnets out at fixed offsets rather than around whatever is in the way
+        # a range they carry can still be one they use, and the layout falls at fixed
+        # offsets in it rather than around whatever is in the way. only the offsets
+        # this deploy cuts are asked about: nothing public is cut without public access,
+        # and a slot is spare either way
+        laid_out = [
+            subnet_cidr(ours, index, is_public)
+            for index in range(len(self.azs))
+            for is_public in ((True, False) if self.public_access else (False,))
+        ]
         taken = [
-            f"{subnet['CidrBlock']} ({subnet['SubnetId']})"
+            f"{net} overlaps their {subnet['CidrBlock']} ({subnet['SubnetId']})"
             for subnet in subnets
-            if not _is_ours(subnet) and ours.overlaps(ipaddress.ip_network(subnet["CidrBlock"]))
+            if not _is_ours(subnet)
+            for net in laid_out
+            if net.overlaps(ipaddress.ip_network(subnet["CidrBlock"]))
         ]
         if taken:
             self._add_result(
                 "VPC CIDR",
                 False,
-                f"{ours} is where their {', '.join(taken)} already is",
-                "Their subnets are cut from those same addresses; pick a range none of them uses",
+                "; ".join(taken),
+                "Their subnets are cut from those same addresses; pick a range whose "
+                "layout none of them is in",
             )
             return
 

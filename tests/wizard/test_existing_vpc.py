@@ -7,7 +7,9 @@ until an hour of deploy ends with the module building a VPC of its own.
 import ipaddress
 
 import pytest
-from wizard import MANAGED_BY, AWSPreflightChecker, AWSSetupWizard
+from wizard import MANAGED_BY, AWSPreflightChecker, AWSSetupWizard, subnet_cidr
+
+from pulumi_pinecone_byoc.aws import vpc_subnet
 
 
 def checker(**kwargs):
@@ -125,6 +127,48 @@ def test_a_range_inside_theirs_is_still_refused_when_their_subnets_are_in_it():
 
     assert not check.results[-1].passed
     assert "10.0.16.0/24 (subnet-theirs)" in check.results[-1].message
+
+
+@pytest.mark.parametrize("vpc_cidr", ["10.0.0.0/16", "10.1.0.0/18", "192.168.16.0/20"])
+@pytest.mark.parametrize("is_public", [True, False], ids=["public", "private"])
+def test_the_wizard_lays_the_range_out_where_the_module_does(vpc_cidr, is_public):
+    """Two copies of the arithmetic, because bootstrap.sh ships wizard.py alone."""
+    assert [subnet_cidr(vpc_cidr, index, is_public) for index in range(3)] == [
+        vpc_subnet.cidr(vpc_cidr, index, is_public) for index in range(3)
+    ]
+
+
+def test_a_private_deploy_is_not_refused_by_what_is_in_a_public_slot():
+    """The module cuts no public subnet without public access, so neither does this."""
+    check = checker(cidr="10.0.16.0/20", public_access=False)
+    check.ec2 = _ec2(
+        cidr_blocks=["10.0.0.0/16"],
+        subnets=[a_subnet("subnet-theirs", "10.0.16.0/26")],
+    )
+
+    check._check_range_fits_their_vpc()
+
+    assert check.results[-1].passed
+
+    public = checker(cidr="10.0.16.0/20", public_access=True)
+    public.ec2 = check.ec2
+
+    public._check_range_fits_their_vpc()
+
+    assert not public.results[-1].passed
+
+
+def test_a_slot_the_layout_leaves_spare_is_theirs_to_use():
+    """Slot 3 of sixteen is cut by neither shape, so a subnet there is not a clash."""
+    check = checker(cidr="10.0.16.0/20")
+    check.ec2 = _ec2(
+        cidr_blocks=["10.0.0.0/16"],
+        subnets=[a_subnet("subnet-theirs", "10.0.19.0/24")],
+    )
+
+    check._check_range_fits_their_vpc()
+
+    assert check.results[-1].passed
 
 
 def test_the_subnets_an_earlier_run_left_are_not_read_as_theirs():
