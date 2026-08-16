@@ -115,6 +115,19 @@ def destroy_targets(config):
     return [DestroyTarget(s, _cloud_of(s, cloud_override), region) for s in stacks]
 
 
+def remember_report(item, report) -> None:
+    """Record a phase's report on the test, and a failure on everything above it.
+
+    A fixture asks about the node it is scoped to, and only a function ever runs a
+    phase - so a module-scoped fixture holding a cluster up would see nothing and
+    tear it down whatever happened in it.
+    """
+    setattr(item, f"rep_{report.when}", report)
+    if report.failed:
+        for node in item.listchain():
+            setattr(node, f"rep_{report.when}", report)
+
+
 def keep_stacks(request):
     if request.config.getoption("--keep"):
         return True

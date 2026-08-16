@@ -31,3 +31,8 @@ jobs:
 
       - name: Run type checking
         run: uv run ty check
+
+      # pytest.ini deselects the tiers that provision, so this is the suite that
+      # needs no cloud: it runs in under a second and nothing else was running it
+      - name: Run tests
+        run: uv run pytest
