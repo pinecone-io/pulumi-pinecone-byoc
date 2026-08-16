@@ -807,14 +807,16 @@ class AWSPreflightChecker:
         cannot reach the registry is a zone whose nodes cannot pull an image, and it
         has to fail here rather than an hour later.
         """
+        named = self.route_table_ids or {}
         try:
-            if self.route_table_ids:
-                by_zone = {
-                    az: self.ec2.describe_route_tables(RouteTableIds=[table_id])["RouteTables"]
-                    for az, table_id in self.route_table_ids.items()
-                }
-            else:
-                by_zone = {az: self._their_tables_in(az) for az in self.azs}
+            by_zone = {
+                az: (
+                    self.ec2.describe_route_tables(RouteTableIds=[named[az]])["RouteTables"]
+                    if az in named
+                    else self._their_tables_in(az)
+                )
+                for az in self.azs
+            }
         except Exception as e:  # noqa: BLE001 - reported as a failed check
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
             return
@@ -823,7 +825,7 @@ class AWSPreflightChecker:
         for az, tables in by_zone.items():
             leaving = {t["RouteTableId"]: self._egress_of(t) for t in tables}
             leaving = {k: v for k, v in leaving.items() if v}
-            if not leaving and not self.route_table_ids:
+            if not leaving and az not in named:
                 # our subnets are associated with nothing, so what they inherit is the
                 # main table - which egresses in a VPC whose own subnets are public
                 inherited = {t["RouteTableId"]: self._egress_of(t) for t in self._main_table()}

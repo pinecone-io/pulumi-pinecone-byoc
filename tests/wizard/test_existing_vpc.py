@@ -242,6 +242,40 @@ def test_detection_asks_each_zone_not_whichever_table_leaves():
     assert "us-east-2a" not in check.results[-1].message
 
 
+def test_a_zone_left_out_of_a_partial_map_is_still_checked():
+    """The module detects what the map does not name, so preflight has to look."""
+    check = checker(route_table_ids={"us-east-2a": "rtb-a"})
+    check.ec2 = _ec2(
+        subnets_by_az={"us-east-2b": ["subnet-b"]},
+        tables={
+            "rtb-a": {"NatGatewayId": "nat-a"},
+            "rtb-b": {"GatewayId": "igw-theirs", "subnets": ["subnet-b"]},
+        },
+    )
+
+    check._check_their_egress()
+
+    assert not check.results[-1].passed
+    assert "us-east-2b" in check.results[-1].message
+    assert "us-east-2a" not in check.results[-1].message
+
+
+def test_a_zone_left_out_of_a_partial_map_may_inherit_the_main_table():
+    check = checker(route_table_ids={"us-east-2a": "rtb-a"})
+    check.ec2 = _ec2(
+        subnets_by_az={},
+        tables={
+            "rtb-a": {"NatGatewayId": "nat-a"},
+            "rtb-main": {"NatGatewayId": "nat-main", "main": True},
+        },
+    )
+
+    check._check_their_egress()
+
+    assert check.results[-1].passed
+    assert "nat-main" in check.results[-1].message
+
+
 def test_detection_passes_when_every_zone_leaves():
     check = checker()
     check.ec2 = _ec2(
