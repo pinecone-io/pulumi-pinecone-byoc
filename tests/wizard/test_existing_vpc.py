@@ -16,7 +16,7 @@ def checker(**kwargs):
     made = object.__new__(AWSPreflightChecker)
     made.results = []
     made.region = "us-east-2"
-    made.azs = ["us-east-2a", "us-east-2b"]
+    made.azs = kwargs.get("azs", ["us-east-2a", "us-east-2b"])
     made.cidr = kwargs.get("cidr", "10.1.0.0/16")
     made.vpc_id = kwargs.get("vpc_id", "vpc-theirs")
     made.route_table_ids = kwargs.get("route_table_ids")
@@ -158,6 +158,19 @@ def test_a_private_deploy_is_not_refused_by_what_is_in_a_public_slot():
     assert not public.results[-1].passed
 
 
+def test_more_zones_than_the_layout_fits_is_a_failed_check_not_a_crash():
+    """Four zones read past the sixteenth slot; the module refuses, so this must too."""
+    check = checker(
+        cidr="10.0.16.0/20", azs=["us-east-2a", "us-east-2b", "us-east-2c", "us-east-1a"]
+    )
+    check.ec2 = _ec2(cidr_blocks=["10.0.0.0/16"])
+
+    check._check_range_fits_their_vpc()
+
+    assert not check.results[-1].passed
+    assert "availability zones" in check.results[-1].message
+
+
 def test_a_slot_the_layout_leaves_spare_is_theirs_to_use():
     """Slot 3 of sixteen is cut by neither shape, so a subnet there is not a clash."""
     check = checker(cidr="10.0.16.0/20")
@@ -240,6 +253,26 @@ def test_detection_asks_each_zone_not_whichever_table_leaves():
     assert not check.results[-1].passed
     assert "us-east-2b" in check.results[-1].message
     assert "us-east-2a" not in check.results[-1].message
+
+
+def test_two_tables_egressing_in_one_zone_asks_to_be_told_which():
+    """Detection refuses to choose, so passing here would green-light a failed deploy."""
+    check = checker()
+    check.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2b": ["subnet-b"]},
+        tables={
+            "rtb-a1": {"NatGatewayId": "nat-a1", "subnets": ["subnet-a"]},
+            "rtb-a2": {"TransitGatewayId": "tgw-a2", "subnets": ["subnet-a"]},
+            "rtb-b": {"NatGatewayId": "nat-b", "subnets": ["subnet-b"]},
+        },
+    )
+
+    check._check_their_egress()
+
+    assert not check.results[-1].passed
+    assert "rtb-a1" in check.results[-1].message
+    assert "rtb-a2" in check.results[-1].message
+    assert "PINECONE_ROUTE_TABLE_IDS" in check.results[-1].details
 
 
 def test_a_zone_left_out_of_a_partial_map_is_still_checked():

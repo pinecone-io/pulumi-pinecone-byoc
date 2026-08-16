@@ -25,6 +25,7 @@ PINECONE_VERSION = "main-94a9e90"
 
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
+MAX_AZS = 3
 
 # the layout, mirrored from pulumi_pinecone_byoc.aws.vpc_subnet: bootstrap.sh fetches
 # this file and autocomplete.py into a directory with no package in it, so the module
@@ -821,10 +822,14 @@ class AWSPreflightChecker:
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
             return
 
-        egressing, silent = {}, []
+        egressing, silent, ambiguous = {}, [], {}
         for az, tables in by_zone.items():
             leaving = {t["RouteTableId"]: self._egress_of(t) for t in tables}
             leaving = {k: v for k, v in leaving.items() if v}
+            if az not in named and len(leaving) > 1:
+                # detection refuses to guess between them, so this deploy would stop
+                ambiguous[az] = ", ".join(f"{k} via {v}" for k, v in sorted(leaving.items()))
+                continue
             if not leaving and az not in named:
                 # our subnets are associated with nothing, so what they inherit is the
                 # main table - which egresses in a VPC whose own subnets are public
@@ -835,6 +840,16 @@ class AWSPreflightChecker:
             else:
                 silent.append(az)
 
+        if ambiguous:
+            self._add_result(
+                "Subnet Egress",
+                False,
+                "; ".join(f"{az}: {v}" for az, v in sorted(ambiguous.items())),
+                "More than one route table egresses from that zone, and detection will "
+                "not choose between them. Name the one to use per availability zone in "
+                "PINECONE_ROUTE_TABLE_IDS",
+            )
+            return
         if silent:
             self._add_result(
                 "Subnet Egress",
@@ -1187,6 +1202,16 @@ class AWSPreflightChecker:
                 f"A /{MIN_VPC_PREFIX} to /{MAX_VPC_PREFIX} is supported today "
                 f"(e.g. 10.0.0.0/{MIN_VPC_PREFIX} or 192.168.16.0/{MAX_VPC_PREFIX}); "
                 f"/{MAX_VPC_PREFIX} is the smallest range the subnet layout fits in",
+            )
+            return None
+
+        if len(self.azs) > MAX_AZS:
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"{len(self.azs)} availability zones is more than the layout fits",
+                f"The range is cut into sixteen slots and {MAX_AZS} zones fill them; "
+                "deploy into three or fewer",
             )
             return None
 
