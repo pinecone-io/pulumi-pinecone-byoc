@@ -285,9 +285,22 @@ def test_two_egress_tables_in_one_az_asks_to_be_told_which():
         in_existing_vpc(public_access=False, azs=("us-east-2a",))
 
 
-def test_a_route_table_missing_for_one_az_is_refused_by_name(engine):
-    with pytest.raises(ValueError, match="us-east-2b"):
-        in_existing_vpc(public_access=False, route_tables={"us-east-2a": "rtb-theirs-a"})
+@pulumi.runtime.test
+def test_a_zone_left_out_of_the_map_is_detected_rather_than_refused(engine):
+    """A zone whose subnets inherit the main table has no id to give."""
+    vpc = in_existing_vpc(public_access=False, route_tables={"us-east-2a": "rtb-named"})
+
+    def named_then_detected(ids):
+        assert list(ids) == ["rtb-named", "rtb-theirs-b"]
+
+    return pulumi.Output.all(
+        *[a.route_table_id for a in vpc.private_route_table_associations]
+    ).apply(named_then_detected)
+
+
+def test_a_zone_that_is_not_being_deployed_to_is_refused_by_name(engine):
+    with pytest.raises(ValueError, match="us-west-1a"):
+        in_existing_vpc(public_access=False, route_tables={"us-west-1a": "rtb-elsewhere"})
 
 
 def test_a_range_their_own_subnets_sit_in_is_refused_before_anything_is_built():

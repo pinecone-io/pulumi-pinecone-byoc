@@ -144,16 +144,15 @@ class VPC(pulumi.ComponentResource):
             )
             subnet_deps = [self.cidr_association]
 
-        route_tables = config.existing_route_table_ids or {}
-        missing = [az for az in config.availability_zones if az not in route_tables]
-        if route_tables and missing:
+        named = config.existing_route_table_ids or {}
+        unknown = [az for az in named if az not in config.availability_zones]
+        if unknown:
             raise ValueError(
-                f"existing_route_table_ids is missing a route table for {', '.join(missing)}. "
-                "Give one per availability zone, or none at all to detect the route table "
-                "their own subnets in that zone egress through."
+                f"existing_route_table_ids names {', '.join(sorted(unknown))}, which is not "
+                f"an availability zone being deployed to ({', '.join(config.availability_zones)})."
             )
-        if not route_tables:
-            route_tables = vpc_route.detect(vpc_id, config.availability_zones)
+        rest = [az for az in config.availability_zones if az not in named]
+        route_tables = {**(vpc_route.detect(vpc_id, rest) if rest else {}), **named}
 
         vpc_perms.warn(config, vpc_id, route_tables)
 
