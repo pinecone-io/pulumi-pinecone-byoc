@@ -121,6 +121,7 @@ class VPC(pulumi.ComponentResource):
                 f"Maximum 3 AZs supported (got {len(config.availability_zones)}). "
                 "Subnet layout does not fit more than 3 AZs in the range we associate."
             )
+        vpc_subnet.validate_range_is_free(config, vpc_id)
 
         child_opts = pulumi.ResourceOptions(parent=self)
 

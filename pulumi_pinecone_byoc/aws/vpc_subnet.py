@@ -23,6 +23,8 @@ RFC1918_RANGES = [
     ipaddress.IPv4Network("192.168.0.0/16"),
 ]
 
+MANAGED_BY = ("pinecone:managed-by", "pulumi")
+
 
 def validate_vpc_cidr(cidr: str) -> None:
     try:
@@ -62,6 +64,35 @@ def cidr(vpc_cidr: str, index: int, is_public: bool) -> ipaddress.IPv4Network:
         prefix = network.prefixlen + PRIVATE_SLOTS // 2
 
     return ipaddress.IPv4Network((slot.network_address, prefix))
+
+
+def validate_range_is_free(config: AWSConfig, vpc_id: str) -> None:
+    kinds = (True, False) if config.public_access else (False,)
+    ours = [
+        (cidr(config.vpc_cidr, index, is_public), az, "public" if is_public else "private")
+        for index, az in enumerate(config.availability_zones)
+        for is_public in kinds
+    ]
+
+    key, value = MANAGED_BY
+    taken = []
+    for subnet_id in aws.ec2.get_subnets(filters=[{"name": "vpc-id", "values": [vpc_id]}]).ids:
+        theirs = aws.ec2.get_subnet(id=subnet_id)
+        if theirs.tags.get(key) == value:
+            continue
+        occupied = ipaddress.IPv4Network(theirs.cidr_block)
+        taken += [
+            f"{net} ({kind} {az}) overlaps {occupied} ({subnet_id})"
+            for net, az, kind in ours
+            if net.overlaps(occupied)
+        ]
+
+    if taken:
+        raise ValueError(
+            f"The subnets a {config.vpc_cidr} lays out are not free in {vpc_id}: "
+            + "; ".join(taken)
+            + ". Give a range whose addresses none of their subnets use."
+        )
 
 
 def create(

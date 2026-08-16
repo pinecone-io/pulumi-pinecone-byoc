@@ -23,6 +23,7 @@ GET_IGW = "aws:ec2/getInternetGateway:getInternetGateway"
 GET_ROUTE_TABLES = "aws:ec2/getRouteTables:getRouteTables"
 GET_ROUTE_TABLE = "aws:ec2/getRouteTable:getRouteTable"
 GET_SUBNETS = "aws:ec2/getSubnets:getSubnets"
+GET_SUBNET = "aws:ec2/getSubnet:getSubnet"
 VPC = "aws:ec2/vpc:Vpc"
 SUBNET = "aws:ec2/subnet:Subnet"
 NAT = "aws:ec2/natGateway:NatGateway"
@@ -32,6 +33,21 @@ RTA = "aws:ec2/routeTableAssociation:RouteTableAssociation"
 
 def their_subnet(az):
     return f"subnet-theirs-{az}"
+
+
+def a_subnet(az, cidr, ours=False):
+    return {
+        "availabilityZone": az,
+        "cidrBlock": cidr,
+        "tags": dict([vpc_subnet.MANAGED_BY]) if ours else {},
+    }
+
+
+# cut from their own range, nowhere near the one we lay out
+THEIR_SUBNETS = {
+    their_subnet("us-east-2a"): a_subnet("us-east-2a", "10.0.1.0/24"),
+    their_subnet("us-east-2b"): a_subnet("us-east-2b", "10.0.2.0/24"),
+}
 
 
 def their_table(table_id, az, egress, main=False):
@@ -45,9 +61,10 @@ def their_table(table_id, az, egress, main=False):
 
 
 class Engine(pulumi.runtime.Mocks):
-    def __init__(self, tables=None):
+    def __init__(self, tables=None, subnets=None):
         self.resources = []
         self.invokes = []
+        self.subnets = THEIR_SUBNETS if subnets is None else subnets
         # by default they run a NAT per AZ on a private table of their own
         self.tables = (
             tables
@@ -82,9 +99,18 @@ class Engine(pulumi.runtime.Mocks):
             return self.tables[args.args["routeTableId"]]
         if args.token == GET_SUBNETS:
             az = next(
-                f["values"][0] for f in args.args["filters"] if f["name"] == "availability-zone"
+                (f["values"][0] for f in args.args["filters"] if f["name"] == "availability-zone"),
+                None,
             )
-            return {"ids": [their_subnet(az)]}
+            return {
+                "ids": [
+                    subnet_id
+                    for subnet_id, subnet in self.subnets.items()
+                    if az is None or subnet["availabilityZone"] == az
+                ]
+            }
+        if args.token == GET_SUBNET:
+            return {"id": args.args["id"], **self.subnets[args.args["id"]]}
         return {}
 
 
@@ -101,8 +127,8 @@ def engine():
     return mocks
 
 
-def engine_with(tables):
-    mocks = Engine(tables=tables)
+def engine_with(tables=None, subnets=None):
+    mocks = Engine(tables=tables, subnets=subnets)
     pulumi.runtime.set_mocks(mocks, preview=False)
     return mocks
 
@@ -262,6 +288,50 @@ def test_two_egress_tables_in_one_az_asks_to_be_told_which():
 def test_a_route_table_missing_for_one_az_is_refused_by_name(engine):
     with pytest.raises(ValueError, match="us-east-2b"):
         in_existing_vpc(public_access=False, route_tables={"us-east-2a": "rtb-theirs-a"})
+
+
+def test_a_range_their_own_subnets_sit_in_is_refused_before_anything_is_built():
+    engine_with(
+        subnets={
+            **THEIR_SUBNETS,
+            "subnet-theirs-crowded": a_subnet("us-east-2a", "10.1.4.0/24"),
+        }
+    )
+
+    with pytest.raises(ValueError, match="10.1.4.0/22.*10.1.4.0/24.*subnet-theirs-crowded"):
+        in_existing_vpc(public_access=False)
+
+
+def test_the_subnets_an_earlier_run_left_are_ours_rather_than_theirs():
+    """Every one of ours overlaps the layout exactly, which is not a clash."""
+    mocks = engine_with(
+        subnets={
+            **THEIR_SUBNETS,
+            "subnet-ours-a": a_subnet("us-east-2a", "10.1.4.0/22", ours=True),
+            "subnet-ours-b": a_subnet("us-east-2b", "10.1.8.0/22", ours=True),
+        }
+    )
+
+    vpc = in_existing_vpc(public_access=False)
+
+    assert len(vpc.private_subnets) == 2
+    assert GET_SUBNET in mocks.invokes
+
+
+def test_a_private_deploy_ignores_a_clash_in_a_public_slot():
+    engine_with(
+        subnets={
+            **THEIR_SUBNETS,
+            "subnet-theirs-public": a_subnet("us-east-2a", "10.1.0.0/26"),
+        }
+    )
+
+    vpc = in_existing_vpc(public_access=False)
+
+    assert len(vpc.private_subnets) == 2
+
+    with pytest.raises(ValueError, match="public us-east-2a"):
+        in_existing_vpc(public_access=True)
 
 
 def test_a_vpc_without_a_gateway_is_refused_with_the_alternative_named(engine, monkeypatch):
