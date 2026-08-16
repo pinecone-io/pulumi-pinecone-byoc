@@ -151,6 +151,14 @@ class VPC(pulumi.ComponentResource):
                 f"existing_route_table_ids names {', '.join(sorted(unknown))}, which is not "
                 f"an availability zone being deployed to ({', '.join(config.availability_zones)})."
             )
+        for az, table_id in sorted(named.items()):
+            if not vpc_route.egress_of(aws.ec2.get_route_table(route_table_id=table_id)):
+                pulumi.log.warn(
+                    f"{table_id}, named for {az}, carries no default route a private subnet "
+                    "can leave by. Nodes there reach the registry only if a more specific "
+                    "route of theirs does."
+                )
+
         rest = [az for az in config.availability_zones if az not in named]
         route_tables = {**(vpc_route.detect(vpc_id, rest) if rest else {}), **named}
 

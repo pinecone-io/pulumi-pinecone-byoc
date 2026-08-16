@@ -31,7 +31,7 @@ def egress_target(route) -> str | None:
 
 # get_route_table reports no state for a route, so a default route whose target was
 # deleted reads the same as a live one. the wizard's preflight has boto3 and checks it
-def _egress_of(table) -> str | None:
+def egress_of(table) -> str | None:
     for route in table.routes:
         if route.cidr_block != DEFAULT_ROUTE:
             continue
@@ -62,7 +62,7 @@ def detect(vpc_id: str, azs: list[str]) -> dict[str, str]:
             associated = {a.subnet_id for a in table.associations if a.subnet_id}
             if not associated & theirs:
                 continue
-            egress = _egress_of(table)
+            egress = egress_of(table)
             if egress:
                 candidates[table.route_table_id] = egress
 

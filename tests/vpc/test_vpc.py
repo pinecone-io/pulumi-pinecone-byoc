@@ -288,14 +288,32 @@ def test_two_egress_tables_in_one_az_asks_to_be_told_which():
 @pulumi.runtime.test
 def test_a_zone_left_out_of_the_map_is_detected_rather_than_refused(engine):
     """A zone whose subnets inherit the main table has no id to give."""
-    vpc = in_existing_vpc(public_access=False, route_tables={"us-east-2a": "rtb-named"})
+    vpc = in_existing_vpc(public_access=False, route_tables={"us-east-2a": "rtb-theirs-a"})
 
     def named_then_detected(ids):
-        assert list(ids) == ["rtb-named", "rtb-theirs-b"]
+        assert list(ids) == ["rtb-theirs-a", "rtb-theirs-b"]
 
     return pulumi.Output.all(
         *[a.route_table_id for a in vpc.private_route_table_associations]
     ).apply(named_then_detected)
+
+
+def test_a_named_table_that_cannot_egress_warns_and_is_used_anyway(monkeypatch):
+    """Only 0.0.0.0/0 is read, and a more specific route of theirs may still reach the
+    registry - so what they named is not overruled on half an answer."""
+    engine_with(
+        {"rtb-public": their_table("rtb-public", "us-east-2a", {"gatewayId": "igw-theirs"})}
+    )
+    warnings = []
+    monkeypatch.setattr(pulumi.log, "warn", lambda message, *_, **__: warnings.append(message))
+
+    vpc = in_existing_vpc(
+        public_access=False, azs=("us-east-2a",), route_tables={"us-east-2a": "rtb-public"}
+    )
+
+    assert len(vpc.private_route_table_associations) == 1
+    assert "rtb-public" in warnings[0]
+    assert "us-east-2a" in warnings[0]
 
 
 def test_a_zone_that_is_not_being_deployed_to_is_refused_by_name(engine):
