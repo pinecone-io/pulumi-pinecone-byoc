@@ -800,6 +800,27 @@ class AWSPreflightChecker:
                 return target
         return None
 
+    def _tables_we_would_associate(self):
+        """Per zone, the table our subnet would be associated with.
+
+        A zone that inherits the main table is left out: nothing is associated for
+        it, so nothing needs permission to be.
+        """
+        named = self.route_table_ids or {}
+        main = {t["RouteTableId"] for t in self._main_table()}
+        resolved = dict(named)
+        for az in self.azs:
+            if az in named:
+                continue
+            leaving = [
+                table["RouteTableId"]
+                for table in self._their_tables_in(az)
+                if self._egress_of(table) and table["RouteTableId"] not in main
+            ]
+            if len(leaving) == 1:
+                resolved[az] = leaving[0]
+        return resolved
+
     def _check_their_egress(self):
         """Every zone the nodes run in, not whichever table happens to leave.
 
@@ -818,6 +839,9 @@ class AWSPreflightChecker:
                 )
                 for az in self.azs
             }
+            # read here rather than where it is needed, so a throttled lookup is a
+            # failed check like any other and not an aborted preflight
+            main = self._main_table()
         except Exception as e:  # noqa: BLE001 - reported as a failed check
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
             return
@@ -833,7 +857,7 @@ class AWSPreflightChecker:
             if not leaving and az not in named:
                 # our subnets are associated with nothing, so what they inherit is the
                 # main table - which egresses in a VPC whose own subnets are public
-                inherited = {t["RouteTableId"]: self._egress_of(t) for t in self._main_table()}
+                inherited = {t["RouteTableId"]: self._egress_of(t) for t in main}
                 leaving = {k: f"{v} inherited" for k, v in inherited.items() if v}
             if leaving:
                 egressing[az] = ", ".join(f"{k} via {v}" for k, v in sorted(leaving.items()))
@@ -972,7 +996,11 @@ class AWSPreflightChecker:
             probes.append(
                 ("ec2:CreateRouteTable", self.ec2.create_route_table, {"VpcId": self.vpc_id})
             )
-        for table_id in sorted(set((self.route_table_ids or {}).values())):
+        try:
+            associable = set(self._tables_we_would_associate().values())
+        except Exception:  # noqa: BLE001 - the rest of the probes stand without it
+            associable = set((self.route_table_ids or {}).values())
+        for table_id in sorted(associable):
             probes.append(
                 (
                     f"ec2:AssociateRouteTable on {table_id}",

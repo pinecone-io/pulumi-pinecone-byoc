@@ -43,6 +43,19 @@ class DryRuns:
         return call
 
 
+class DryRunsReading(DryRuns):
+    """Dry runs for the writes, real answers for the lookups they are built from."""
+
+    def __init__(self, answers, reader):
+        super().__init__(answers)
+        self.reader = reader
+
+    def __getattr__(self, operation):
+        if operation.startswith("describe_"):
+            return getattr(self.reader, operation)
+        return super().__getattr__(operation)
+
+
 class ClientError(Exception):
     def __init__(self, response):
         super().__init__(response["Error"]["Code"])
@@ -324,6 +337,21 @@ def test_detection_passes_when_every_zone_leaves():
     assert check.results[-1].passed
 
 
+def test_a_main_table_lookup_that_fails_is_a_failed_check_not_a_crash(monkeypatch):
+    check = checker()
+    check.ec2 = _ec2(subnets_by_az={}, tables={})
+
+    def throttled():
+        raise Exception("RequestLimitExceeded: Request limit exceeded")
+
+    monkeypatch.setattr(check, "_main_table", throttled)
+
+    check._check_their_egress()
+
+    assert not check.results[-1].passed
+    assert "Failed to check" in check.results[-1].message
+
+
 def test_a_zone_with_no_subnets_of_theirs_falls_back_to_the_main_table():
     check = checker()
     check.ec2 = _ec2(
@@ -565,6 +593,26 @@ def test_an_answer_that_is_not_a_refusal_does_not_fail_the_check(code):
     made._check_permissions()
 
     assert made.results[-1].passed
+
+
+def test_the_tables_detection_would_pick_are_asked_about_too():
+    """A blank map is not no tables - deploy detects them and associates them."""
+    reader = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2b": ["subnet-b"]},
+        tables={
+            "rtb-a": {"NatGatewayId": "nat-a", "subnets": ["subnet-a"]},
+            "rtb-b": {"NatGatewayId": "nat-b", "subnets": ["subnet-b"]},
+            "rtb-main": {"NatGatewayId": "nat-main", "main": True},
+        },
+    )
+    client = DryRunsReading({}, reader)
+
+    checker(ec2=client)._check_permissions()
+
+    asked = sorted(
+        {kwargs["RouteTableId"] for op, kwargs in client.asked if op == "associate_route_table"}
+    )
+    assert asked == ["rtb-a", "rtb-b"], "the main table is inherited, never associated"
 
 
 def test_their_route_tables_are_each_asked_about():
