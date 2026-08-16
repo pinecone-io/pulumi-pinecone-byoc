@@ -32,6 +32,16 @@ RFC1918_RANGES = [
     ipaddress.ip_network("192.168.0.0/16"),
 ]
 
+# every subnet the module creates carries it, so one that has it is ours from an
+# earlier run rather than theirs to keep clear of
+MANAGED_BY = ("pinecone:managed-by", "pulumi")
+
+
+def _is_ours(subnet) -> bool:
+    key, value = MANAGED_BY
+    return any(tag["Key"] == key and tag["Value"] == value for tag in subnet.get("Tags", []))
+
+
 DEFAULT_CIDR_SENTINEL = "default"
 
 console = Console()
@@ -670,13 +680,32 @@ class AWSPreflightChecker:
                 for association in vpcs[0].get("CidrBlockAssociationSet", [])
                 if association.get("CidrBlockState", {}).get("State") == "associated"
             ]
+            subnets = self.ec2.describe_subnets(
+                Filters=[{"Name": "vpc-id", "Values": [self.vpc_id]}]
+            )["Subnets"]
         except Exception as e:  # noqa: BLE001 - reported as a failed check
             self._add_result("VPC CIDR", False, "Failed to check", str(e))
             return
 
+        # a range they carry can still be one they use, and the module lays its
+        # subnets out at fixed offsets rather than around whatever is in the way
+        taken = [
+            f"{subnet['CidrBlock']} ({subnet['SubnetId']})"
+            for subnet in subnets
+            if not _is_ours(subnet) and ours.overlaps(ipaddress.ip_network(subnet["CidrBlock"]))
+        ]
+        if taken:
+            self._add_result(
+                "VPC CIDR",
+                False,
+                f"{ours} is where their {', '.join(taken)} already is",
+                "Their subnets are cut from those same addresses; pick a range none of them uses",
+            )
+            return
+
         covered = [c for c in theirs if ours.subnet_of(ipaddress.ip_network(c))]
         if covered:
-            self._add_result("VPC CIDR", True, f"{ours} is inside their {covered[0]}")
+            self._add_result("VPC CIDR", True, f"{ours} is free inside their {covered[0]}")
             return
 
         family = [

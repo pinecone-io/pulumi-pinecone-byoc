@@ -7,7 +7,7 @@ until an hour of deploy ends with the module building a VPC of its own.
 import ipaddress
 
 import pytest
-from wizard import AWSPreflightChecker, AWSSetupWizard
+from wizard import MANAGED_BY, AWSPreflightChecker, AWSSetupWizard
 
 
 def checker(**kwargs):
@@ -101,6 +101,42 @@ def test_a_range_inside_theirs_needs_no_association_and_passes():
 
     assert check.results[-1].passed
     assert "inside their" in check.results[-1].message
+
+
+def a_subnet(subnet_id, cidr, ours=False):
+    key, value = MANAGED_BY
+    return {
+        "SubnetId": subnet_id,
+        "CidrBlock": cidr,
+        "VpcId": "vpc-theirs",
+        "Tags": [{"Key": key, "Value": value}] if ours else [],
+    }
+
+
+def test_a_range_inside_theirs_is_still_refused_when_their_subnets_are_in_it():
+    """Carried is not free: their subnets are cut from the same addresses."""
+    check = checker(cidr="10.0.16.0/20")
+    check.ec2 = _ec2(
+        cidr_blocks=["10.0.0.0/16"],
+        subnets=[a_subnet("subnet-theirs", "10.0.16.0/24")],
+    )
+
+    check._check_range_fits_their_vpc()
+
+    assert not check.results[-1].passed
+    assert "10.0.16.0/24 (subnet-theirs)" in check.results[-1].message
+
+
+def test_the_subnets_an_earlier_run_left_are_not_read_as_theirs():
+    check = checker(cidr="10.0.16.0/20")
+    check.ec2 = _ec2(
+        cidr_blocks=["10.0.0.0/16"],
+        subnets=[a_subnet("subnet-ours", "10.0.20.0/22", ours=True)],
+    )
+
+    check._check_range_fits_their_vpc()
+
+    assert check.results[-1].passed
 
 
 def test_a_range_half_overlapping_theirs_is_refused():
@@ -313,7 +349,7 @@ def test_public_access_is_offered_by_what_their_vpc_can_carry(gateways, expected
     assert answer is bool(gateways)
 
 
-def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=None):
+def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=None, subnets=None):
     """A VPC as the checks see it: subnets per zone, and the tables they use.
 
     tables maps an id to the route it carries plus which subnets use it, e.g.
@@ -359,7 +395,9 @@ def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=No
                         if s in wanted
                     ]
                 }
-            az = by.get("availability-zone", [None])[0]
+            if "availability-zone" not in by:
+                return {"Subnets": list(subnets or [])}
+            az = by["availability-zone"][0]
             return {
                 "Subnets": [
                     {"SubnetId": s, "AvailabilityZone": az, "VpcId": "vpc-theirs"}
