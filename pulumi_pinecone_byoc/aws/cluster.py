@@ -116,13 +116,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             raise ValueError(
                 f"data_plane_backend must be 'postgres' or 'fdb', got {args.data_plane_backend!r}"
             )
-        if args.data_plane_backend == "fdb" and len(args.availability_zones) < 3:
-            raise ValueError(
-                "data_plane_backend='fdb' requires at least 3 availability zones for "
-                f"zone fault domains, got {args.availability_zones!r}. With fewer, the "
-                "FoundationDB CR silently degrades to hostname fault domains and "
-                "nothing downstream validates it"
-            )
         child_opts = pulumi.ResourceOptions(parent=self)
         config = self._build_config(args)
         self._config = config
@@ -139,6 +132,14 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 }
             )
             return
+
+        if args.data_plane_backend == "fdb" and len(args.availability_zones) < 3:
+            raise ValueError(
+                "data_plane_backend='fdb' requires at least 3 availability zones for "
+                f"zone fault domains, got {args.availability_zones!r}. With fewer, the "
+                "FoundationDB CR silently degrades to hostname fault domains and "
+                "nothing downstream validates it"
+            )
 
         self._environment = Environment(
             f"{config.resource_prefix}-environment",
