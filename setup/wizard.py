@@ -21,7 +21,10 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-94a9e90"
+PINECONE_VERSION = "main-e59b176"
+
+ZONES_OFFERED = 2
+ZONES_FOR_FAULT_DOMAINS = 3
 
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
@@ -245,7 +248,21 @@ class BaseSetupWizard:
             saved = self._state.get(key)
             if saved and not all(z.strip() in available for z in saved.split(",")):
                 self._state.unset(key)
-        return ",".join(available[:2])
+        return ",".join(available[:ZONES_OFFERED])
+
+    def _prompt_zones(self, message: str, available: list[str]) -> list[str]:
+        answer = self._prompt(
+            message,
+            self._zone_default("PINECONE_AZS", available),
+            key="PINECONE_AZS",
+        )
+        zones = [z.strip() for z in answer.split(",") if z.strip()]
+        if len(zones) < ZONES_FOR_FAULT_DOMAINS:
+            console.print(
+                f"  [yellow]⚠[/] {len(zones)} zone(s): FoundationDB keeps one replica "
+                f"per zone, so below {ZONES_FOR_FAULT_DOMAINS} two replicas can share one"
+            )
+        return zones
 
     def _maybe_resume(self, output_dir: str) -> None:
         """Load prior answers and, if present, offer to resume."""
@@ -1175,7 +1192,13 @@ class AWSPreflightChecker:
 
     def _check_instance_types(self):
         # check all instance types needed for the cluster
-        instance_types = ["m6idn.large", "i7ie.large", "m6idn.xlarge", "r6in.large"]
+        instance_types = [
+            "m6idn.large",
+            "i7ie.large",
+            "m6idn.xlarge",
+            "r6in.large",
+            "r6i.large",
+        ]
         all_available = True
         unavailable = []
 
@@ -1294,7 +1317,7 @@ class AWSSetupWizard(BaseSetupWizard):
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/20"
     CIDR_DESC = "The IP range for your VPC (a /16 to /20 from an RFC 1918 private range, currently supported down to /20, must not conflict with existing VPCs)"
-    DELETION_PROTECTION_DESC = "Protect RDS databases and S3 buckets from accidental deletion"
+    DELETION_PROTECTION_DESC = "Protect S3 buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
     CLOUD_NAME = "AWS"
@@ -1686,13 +1709,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        azs_input = self._prompt(
-            "Enter AZs (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        azs = [az.strip() for az in azs_input.split(",")]
-        return azs
+        return self._prompt_zones("Enter AZs (comma-separated)", available)
 
     def _get_custom_ami_id(self) -> str | None:
         console.print()
@@ -1711,12 +1728,8 @@ class AWSSetupWizard(BaseSetupWizard):
     def _get_kms_key_arn(self) -> str | None:
         console.print()
         console.print(f"  {self._step('KMS Key (Optional)')}")
-        console.print(
-            "  [dim]Provide a KMS key ARN to encrypt S3 buckets and RDS with your own key.[/]"
-        )
-        console.print(
-            "  [dim]Leave blank to use default AWS-managed encryption (AES256/default RDS key).[/]"
-        )
+        console.print("  [dim]Provide a KMS key ARN to encrypt S3 buckets with your own key.[/]")
+        console.print("  [dim]Leave blank to use default AWS-managed encryption (AES256).[/]")
         console.print()
         arn = self._prompt(
             "Enter KMS key ARN (or press Enter to skip)",
@@ -2037,7 +2050,6 @@ class GCPPreflightChecker:
 
     def _check_apis_enabled(self):
         required_apis = [
-            "alloydb.googleapis.com",
             "autoscaling.googleapis.com",
             "cloudapis.googleapis.com",
             "cloudkms.googleapis.com",
@@ -2052,7 +2064,6 @@ class GCPPreflightChecker:
             "secretmanager.googleapis.com",
             "servicedirectory.googleapis.com",
             "servicemanagement.googleapis.com",
-            "servicenetworking.googleapis.com",
             "siteverification.googleapis.com",
             "storage.googleapis.com",
         ]
@@ -2292,7 +2303,7 @@ class GCPSetupWizard(BaseSetupWizard):
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
     DEFAULT_CIDR = "10.112.0.0/16"
-    DELETION_PROTECTION_DESC = "Protect AlloyDB databases and GCS buckets from accidental deletion"
+    DELETION_PROTECTION_DESC = "Protect GCS buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Private Service Connect (more secure)"
     METADATA_NAME = "labels"
     CLOUD_NAME = "GCP"
@@ -2442,13 +2453,7 @@ class GCPSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        zones_input = self._prompt(
-            "Enter zones (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        zones = [zone.strip() for zone in zones_input.split(",")]
-        return zones
+        return self._prompt_zones("Enter zones (comma-separated)", available)
 
     def _run_preflight_checks(
         self, project_id: str, region: str, zones: list[str], cidr: str
@@ -2684,7 +2689,6 @@ class AzurePreflightChecker:
     def run_checks(self) -> bool:
         checks = [
             ("Resource Providers", self._check_resource_providers),
-            ("PostgreSQL Flexible Server", self._check_postgres_availability),
             ("vCPU Quota", self._check_vcpu_quota),
             ("AKS Clusters", self._check_aks_quota),
             ("VM SKUs", self._check_vm_skus),
@@ -2725,7 +2729,6 @@ class AzurePreflightChecker:
         required_providers = [
             "Microsoft.Compute",
             "Microsoft.ContainerService",
-            "Microsoft.DBforPostgreSQL",
             "Microsoft.Storage",
             "Microsoft.Network",
             "Microsoft.KeyVault",
@@ -2755,81 +2758,6 @@ class AzurePreflightChecker:
                 )
         except Exception as e:
             self._add_result("Resource Providers", False, f"Failed to check: {e}")
-
-    def _check_postgres_availability(self):
-        try:
-            result = subprocess.run(
-                [
-                    "az",
-                    "postgres",
-                    "flexible-server",
-                    "list-skus",
-                    "--location",
-                    self.region,
-                    "--subscription",
-                    self.subscription_id,
-                    "--output",
-                    "json",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"Failed: {result.stderr.strip().split(chr(10))[0]}",
-                )
-                return
-
-            skus = json.loads(result.stdout)
-            if not skus:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"No SKUs available in {self.region}",
-                    "Choose a different region",
-                )
-                return
-
-            # check if provisioning is restricted in this region
-            reason = skus[0].get("reason") or ""
-            if "restricted" in reason.lower():
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"Provisioning restricted in {self.region}",
-                    "Choose a different region or request a quota increase",
-                )
-                return
-
-            # check that our target SKU (Standard_D2s_v3) is available
-            target_sku = "Standard_D2s_v3"
-            found = False
-            for cap in skus:
-                for edition in cap.get("supportedServerEditions", []):
-                    if edition.get("name") == "GeneralPurpose":
-                        for sku in edition.get("supportedServerSkus", []):
-                            if sku.get("name") == target_sku:
-                                found = True
-                                break
-
-            if found:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    True,
-                    f"{target_sku} available in {self.region}",
-                )
-            else:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"{target_sku} not available in {self.region}",
-                    "Choose a different region or VM SKU",
-                )
-        except Exception as e:
-            self._add_result("PostgreSQL Flexible Server", False, f"Failed to check: {e}")
 
     def _check_vcpu_quota(self):
         try:
@@ -3123,9 +3051,7 @@ class AzureSetupWizard(BaseSetupWizard):
         "This wizard will set up everything you need to deploy Pinecone BYOC on Azure."
     )
     DEFAULT_CIDR = "10.0.0.0/16"
-    DELETION_PROTECTION_DESC = (
-        "Protect PostgreSQL databases and storage accounts from accidental deletion"
-    )
+    DELETION_PROTECTION_DESC = "Protect storage accounts from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Azure Private Link (more secure)"
     METADATA_NAME = "tags"
     CLOUD_NAME = "Azure"
@@ -3283,13 +3209,7 @@ class AzureSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        zones_input = self._prompt(
-            "Enter zones (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        zones = [zone.strip() for zone in zones_input.split(",")]
-        return zones
+        return self._prompt_zones("Enter zones (comma-separated)", available)
 
     def _run_preflight_checks(
         self, subscription_id: str, region: str, zones: list[str], cidr: str

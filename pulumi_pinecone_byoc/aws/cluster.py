@@ -33,7 +33,6 @@ from .eks import EKS
 from .k8s_addons import K8sAddons
 from .nlb import NLB
 from .pulumi_operator import PulumiOperator
-from .rds import RDS, RDSInstance
 from .s3 import S3Buckets
 from .vpc import VPC
 
@@ -74,7 +73,7 @@ class PineconeAWSClusterArgs:
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
-    deletion_protection: bool = True  # protect RDS and S3 from accidental deletion
+    deletion_protection: bool = True  # protect S3 from accidental deletion
     network_only: bool = False
 
     # pinecone specific
@@ -87,7 +86,7 @@ class PineconeAWSClusterArgs:
     # custom AMI
     custom_ami_id: str | None = None
 
-    # KMS key ARN for encrypting S3 and RDS
+    # KMS key ARN for encrypting S3
     kms_key_arn: str | None = None
 
     # tags
@@ -276,15 +275,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
-        self._rds = RDS(
-            f"{config.resource_prefix}-rds",
-            config,
-            self._vpc,
-            cell_name=self._cell_name,
-            kms_key_arn=args.kms_key_arn,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
-        )
-
         self._k8s_addons = K8sAddons(
             f"{config.resource_prefix}-k8s-addons",
             config,
@@ -349,11 +339,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cpgw_api_key=self._cpgw_api_key.key,
             gcps_api_key=self._api_key.value,
             dd_api_key=self._datadog_api_key.api_key,
-            control_db=self._rds.control_db,
-            system_db=self._rds.system_db,
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self._eks, self._api_key, self._datadog_api_key, self._rds],
+                depends_on=[self._eks, self._api_key, self._datadog_api_key],
             ),
         )
 
@@ -459,9 +447,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             region=args.region,
             public_access_enabled=args.public_access_enabled,
             pulumi_outputs=pulumi_outputs,
-            opts=pulumi.ResourceOptions(
-                parent=self, depends_on=[self._eks, self._dns, self._s3, self._rds]
-            ),
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._eks, self._dns, self._s3]),
         )
 
         self._ecr_refresher = RegistryCredentialRefresher(
@@ -510,8 +496,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 "cluster_endpoint": self._eks.cluster.eks_cluster.endpoint,
                 "kubeconfig": self._eks.kubeconfig,
                 "data_bucket": self._s3.data_bucket_name,
-                "control_db_endpoint": self._rds.control_db.endpoint,
-                "system_db_endpoint": self._rds.system_db.endpoint,
                 "certificate_arn": self._dns.certificate_arn,
                 "environment_id": self._environment.id,
                 "environment_name": self._environment.env_name,
@@ -540,7 +524,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeAWSClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
-        from config.aws import AWSConfig, DatabaseConfig
+        from config.aws import AWSConfig
         from config.base import NodePoolConfig, NodePoolTaint
 
         node_pools = []
@@ -585,7 +569,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
-            database=DatabaseConfig(deletion_protection=args.deletion_protection),
             custom_ami_id=args.custom_ami_id,
             kms_key_arn=args.kms_key_arn,
             custom_tags=args.tags or {},
@@ -634,30 +617,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
     @property
     def wal_bucket_name(self) -> pulumi.Output[str]:
         return self._s3.wal_bucket_name
-
-    @property
-    def control_db(self) -> RDSInstance:
-        return self._rds.control_db
-
-    @property
-    def system_db(self) -> RDSInstance:
-        return self._rds.system_db
-
-    @property
-    def control_db_endpoint(self) -> pulumi.Output[str]:
-        return self._rds.control_db.endpoint
-
-    @property
-    def system_db_endpoint(self) -> pulumi.Output[str]:
-        return self._rds.system_db.endpoint
-
-    @property
-    def control_db_connection_secret_arn(self) -> pulumi.Output[str]:
-        return self._rds.control_db.connection_secret_arn
-
-    @property
-    def system_db_connection_secret_arn(self) -> pulumi.Output[str]:
-        return self._rds.system_db.connection_secret_arn
 
     @property
     def certificate_arn(self) -> pulumi.Output[str]:

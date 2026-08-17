@@ -2,7 +2,6 @@
 
 from .aks import AKS
 from .cluster import NodePool, PineconeAzureCluster, PineconeAzureClusterArgs
-from .database import Database, FlexibleServerInstance
 from .dns import DNS
 from .k8s_addons import K8sAddons
 from .nlb import InternalLoadBalancer
@@ -17,8 +16,6 @@ __all__ = [
     "VNet",
     "AKS",
     "BlobStorage",
-    "Database",
-    "FlexibleServerInstance",
     "DNS",
     "InternalLoadBalancer",
     "K8sAddons",

@@ -29,7 +29,6 @@ from ..common.providers import (
 from ..common.registry import AZURE_REGISTRY
 from ..common.uninstaller import ClusterUninstaller
 from .aks import AKS
-from .database import Database
 from .dns import DNS
 from .k8s_addons import K8sAddons
 from .nlb import InternalLoadBalancer
@@ -193,17 +192,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             config,
             cell_name=self._cell_name,
             resource_group_name=self._vnet.resource_group_name,
+            deletion_protection=args.deletion_protection,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._aks]),
-        )
-
-        self._database = Database(
-            f"{config.resource_prefix}-database",
-            config,
-            resource_group_name=self._vnet.resource_group_name,
-            vnet_id=self._vnet.vnet_id,
-            delegated_subnet_id=self._vnet.db_subnet_id,
-            cell_name=self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vnet]),
         )
 
         # phase 3: dns & networking
@@ -293,8 +283,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             cpgw_api_key=self._cpgw_api_key.key,
             gcps_api_key=self._api_key.value,
             dd_api_key=self._datadog_api_key.api_key,
-            control_db=self._database.control_db,
-            system_db=self._database.system_db,
             azure_storage_access_key=self._storage.access_key,
             storage_integration_credentials={
                 "client-secret": storage_integration_password.value,
@@ -306,7 +294,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
                     self._cpgw_api_key,
                     self._api_key,
                     self._datadog_api_key,
-                    self._database,
                 ],
             ),
         )
@@ -384,7 +371,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self._aks, self._dns, self._storage, self._database],
+                depends_on=[self._aks, self._dns, self._storage],
             ),
         )
 
@@ -435,8 +422,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
                 "vnet_id": self._vnet.vnet_id,
                 "kubeconfig": self._aks.kubeconfig,
                 "storage_account_name": self._storage.account_name,
-                "control_db_endpoint": self._database.control_db.endpoint,
-                "system_db_endpoint": self._database.system_db.endpoint,
                 "environment_id": self._environment.id,
                 "environment_name": self._environment.env_name,
                 "service_account_id": self._service_account.id,
@@ -458,7 +443,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         )
 
     def _build_config(self, args: PineconeAzureClusterArgs):
-        from config.azure import AzureConfig, FlexibleServerConfig
+        from config.azure import AzureConfig
         from config.base import NodePoolConfig
 
         node_pools = []
@@ -496,9 +481,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
             parent_zone_name=args.parent_dns_zone_name,
-            database=FlexibleServerConfig(
-                deletion_protection=args.deletion_protection,
-            ),
             custom_tags=args.tags or {},
         )
 
@@ -521,10 +503,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
     @property
     def storage(self) -> BlobStorage:
         return self._storage
-
-    @property
-    def database(self) -> Database:
-        return self._database
 
     @property
     def dns(self) -> DNS:

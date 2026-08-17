@@ -119,8 +119,7 @@ class GKE(pulumi.ComponentResource):
                     enabled=False
                 )
             ),
-            # intentionally tied to database deletion_protection - protects both cluster and DB together
-            deletion_protection=config.database.deletion_protection,
+            deletion_protection=config.deletion_protection,
             resource_labels=config.labels(),
             opts=pulumi.ResourceOptions(parent=self),
         )
@@ -246,7 +245,7 @@ class GKE(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self),
         )
 
-        # writer K8s SAs -> write GCP SA for GCS/AlloyDB access (non-authoritative
+        # writer K8s SAs -> write GCP SA for GCS access (non-authoritative
         # so operator-added dynamic bindings are always kept in sync)
         for sa in config.writer_k8s_service_accounts:
             sanitized = sa.replace("/", "-")

@@ -26,7 +26,6 @@ from ..common.providers import (
 )
 from ..common.registry import GCP_REGISTRY
 from ..common.uninstaller import ClusterUninstaller
-from .alloydb import AlloyDB
 from .dns import DNS
 from .gcs import GCSBuckets
 from .gke import GKE
@@ -192,16 +191,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke]),
         )
 
-        self._alloydb = AlloyDB(
-            f"{config.resource_prefix}-alloydb",
-            config,
-            self._vpc.network_id,
-            self._vpc.private_ip_range_name,
-            self._vpc.private_connection,
-            self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
-        )
-
         self._subdomain = self._environment.env_name
 
         self._dns = DNS(
@@ -241,8 +230,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             cpgw_api_key=self._cpgw_api_key.key,
             gcps_api_key=self._api_key.value,
             dd_api_key=self._datadog_api_key.api_key,
-            control_db=self._alloydb.control_db,
-            system_db=self._alloydb.system_db,
             storage_integration_credentials=(
                 {"key-json": self._gke.service_accounts.storage_integration_key_json}
                 if self._gke.service_accounts.storage_integration_key_json is not None
@@ -255,7 +242,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                     self._cpgw_api_key,
                     self._api_key,
                     self._datadog_api_key,
-                    self._alloydb,
                 ],
             ),
         )
@@ -324,7 +310,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             pulumi_outputs=pulumi_outputs,
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self._gke, self._dns, self._gcs, self._alloydb],
+                depends_on=[self._gke, self._dns, self._gcs],
             ),
         )
 
@@ -375,8 +361,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 "cluster_endpoint": self._gke.cluster.endpoint,
                 "kubeconfig": self._gke.kubeconfig,
                 "data_bucket": self._gcs.data_bucket.name,
-                "control_db_endpoint": self._alloydb.control_db.endpoint,
-                "system_db_endpoint": self._alloydb.system_db.endpoint,
                 "environment_id": self._environment.id,
                 "environment_name": self._environment.env_name,
                 "service_account_id": self._service_account.id,
@@ -397,7 +381,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
     def _build_config(self, args: PineconeGCPClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
         from config.base import NodePoolConfig
-        from config.gcp import AlloyDBConfig, AlloyDBInstanceConfig, GCPConfig
+        from config.gcp import GCPConfig
 
         node_pools = []
         if args.node_pools:
@@ -424,9 +408,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 ),
             ]
 
-        control_db_cpu = 2
-        system_db_cpu = 2
-
         config = GCPConfig(
             project=args.project,
             global_env=args.global_env,
@@ -437,21 +418,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             kubernetes_version=args.kubernetes_version,
             parent_zone_name=args.parent_dns_zone_name,
             node_pools=node_pools,
-            database=AlloyDBConfig(
-                control_db=AlloyDBInstanceConfig(
-                    name="control-db",
-                    cpu_count=control_db_cpu,
-                    username="controldb",
-                    db_name="controldb",
-                ),
-                system_db=AlloyDBInstanceConfig(
-                    name="system-db",
-                    cpu_count=system_db_cpu,
-                    username="systemdb",
-                    db_name="systemdb",
-                ),
-                deletion_protection=args.deletion_protection,
-            ),
+            deletion_protection=args.deletion_protection,
             custom_tags=args.labels or {},
         )
 
@@ -481,10 +448,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
     @property
     def gcs(self) -> GCSBuckets:
         return self._gcs
-
-    @property
-    def alloydb(self) -> AlloyDB:
-        return self._alloydb
 
     @property
     def dns(self) -> DNS:

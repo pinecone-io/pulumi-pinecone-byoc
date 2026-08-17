@@ -18,7 +18,7 @@ class VPC(pulumi.ComponentResource):
     """
     Creates a VPC with:
     - Public subnets (one per AZ) for load balancers and NAT gateways
-    - Private subnets (one per AZ) for EKS nodes and RDS
+    - Private subnets (one per AZ) for EKS nodes
     - NAT gateways for private subnet internet access
     - Internet gateway for public subnet internet access
     """
