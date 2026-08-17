@@ -2,12 +2,23 @@ import importlib.util
 import inspect
 
 import pytest
-from wizard import ZONES_OFFERED, AWSSetupWizard, AzureSetupWizard, GCPSetupWizard
 
-from pulumi_pinecone_byoc.aws.cluster import PineconeAWSClusterArgs
-from pulumi_pinecone_byoc.azure.cluster import PineconeAzureClusterArgs
-from pulumi_pinecone_byoc.common.k8s_configmaps import DATA_PLANE_BACKEND, K8sConfigMaps
-from pulumi_pinecone_byoc.gcp.cluster import PineconeGCPClusterArgs
+# A cross-cloud assertion needs every provider SDK. The aws e2e jobs install only
+# the aws extra and still collect this file, so skip rather than fail collection;
+# ci.yaml runs with --all-extras and is where these actually assert.
+pytest.importorskip("pulumi_aws")
+pytest.importorskip("pulumi_azure_native")
+pytest.importorskip("pulumi_gcp")
+
+from wizard import ZONES_OFFERED, AWSSetupWizard, AzureSetupWizard, GCPSetupWizard  # noqa: E402
+
+from pulumi_pinecone_byoc.aws.cluster import PineconeAWSClusterArgs  # noqa: E402
+from pulumi_pinecone_byoc.azure.cluster import PineconeAzureClusterArgs  # noqa: E402
+from pulumi_pinecone_byoc.common.k8s_configmaps import (  # noqa: E402
+    DATA_PLANE_BACKEND,
+    K8sConfigMaps,
+)
+from pulumi_pinecone_byoc.gcp.cluster import PineconeGCPClusterArgs  # noqa: E402
 
 DATABASE_MODULES = [
     "pulumi_pinecone_byoc.aws.rds",

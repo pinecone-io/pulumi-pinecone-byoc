@@ -2,10 +2,17 @@ import inspect
 
 import pytest
 
-from pulumi_pinecone_byoc.aws.cluster import PineconeAWSCluster
-from pulumi_pinecone_byoc.azure.cluster import PineconeAzureCluster
-from pulumi_pinecone_byoc.azure.storage import BlobStorage
-from pulumi_pinecone_byoc.gcp.cluster import PineconeGCPCluster
+# A cross-cloud assertion needs every provider SDK. The aws e2e jobs install only
+# the aws extra and still collect this file, so skip rather than fail collection;
+# ci.yaml runs with --all-extras and is where these actually assert.
+pytest.importorskip("pulumi_aws")
+pytest.importorskip("pulumi_azure_native")
+pytest.importorskip("pulumi_gcp")
+
+from pulumi_pinecone_byoc.aws.cluster import PineconeAWSCluster  # noqa: E402
+from pulumi_pinecone_byoc.azure.cluster import PineconeAzureCluster  # noqa: E402
+from pulumi_pinecone_byoc.azure.storage import BlobStorage  # noqa: E402
+from pulumi_pinecone_byoc.gcp.cluster import PineconeGCPCluster  # noqa: E402
 
 CLUSTERS = [PineconeAWSCluster, PineconeAzureCluster, PineconeGCPCluster]
 
