@@ -4,7 +4,8 @@ The suite destroys its own stacks; a runner that is cancelled or times out never
 gets there. This is the same teardown, reachable by name from the destroy marker,
 so nothing outside Python has to know which stacks exist or where their program
 lives. The shape that adopts a VPC goes first: its subnets are inside the other
-one's.
+one's. The stand-in VPC the full e2e deploys into is torn down beside the
+cluster that sits in it, in tests/test_destroy_e2e.py.
 """
 
 import logging
