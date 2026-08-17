@@ -31,6 +31,7 @@ from e2e.reachability import assert_data_plane_answers, assert_never_answers, da
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 from e2e.wizard import generate_project, non_interactive_env
+from wizard import AWSSetupWizard
 
 pytestmark = pytest.mark.e2e
 
@@ -99,7 +100,9 @@ def byoc_in_their_vpc(request, their_vpc):
         pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
         yield {
             "project_dir": project_dir,
-            "public_access": public_access == "true",
+            # the wizard's own reading of the answer, so "1" and "yes" pick the
+            # probe the deploy they produced actually needs
+            "public_access": AWSSetupWizard._yes(public_access),
             "shape": shape,
         }
     finally:
