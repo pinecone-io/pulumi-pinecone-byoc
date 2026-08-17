@@ -1,0 +1,58 @@
+name: AWS e2e runner
+description: >-
+  The toolchain, credentials and stack prefix an AWS e2e job needs. Installing,
+  upgrading and tearing down are three jobs against one deployment, and they
+  find it by agreeing on this prefix.
+
+inputs:
+  tier:
+    required: true
+  region:
+    required: true
+  role-arn:
+    required: true
+  pulumi-token:
+    required: true
+  pr-number:
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Set stack prefix
+      shell: bash
+      env:
+        PR_NUMBER: ${{ inputs.pr-number }}
+        TIER: ${{ inputs.tier }}
+      run: |
+        if [ -n "$PR_NUMBER" ]; then
+          echo "E2E_STACK_PREFIX=ci-aws-${TIER}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        else
+          echo "E2E_STACK_PREFIX=ci-aws-${TIER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        fi
+
+    - name: Configure AWS credentials (OIDC)
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        role-to-assume: ${{ inputs.role-arn }}
+        aws-region: ${{ inputs.region }}
+        role-duration-seconds: 43200
+
+    - uses: astral-sh/setup-uv@v5
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install Pulumi CLI
+      uses: pulumi/actions@v6
+
+    - name: Set default Pulumi org
+      shell: bash
+      env:
+        PULUMI_ACCESS_TOKEN: ${{ inputs.pulumi-token }}
+      run: pulumi org set-default pinecone
+
+    - name: Install kubectl
+      uses: azure/setup-kubectl@v4

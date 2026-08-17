@@ -1,8 +1,26 @@
+# A pull request that touches AWS upgrades the baseline release to it, which is
+# the only thing that says an existing deployment survives the change. A fresh
+# install of *this* commit is not part of that - the upgrade run installs the
+# release - so label a pull request `e2e-install` to add one, and the weekly run
+# does it on main regardless.
 name: E2E
 
 on:
   pull_request:
-  workflow_dispatch: {}
+    types: [opened, synchronize, reopened, labeled]
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: e2e installs this commit; upgrade installs the baseline release then upgrades
+        type: choice
+        options: [upgrade, e2e]
+        default: upgrade
+      baseline:
+        description: "git ref to upgrade from (default: origin/main on a PR, the latest release tag otherwise)"
+        type: string
+        default: ""
 
 concurrency:
   group: byoc-e2e
@@ -11,16 +29,67 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 jobs:
   changes:
     runs-on: ubuntu-latest
     outputs:
       aws: ${{ steps.filter.outputs.aws }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      baseline: ${{ steps.baseline.outputs.ref }}
       gcp: ${{ steps.filter.outputs.gcp }}
       azure: ${{ steps.filter.outputs.azure }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the AWS runs
+        id: matrix
+        env:
+          TIER: ${{ inputs.tier }}
+          LABELLED: ${{ contains(github.event.pull_request.labels.*.name, 'e2e-install') }}
+        run: |
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              matrix=$(jq -cn --arg tier "$TIER" '{include: [{shape: "vanilla", tier: $tier}]}') ;;
+            schedule)
+              matrix='{"include":[{"shape":"vanilla","tier":"e2e"}]}' ;;
+            *)
+              legs='[]'
+              if [ "$LABELLED" = true ]; then
+                legs='[{"shape":"vanilla","tier":"e2e"}]'
+              fi
+              matrix=$(jq -c '{include: (. + [{"shape":"vanilla","tier":"upgrade"}])}' <<<"$legs") ;;
+          esac
+          echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          jq . <<<"$matrix"
+
+      - name: Resolve the upgrade baseline
+        id: baseline
+        env:
+          REQUESTED: ${{ inputs.baseline }}
+        run: |
+          ref="$REQUESTED"
+          if [ -z "$ref" ]; then
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              # a pull request asks what *this change* does, and the last release is
+              # months of other people's commits away - main isolates the delta
+              ref="origin/main"
+            else
+              # the weekly run asks what a customer will experience, and a customer
+              # installs the published release
+              ref=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            fi
+          fi
+          if [ -z "$ref" ]; then
+            echo "nothing to upgrade from; pass a baseline ref explicitly" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "upgrading from $ref"
+
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -52,8 +121,19 @@ jobs:
 
   aws:
     needs: changes
-    if: needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch'
+    if: needs.changes.outputs.aws == 'true' || github.event_name != 'pull_request'
+    strategy:
+      # one AWS account and one Pinecone org, and the vanilla shape identifies its
+      # cluster as the one that appeared since it started -- so never in parallel;
+      # the install leg not starting is fine if the upgrade failed
+      max-parallel: 1
+      fail-fast: true
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     uses: ./.github/workflows/aws.yaml
+    with:
+      shape: ${{ matrix.shape }}
+      tier: ${{ matrix.tier }}
+      baseline: ${{ needs.changes.outputs.baseline }}
     secrets: inherit
 
   gcp:

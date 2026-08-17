@@ -8,15 +8,15 @@ from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS
 from e2e.reachability import assert_answers, data_plane_host
 from e2e.settings import keep_stacks
-from e2e.stacks import destroy_stack, stack_name
+from e2e.stacks import DEFAULT_SHAPE, STACK_SUFFIX, destroy_stack, stack_name
 from e2e.wizard import generate_project, non_interactive_env
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 
 @pytest.fixture
 def vanilla_project(request):
-    stack = stack_name("vanilla", "byoc")
+    stack = stack_name(DEFAULT_SHAPE, STACK_SUFFIX)
     project_dir = generate_project(
         PROJECTS / stack,
         stack,
@@ -33,24 +33,29 @@ def vanilla_project(request):
     streamer.start()
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
-        yield project_dir
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=project_dir)
+        yield project_dir, stack
     finally:
         try:
             if keep_stacks(request):
                 logging.info(
-                    "leaving vanilla stack %s up - destroy it with: cd %s && pulumi destroy --yes",
+                    "leaving vanilla stack %s up - destroy it with: "
+                    "pulumi destroy --yes -C %s --stack %s",
                     stack,
                     project_dir,
+                    stack,
                 )
             else:
-                destroy_stack(project_dir)
+                destroy_stack(project_dir, stack)
         finally:
             stop_streaming.set()
             streamer.join(timeout=10)
 
 
 def test_e2e_vanilla(vanilla_project):
-    environment = pulumi_json("stack", "output", "--json", cwd=vanilla_project).get("environment")
+    project_dir, stack = vanilla_project
+    environment = pulumi_json("stack", "output", "--json", "--stack", stack, cwd=project_dir).get(
+        "environment"
+    )
     assert environment, "the deploy exported no environment"
     assert_answers(data_plane_host(environment))

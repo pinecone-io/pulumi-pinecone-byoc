@@ -5,6 +5,7 @@ import contextlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -21,7 +22,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-94a9e90"
+PINECONE_VERSION = "main-1ff4db7"
 
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
@@ -93,6 +94,46 @@ class NonInteractiveInputRequired(Exception):
 # ---------------------------------------------------------------------------
 # Resumable answer state
 # ---------------------------------------------------------------------------
+
+
+def _https_remote(url: str) -> str:
+    # a clone URL can carry a token, and this one is written into a file the customer keeps
+    url = url.strip().removesuffix(".git")
+    if url.startswith("git@"):
+        host, _, path = url[len("git@") :].partition(":")
+        return f"https://{host}/{path}"
+    if url.startswith("ssh://git@"):
+        return "https://" + url[len("ssh://git@") :]
+    scheme, sep, rest = url.partition("://")
+    if not sep:
+        return url
+    if "@" in rest.split("/", 1)[0]:
+        rest = rest.split("@", 1)[1]
+    return f"{scheme}://{rest}"
+
+
+def module_pin(source_dir: str) -> tuple[str, str] | None:
+    def git(*args: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", source_dir, *args], capture_output=True, text=True, check=False
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    commit = git("rev-parse", "HEAD")
+    remote = git("remote", "get-url", "origin")
+    if not commit or not remote:
+        return None
+    url = _https_remote(remote)
+    if not url.startswith("https://") or "@" in url:
+        return None
+    return url, commit
+
+
+def pinned_rev(pyproject_path: str) -> str | None:
+    if not os.path.isfile(pyproject_path):
+        return None
+    match = re.search(r'rev\s*=\s*"([0-9a-f]{7,40})"', open(pyproject_path).read())
+    return match.group(1) if match else None
 
 
 class WizardState:
@@ -354,6 +395,19 @@ class BaseSetupWizard:
                 "\n[tool.uv.sources]\n"
                 f'pulumi-pinecone-byoc = {{ path = "{path}", editable = true }}\n'
             )
+        else:
+            pin = module_pin(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if pin:
+                url, commit = pin
+                pyproject_content += (
+                    "\n[tool.uv.sources]\n"
+                    f'pulumi-pinecone-byoc = {{ git = "{url}", rev = "{commit}" }}\n'
+                )
+            else:
+                console.print(
+                    "  [yellow]⚠[/] Could not pin the module version: this project will "
+                    "install whatever is newest at sync time"
+                )
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
@@ -3532,6 +3586,158 @@ def select_cloud() -> str:
         sys.exit(1)
 
 
+UPGRADE_ENV = {
+    "region": "PINECONE_REGION",
+    "vpc-cidr": "PINECONE_VPC_CIDR",
+    "existing-vpc-id": "PINECONE_EXISTING_VPC_ID",
+    "public-access-enabled": "PINECONE_PUBLIC_ACCESS",
+    "deletion-protection": "PINECONE_DELETION_PROTECTION",
+    "custom-ami-id": "PINECONE_CUSTOM_AMI_ID",
+    "kms-key-arn": "PINECONE_KMS_KEY_ARN",
+    "global-env": "PINECONE_GLOBAL_ENV",
+    "api-url": "PINECONE_API_URL",
+    "auth0-domain": "PINECONE_AUTH0_DOMAIN",
+    "gcp-project": "PINECONE_GCP_PROJECT",
+    "subscription-id": "AZURE_SUBSCRIPTION_ID",
+    "project-id": "GOOGLE_PROJECT",
+}
+
+
+def _read_yaml(path: str) -> dict:
+    with open(path) as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _find_stack(output_dir: str, stack_name: str | None) -> str | None:
+    found = sorted(
+        name[len("Pulumi.") : -len(".yaml")]
+        for name in os.listdir(output_dir)
+        if name.startswith("Pulumi.") and name.endswith(".yaml") and name != "Pulumi.yaml"
+    )
+    if stack_name:
+        if stack_name not in found:
+            console.print(f"  [red]✗[/] {output_dir} has no Pulumi.{stack_name}.yaml")
+            console.print(f"  [dim]Stacks found:[/] {', '.join(found) or 'none'}")
+            return None
+        return stack_name
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        console.print(f"  [red]✗[/] {output_dir} holds no stack configuration to upgrade")
+        return None
+    console.print(f"  [dim]Stacks in this project:[/] {', '.join(found)}")
+    return read_input_with_cycle("  Which stack are you upgrading?", found) or None
+
+
+def _upgrade_environment(project: str, config: dict) -> dict[str, str]:
+    env = {}
+    for key, value in config.items():
+        _, _, bare = key.partition(":")
+        if key.startswith("aws:") or bare not in UPGRADE_ENV or isinstance(value, dict):
+            continue
+        env[UPGRADE_ENV[bare]] = str(value).lower() if isinstance(value, bool) else str(value)
+    zones = config.get(f"{project}:availability-zones") or config.get(f"{project}:zones")
+    if isinstance(zones, list):
+        env["PINECONE_AZS"] = ",".join(str(zone) for zone in zones)
+    tables = config.get(f"{project}:existing-route-table-ids")
+    if isinstance(tables, dict):
+        env["PINECONE_ROUTE_TABLE_IDS"] = ",".join(f"{az}={rtb}" for az, rtb in tables.items())
+    return env
+
+
+def upgrade_project(output_dir: str, stack_name: str | None, dev_source: str | None) -> bool:
+    console.print()
+    console.print(f"  [{BLUE}]Upgrade[/] · {output_dir}")
+    console.print()
+
+    project_file = os.path.join(output_dir, "Pulumi.yaml")
+    program = os.path.join(output_dir, "__main__.py")
+    if not os.path.isfile(project_file) or not os.path.isfile(program):
+        console.print(f"  [red]✗[/] {output_dir} is not a generated project")
+        console.print("  [dim]Run without --upgrade to create one.[/]")
+        return False
+
+    project = str(_read_yaml(project_file).get("name") or "")
+    stack = _find_stack(output_dir, stack_name)
+    if not project or not stack:
+        return False
+
+    cloud = next(
+        (c for c in ("aws", "gcp", "azure") if f"pulumi_pinecone_byoc.{c}" in open(program).read()),
+        "",
+    )
+    if not cloud:
+        console.print(f"  [red]✗[/] cannot tell which cloud {program} deploys")
+        return False
+
+    stack_file = os.path.join(output_dir, f"Pulumi.{stack}.yaml")
+    pyproject = os.path.join(output_dir, "pyproject.toml")
+    rev_before = pinned_rev(pyproject)
+    before = _read_yaml(stack_file).get("config") or {}
+    console.print(f"  [green]✓[/] {project}/{stack} on {cloud}, {len(before)} config value(s)")
+
+    env = _upgrade_environment(project, before)
+    env["PINECONE_PROJECT_NAME"] = project
+    # the key stays encrypted in the stack file; the generator only needs a non-empty value
+    env.setdefault("PINECONE_API_KEY", "kept-from-the-existing-stack")
+    tags = before.get(f"{project}:tags")
+
+    previous = dict(os.environ)
+    os.environ.update(env)
+    try:
+        generated = run_setup(
+            output_dir=output_dir,
+            cloud=cloud,
+            non_interactive=True,
+            stack_name=stack,
+            skip_install=True,
+            dev_source=dev_source,
+        )
+    finally:
+        os.environ.clear()
+        os.environ.update(previous)
+    if not generated:
+        return False
+
+    after = _read_yaml(stack_file)
+    config = after.get("config") or {}
+    carried = []
+    for key, value in before.items():
+        if key not in config:
+            config[key] = value
+            carried.append(key)
+    changed = [k for k, v in config.items() if k in before and before[k] != v]
+    if tags is not None:
+        config[f"{project}:tags"] = tags
+    after["config"] = config
+    with open(stack_file, "w") as handle:
+        yaml.dump(after, handle, default_flow_style=False, sort_keys=True)
+
+    console.print(
+        f"  [green]✓[/] Carried over {len(carried)} value(s) the generator does not write"
+    )
+    for key in carried:
+        console.print(f"      [dim]{key}[/]")
+    for key in changed:
+        console.print(f"  [yellow]→[/] {key}: {before[key]} becomes {config[key]}")
+
+    rev_after = pinned_rev(pyproject)
+    if rev_after and rev_after != rev_before:
+        console.print(
+            f"  [yellow]→[/] module: {(rev_before or 'unpinned')[:12]} becomes {rev_after[:12]}"
+        )
+    elif rev_after:
+        console.print(f"  [green]✓[/] Module already at {rev_after[:12]}")
+
+    console.print()
+    console.print("  [bold]Apply it when you are ready:[/]")
+    console.print(f"    uv sync --directory {output_dir}")
+    console.print(f"    pulumi -C {output_dir} preview")
+    console.print(f"    pulumi -C {output_dir} up")
+    console.print()
+    return True
+
+
 def run_setup(
     output_dir: str = ".",
     cloud: str | None = None,
@@ -3617,6 +3823,13 @@ if __name__ == "__main__":
         "which ask whether there is room to create what this stack already occupies.",
     )
     parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Rewrite an existing project in --output-dir for this version of the module: "
+        "reads everything from the stack it already has, keeps its credentials, and prints "
+        "the commands to apply the change instead of deploying.",
+    )
+    parser.add_argument(
         "--dev",
         nargs="?",
         const="",
@@ -3634,6 +3847,14 @@ if __name__ == "__main__":
         console.print(f"  [red]✗[/] --dev: {dev_source} is not a pulumi-pinecone-byoc checkout")
         console.print("  [dim]Pass the checkout path explicitly: --dev /path/to/repo[/]")
         sys.exit(1)
+
+    if args.upgrade:
+        upgraded = upgrade_project(
+            args.output_dir,
+            args.stack_name if "--stack-name" in sys.argv else None,
+            dev_source,
+        )
+        sys.exit(0 if upgraded else 1)
 
     success = run_setup(
         args.output_dir,
