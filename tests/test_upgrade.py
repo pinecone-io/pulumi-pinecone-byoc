@@ -243,7 +243,7 @@ def baseline(pytestconfig, baseline_source):
 
 
 @pytest.mark.wizard
-def test_wizard_generates_a_project_that_plans(baseline):
+def test_wizard_generates_a_vanilla_project_that_plans(baseline):
     """Everything the wizard decides, before an hour of deploying tests it.
 
     Preflight refusals, a program that does not import, a stack the generator
