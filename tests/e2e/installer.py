@@ -217,10 +217,20 @@ def capture_failed_deploy(region, limit=20):
     logging.info("[postmortem] %s: what was not ready when the deploy failed", cluster)
     try:
         capture_nodes(kubeconfig, every_seconds=0)
-        for namespace, pod, reason in _not_ready_pods(kubeconfig)[:limit]:
-            capture_unhealthy_pod(kubeconfig, namespace, pod, reason)
     except Exception as exc:  # noqa: BLE001
-        logging.info("[postmortem] snapshot incomplete: %s: %s", type(exc).__name__, exc)
+        logging.info("[postmortem] no node list: %s: %s", type(exc).__name__, exc)
+    try:
+        pods = _not_ready_pods(kubeconfig)[:limit]
+    except Exception as exc:  # noqa: BLE001
+        logging.info("[postmortem] could not list pods: %s: %s", type(exc).__name__, exc)
+        return
+    for namespace, pod, reason in pods:
+        try:
+            capture_unhealthy_pod(kubeconfig, namespace, pod, reason)
+        except Exception as exc:  # noqa: BLE001
+            logging.info(
+                "[postmortem] %s/%s not captured: %s: %s", namespace, pod, type(exc).__name__, exc
+            )
 
 
 def _not_ready_pods(kubeconfig):
@@ -237,10 +247,18 @@ def _not_ready_pods(kubeconfig):
         statuses = status.get("containerStatuses") or []
         if phase == "Running" and statuses and all(c.get("ready") for c in statuses):
             continue
-        waiting = [(c.get("state", {}).get("waiting") or {}).get("reason") for c in statuses]
+        inits = status.get("initContainerStatuses") or []
+        waiting = [
+            (c.get("state", {}).get("waiting") or {}).get("reason") for c in [*inits, *statuses]
+        ]
         reason = next((r for r in waiting if r), None)
         if reason is None and not statuses:
-            reason = UNSCHEDULABLE if phase == "Pending" else phase
+            scheduled = next(
+                (c for c in status.get("conditions") or [] if c.get("type") == "PodScheduled"),
+                {},
+            )
+            unscheduled = phase == "Pending" and scheduled.get("status") != "True"
+            reason = UNSCHEDULABLE if unscheduled else phase
         found.append((meta.get("namespace"), meta.get("name"), reason or "NotReady"))
     return found
 

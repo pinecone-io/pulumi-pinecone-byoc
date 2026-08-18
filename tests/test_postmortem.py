@@ -7,11 +7,15 @@ def _pods(*items):
     return json.dumps({"items": list(items)})
 
 
-def pod(namespace, name, phase, containers=None):
-    return {
-        "metadata": {"namespace": namespace, "name": name},
-        "status": {"phase": phase, **({"containerStatuses": containers} if containers else {})},
-    }
+def pod(namespace, name, phase, containers=None, inits=None, scheduled=None):
+    status = {"phase": phase}
+    if containers:
+        status["containerStatuses"] = containers
+    if inits:
+        status["initContainerStatuses"] = inits
+    if scheduled is not None:
+        status["conditions"] = [{"type": "PodScheduled", "status": scheduled}]
+    return {"metadata": {"namespace": namespace, "name": name}, "status": status}
 
 
 def _listing(monkeypatch, payload):
@@ -94,4 +98,44 @@ def test_a_pod_that_fails_again_is_timed_from_the_second_failure():
     assert installer._due_for_capture(seen, {pull}, now=60) == []
     assert installer._due_for_capture(seen, {pull}, now=60 + installer.CAPTURE_GRACE_SECONDS) == [
         pull
+    ]
+
+
+def test_a_pod_waiting_on_a_node_is_unschedulable(monkeypatch):
+    _listing(
+        monkeypatch, _pods(pod("foundationdb", "fdb-operator-1", "Pending", scheduled="False"))
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("foundationdb", "fdb-operator-1", installer.UNSCHEDULABLE)
+    ]
+
+
+def test_a_scheduled_pod_stuck_in_init_is_not_unschedulable(monkeypatch):
+    _listing(
+        monkeypatch,
+        _pods(pod("pc-control-plane", "pinetools-install-1", "Pending", scheduled="True")),
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("pc-control-plane", "pinetools-install-1", "Pending")
+    ]
+
+
+def test_an_init_container_gives_up_its_reason(monkeypatch):
+    _listing(
+        monkeypatch,
+        _pods(
+            pod(
+                "pc-control-plane",
+                "pinetools-install-2",
+                "Pending",
+                inits=[{"state": {"waiting": {"reason": "ImagePullBackOff"}}}],
+                scheduled="True",
+            )
+        ),
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("pc-control-plane", "pinetools-install-2", "ImagePullBackOff")
     ]
