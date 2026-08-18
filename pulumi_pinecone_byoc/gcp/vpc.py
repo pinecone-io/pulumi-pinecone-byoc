@@ -76,25 +76,6 @@ class VPC(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self.private_ip_range = gcp.compute.GlobalAddress(
-            f"{name}-private-ip-range",
-            name=self._cell_name.apply(lambda cn: f"private-ip-range-{cn}"),
-            project=config.project,
-            network=self.network.id,
-            purpose="VPC_PEERING",
-            address_type="INTERNAL",
-            prefix_length=16,
-            opts=child_opts,
-        )
-
-        self.private_connection = gcp.servicenetworking.Connection(
-            f"{name}-private-connection",
-            network=self.network.id,
-            service="servicenetworking.googleapis.com",
-            reserved_peering_ranges=[self.private_ip_range.name],
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.private_ip_range]),
-        )
-
         self.router = gcp.compute.Router(
             f"{name}-router",
             name=self._cell_name.apply(lambda cn: f"router-{cn}"),
@@ -141,10 +122,6 @@ class VPC(pulumi.ComponentResource):
     @property
     def main_subnet_name(self) -> pulumi.Output[str]:
         return self.main_subnet.name
-
-    @property
-    def private_ip_range_name(self) -> pulumi.Output[str]:
-        return self.private_ip_range.name
 
     @property
     def psc_subnet_id(self) -> pulumi.Output[str]:

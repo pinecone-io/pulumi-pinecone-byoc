@@ -2,7 +2,6 @@
 GCP components for Pinecone BYOC clusters.
 """
 
-from .alloydb import AlloyDB, AlloyDBInstance
 from .cluster import NodePool, PineconeGCPCluster, PineconeGCPClusterArgs
 from .dns import DNS
 from .gcs import GCSBuckets
@@ -21,8 +20,6 @@ __all__ = [
     "GCSBuckets",
     "DNS",
     "InternalLoadBalancer",
-    "AlloyDB",
-    "AlloyDBInstance",
     "K8sAddons",
     "PulumiOperator",
 ]

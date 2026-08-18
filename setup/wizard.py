@@ -2046,7 +2046,6 @@ class GCPPreflightChecker:
 
     def _check_apis_enabled(self):
         required_apis = [
-            "alloydb.googleapis.com",
             "autoscaling.googleapis.com",
             "cloudapis.googleapis.com",
             "cloudkms.googleapis.com",
@@ -2061,7 +2060,6 @@ class GCPPreflightChecker:
             "secretmanager.googleapis.com",
             "servicedirectory.googleapis.com",
             "servicemanagement.googleapis.com",
-            "servicenetworking.googleapis.com",
             "siteverification.googleapis.com",
             "storage.googleapis.com",
         ]
