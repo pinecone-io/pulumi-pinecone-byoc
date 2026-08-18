@@ -2,7 +2,12 @@ import logging
 import os
 
 import pytest
-from e2e.aws import cluster_from_outputs, parent_zone_id, private_dns_verification_state
+from e2e.aws import (
+    assert_delegated,
+    cluster_from_outputs,
+    parent_zone,
+    private_dns_verification_state,
+)
 from e2e.commands import pulumi, pulumi_json
 from e2e.deploy import deployed_project
 from e2e.kube import status_from_cluster, write_kubeconfig
@@ -39,15 +44,16 @@ def their_delegated_zone(request):
     if not domain:
         pytest.skip("no e2e_parent_domain: this shape needs the BYO-DNS test domain")
 
+    zone_id, nameservers = parent_zone(domain)
+    assert_delegated(domain, nameservers)
+
     stack = stack_name("byodns", "zone")
     pulumi("stack", "select", "--create", stack, cwd=PROGRAM_DIR)
     pulumi(
         "config", "set", "aws:region", os.environ["AWS_REGION"], "--stack", stack, cwd=PROGRAM_DIR
     )
     pulumi("config", "set", "domain", domain, "--stack", stack, cwd=PROGRAM_DIR)
-    pulumi(
-        "config", "set", "parent-zone-id", parent_zone_id(domain), "--stack", stack, cwd=PROGRAM_DIR
-    )
+    pulumi("config", "set", "parent-zone-id", zone_id, "--stack", stack, cwd=PROGRAM_DIR)
 
     try:
         pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=PROGRAM_DIR)

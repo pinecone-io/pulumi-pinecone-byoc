@@ -2,6 +2,7 @@ import logging
 import re
 
 import boto3
+import requests
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -97,21 +98,51 @@ def load_balancers_in(vpc_id, region):
     ]
 
 
-def parent_zone_id(domain):
-    """The hosted zone that answers for domain, which no test makes and none destroys.
+def parent_zone(domain):
+    """The zone that answers for domain, and the nameservers it answers on.
 
-    Registering a domain in Route53 creates its hosted zone and points the
-    registrar at it, so there is nothing here to build - only a zone to find. The
-    registration is locked for 60 days and is not refundable, which is reason
-    enough for it to outlive every stack.
+    Made once by the byodns-aws stack of pinecone-db's dns-zones and never here: a
+    zone the cells hang off has to outlive them, and its nameservers have to stay
+    put, because what points at them is a record in a zone we do not own.
     """
-    listed = boto3.client("route53").list_hosted_zones_by_name(DNSName=domain, MaxItems="1")
+    r53 = boto3.client("route53")
+    listed = r53.list_hosted_zones_by_name(DNSName=domain, MaxItems="1")
     for zone in listed["HostedZones"]:
         if zone["Name"].rstrip(".") == domain and not zone["Config"]["PrivateZone"]:
-            return zone["Id"].removeprefix("/hostedzone/")
+            zone_id = zone["Id"].removeprefix("/hostedzone/")
+            return zone_id, r53.get_hosted_zone(Id=zone_id)["DelegationSet"]["NameServers"]
     raise AssertionError(
-        f"no public hosted zone for {domain} in this account. Register it once, by hand, "
-        "and set e2e_parent_domain in pytest.ini to its name"
+        f"no public hosted zone for {domain} in this account. Deploy the byodns-aws stack "
+        "of pinecone-platform/pulumi/dns-zones, and name the zone it makes as "
+        "e2e_parent_domain in pytest.ini"
+    )
+
+
+def assert_delegated(domain, nameservers):
+    """That the internet agrees those nameservers serve domain.
+
+    A zone exists because we made it and resolves because something above it says
+    so, and only the second is worth anything: ACM and PrivateLink each ask a
+    public resolver, an hour and twenty minutes into a deploy. Asking one now costs
+    a second and names the record that is missing.
+    """
+    answer = requests.get(
+        "https://dns.google/resolve", params={"name": domain, "type": "NS"}, timeout=15
+    ).json()
+    served_by = {
+        record["data"].rstrip(".").lower()
+        for record in answer.get("Answer", [])
+        if record.get("type") == 2  # NS
+    }
+    expected = {server.rstrip(".").lower() for server in nameservers}
+    if expected <= served_by:
+        return
+
+    records = "\n".join(f"      {domain}.  NS  {server}." for server in sorted(expected))
+    raise AssertionError(
+        f"{domain} is not delegated: a public resolver says "
+        f"{sorted(served_by) or 'nothing'} serves it, not {sorted(expected)}.\n"
+        f"    Add this in the zone that serves {domain.split('.', 1)[1]}:\n{records}"
     )
 
 
