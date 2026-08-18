@@ -1888,6 +1888,7 @@ cluster = PineconeAWSCluster(
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
         domain=config.get("domain") or "pinecone.io",
+        parent_zone_id=config.get("parent-zone-id"),
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),

@@ -70,6 +70,7 @@ class PineconeAWSClusterArgs:
 
     # dns
     domain: str = "pinecone.io"
+    parent_zone_id: str | None = None
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
@@ -273,6 +274,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             parent_zone_name=f"byoc.{args.domain}",
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
+            parent_zone_id=args.parent_zone_id,
+            pinecone_hosted=args.domain == "pinecone.io",
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 

@@ -212,7 +212,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             cell_name=self._cell_name,
-            domain=args.domain,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
@@ -231,6 +230,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             self._dns.subdomain,
             self._cell_name,
             args.public_access_enabled,
+            domain=args.domain,
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[self._vpc, self._dns, self._gke, self._k8s_addons],

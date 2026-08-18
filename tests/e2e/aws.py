@@ -2,6 +2,7 @@ import logging
 import re
 
 import boto3
+import botocore.exceptions
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -95,3 +96,19 @@ def load_balancers_in(vpc_id, region):
         for lb in page["LoadBalancers"]
         if lb.get("VpcId") == vpc_id
     ]
+
+
+def parent_zone_name(zone_id):
+    """The BYO-DNS parent zone, registered by hand once and outliving every run.
+
+    A registration is locked for 60 days and is not refundable, so no test creates
+    or destroys one; a missing zone is a setup error, not something to repair here.
+    """
+    try:
+        zone = boto3.client("route53").get_hosted_zone(Id=zone_id)["HostedZone"]
+    except botocore.exceptions.ClientError as exc:
+        raise AssertionError(
+            f"parent zone {zone_id} is not in this account: {exc}. "
+            "Register the BYO-DNS test domain once, by hand, and set PINECONE_PARENT_ZONE_ID"
+        ) from exc
+    return zone["Name"].rstrip(".")

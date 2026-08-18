@@ -13,6 +13,8 @@ class DNS(pulumi.ComponentResource):
         parent_zone_name: pulumi.Input[str],
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
+        parent_zone_id: pulumi.Input[str] | None = None,
+        pinecone_hosted: bool = True,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
@@ -34,16 +36,34 @@ class DNS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self.delegation = DnsDelegation(
-            f"{name}-delegation",
-            DnsDelegationArgs(
-                subdomain=subdomain,
-                nameservers=self.zone.name_servers,
-                api_url=api_url,
-                cpgw_api_key=cpgw_api_key,
-            ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
-        )
+        if parent_zone_id is not None:
+            self.delegation = aws.route53.Record(
+                f"{name}-delegation",
+                zone_id=parent_zone_id,
+                name=fqdn,
+                type="NS",
+                records=self.zone.name_servers,
+                ttl=300,
+                allow_overwrite=True,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        elif pinecone_hosted:
+            self.delegation = DnsDelegation(
+                f"{name}-delegation",
+                DnsDelegationArgs(
+                    subdomain=subdomain,
+                    nameservers=self.zone.name_servers,
+                    api_url=api_url,
+                    cpgw_api_key=cpgw_api_key,
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        else:
+            # Their zone, their account: the NS record is theirs to create, and the
+            # certificates below wait on a resolver until they have.
+            self.delegation = None
+
+        delegated = [self.delegation] if self.delegation is not None else []
 
         # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB
@@ -73,7 +93,7 @@ class DNS(pulumi.ComponentResource):
             tags={**tags, "Name": f"{name}-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,  # cert may be in use by ALBs
             ),
         )
@@ -115,7 +135,7 @@ class DNS(pulumi.ComponentResource):
             tags={**tags, "Name": f"{name}-private-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,
             ),
         )

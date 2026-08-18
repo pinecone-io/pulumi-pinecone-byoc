@@ -186,7 +186,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             resource_group_name=self._vnet.resource_group_name,
             subnet_id=self._vnet.aks_subnet_id,
             cell_name=self._cell_name,
-            domain=args.domain,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vnet]),
         )
 
@@ -246,6 +245,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             subdomain=self._dns.subdomain,
             external_ip_address=self._dns.external_ip.ip_address.apply(lambda ip: ip or ""),
             cell_name=self._cell_name,
+            domain=args.domain,
             public_access_enabled=args.public_access_enabled,
             opts=pulumi.ResourceOptions(
                 parent=self,
