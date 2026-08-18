@@ -18,38 +18,21 @@ permissions:
   id-token: write
 
 jobs:
-  aws-vanilla:
+  aws:
+    strategy:
+      # one at a time: the account has quota for one cluster, not two, and a failed
+      # shape must not stop the ones behind it
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        shape: [vanilla, private, byovpc-public, byovpc-private]
     uses: ./.github/workflows/aws.yaml
     with:
-      shape: vanilla
-    secrets: inherit
-
-  aws-private:
-    needs: aws-vanilla
-    if: ${{ !cancelled() }}
-    uses: ./.github/workflows/aws.yaml
-    with:
-      shape: private
-    secrets: inherit
-
-  aws-byovpc:
-    needs: aws-private
-    if: ${{ !cancelled() }}
-    uses: ./.github/workflows/aws.yaml
-    with:
-      shape: byovpc
-    secrets: inherit
-
-  aws-byovpc-private:
-    needs: aws-byovpc
-    if: ${{ !cancelled() }}
-    uses: ./.github/workflows/aws.yaml
-    with:
-      shape: byovpc-private
+      shape: ${{ matrix.shape }}
     secrets: inherit
 
   gcp:
-    needs: aws-byovpc-private
+    needs: aws
     if: ${{ !cancelled() }}
     uses: ./.github/workflows/gcp.yaml
     secrets: inherit
@@ -62,20 +45,15 @@ jobs:
 
   result:
     if: always()
-    needs: [aws-vanilla, aws-private, aws-byovpc, aws-byovpc-private, gcp, azure]
+    needs: [aws, gcp, azure]
     runs-on: ubuntu-latest
     steps:
       - name: Report what ran
         run: |
-          echo "AWS vanilla: ${{ needs.aws-vanilla.result }}"
-          echo "AWS private: ${{ needs.aws-private.result }}"
-          echo "AWS byovpc:  ${{ needs.aws-byovpc.result }}"
-          echo "AWS byovpc-private: ${{ needs.aws-byovpc-private.result }}"
-          echo "GCP:         ${{ needs.gcp.result }}"
-          echo "Azure:       ${{ needs.azure.result }}"
-          for result in "${{ needs.aws-vanilla.result }}" "${{ needs.aws-private.result }}" \
-                        "${{ needs.aws-byovpc.result }}" "${{ needs.aws-byovpc-private.result }}" \
-                        "${{ needs.gcp.result }}" "${{ needs.azure.result }}"; do
+          echo "AWS:   ${{ needs.aws.result }}"
+          echo "GCP:   ${{ needs.gcp.result }}"
+          echo "Azure: ${{ needs.azure.result }}"
+          for result in "${{ needs.aws.result }}" "${{ needs.gcp.result }}" "${{ needs.azure.result }}"; do
             case "$result" in
               failure|cancelled) echo "weekly e2e $result"; exit 1 ;;
             esac

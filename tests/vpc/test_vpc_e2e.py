@@ -78,7 +78,7 @@ def their_vpc(request):
 
 @pytest.fixture(scope="module")
 def byoc_in_their_vpc(request, their_vpc):
-    shape = getattr(request, "param", "byovpc")
+    shape = getattr(request, "param", "byovpc-public")
     stack = stack_name(shape, "byoc")
     public_access = (
         "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
@@ -131,7 +131,7 @@ def byoc_in_their_vpc(request, their_vpc):
             streamer.join(timeout=10)
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc", "byovpc-private"], indirect=True)
+@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc-public", "byovpc-private"], indirect=True)
 def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_in_their_vpc):
     """Their VPC changes the network under the cell, so both ways in are asked separately.
 
@@ -160,7 +160,7 @@ def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_
     assert_never_answers(data_plane_host(fqdn))
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc", "byovpc-private"], indirect=True)
+@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc-public", "byovpc-private"], indirect=True)
 def test_the_module_built_no_vpc_and_no_egress_of_its_own(byoc_in_their_vpc, their_vpc):
     """The cluster is theirs to host: we add subnets, not a network.
 

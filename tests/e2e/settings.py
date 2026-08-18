@@ -114,7 +114,10 @@ def destroy_targets(config):
     stacks = config.getoption("--destroy-stack") or [
         stack_name("vanilla", "byoc"),
         stack_name("private", "byoc"),
+        # byovpc predates the public/private split and may still be up somewhere;
+        # the destroy test skips a stack that is not there, so sweeping it costs nothing
         stack_name("byovpc", "byoc"),
+        stack_name("byovpc-public", "byoc"),
         stack_name("byovpc-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")

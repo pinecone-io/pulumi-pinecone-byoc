@@ -50,10 +50,44 @@ jobs:
               - 'config/__init__.py'
               - '.github/workflows/azure.yaml'
 
+  # a test:e2e: label names a shape, and a PR may ask for more than one. They deploy
+  # into the same account and fight over quota, so they take their turn rather than
+  # racing - and a shape nobody asked for is still the vanilla one.
+  shapes:
+    runs-on: ubuntu-latest
+    outputs:
+      aws: ${{ steps.pick.outputs.shapes }}
+    steps:
+      - id: pick
+        env:
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # the label a shape is asked for by, and the shape it selects: byovpc has
+          # meant the public one since before there was a private one to tell it from
+          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private"}'
+          picked=$(jq -c --argjson labels "$LABELS" \
+            '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | .value]' \
+            <<<"$known")
+          if [ "$picked" = "[]" ]; then picked='["vanilla"]'; fi
+          echo "shapes=$picked" >> "$GITHUB_OUTPUT"
+          echo "running: $picked"
+
   aws:
-    needs: changes
+    needs: [changes, shapes]
     if: needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch'
+    strategy:
+      # one at a time: the account has quota for one cluster, not two. And the
+      # shapes on one PR fail together far more often than not, so the first
+      # failure stops the rest rather than spending an hour re-learning it - a
+      # leg's teardown still runs, because a leg is the whole called workflow and
+      # it is only done once that has
+      max-parallel: 1
+      fail-fast: true
+      matrix:
+        shape: ${{ fromJSON(needs.shapes.outputs.aws) }}
     uses: ./.github/workflows/aws.yaml
+    with:
+      shape: ${{ matrix.shape }}
     secrets: inherit
 
   gcp:
