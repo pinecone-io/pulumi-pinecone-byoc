@@ -61,7 +61,7 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           # label to shape: byovpc named the public one before there was a private one
-          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private"}'
+          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private","byodns":"byodns-public","byodns-private":"byodns-private"}'
           picked=$(jq -c --argjson labels "$LABELS" \
             '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | .value]' \
             <<<"$known")

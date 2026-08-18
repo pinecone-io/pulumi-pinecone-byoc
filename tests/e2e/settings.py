@@ -26,6 +26,11 @@ def add_options(parser):
         "comma-separated AZs the e2e deploy uses",
         default="us-east-2a,us-east-2b",
     )
+    parser.addini(
+        "e2e_parent_domain",
+        "domain the byodns shapes hang their cell off; registered by hand, never destroyed",
+        default="",
+    )
     for ini_key in CONTROL_PLANE_INI:
         parser.addini(ini_key, f"control plane setting passed to the wizard as {ini_key.upper()}")
     parser.addoption(
@@ -74,6 +79,10 @@ def aws_region(config):
     return os.environ.get("AWS_REGION") or config.getini("aws_region")
 
 
+def e2e_parent_domain(config):
+    return os.environ.get("PINECONE_PARENT_DOMAIN") or config.getini("e2e_parent_domain")
+
+
 def e2e_azs(config):
     return os.environ.get("PINECONE_AZS") or config.getini("e2e_azs")
 
@@ -115,6 +124,8 @@ def destroy_targets(config):
         stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
         stack_name("byovpc-private", "byoc"),
+        stack_name("byodns-public", "byoc"),
+        stack_name("byodns-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")
     region = config.getoption("--destroy-region") or aws_region(config)

@@ -2,7 +2,6 @@ import logging
 import re
 
 import boto3
-import botocore.exceptions
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -98,20 +97,22 @@ def load_balancers_in(vpc_id, region):
     ]
 
 
-def parent_zone_name(zone_id):
-    """The BYO-DNS parent zone, registered by hand once and outliving every run.
+def parent_zone_id(domain):
+    """The hosted zone that answers for domain, which no test makes and none destroys.
 
-    A registration is locked for 60 days and is not refundable, so no test creates
-    or destroys one; a missing zone is a setup error, not something to repair here.
+    Registering a domain in Route53 creates its hosted zone and points the
+    registrar at it, so there is nothing here to build - only a zone to find. The
+    registration is locked for 60 days and is not refundable, which is reason
+    enough for it to outlive every stack.
     """
-    try:
-        zone = boto3.client("route53").get_hosted_zone(Id=zone_id)["HostedZone"]
-    except botocore.exceptions.ClientError as exc:
-        raise AssertionError(
-            f"parent zone {zone_id} is not in this account: {exc}. "
-            "Register the BYO-DNS test domain once, by hand, and set PINECONE_PARENT_ZONE_ID"
-        ) from exc
-    return zone["Name"].rstrip(".")
+    listed = boto3.client("route53").list_hosted_zones_by_name(DNSName=domain, MaxItems="1")
+    for zone in listed["HostedZones"]:
+        if zone["Name"].rstrip(".") == domain and not zone["Config"]["PrivateZone"]:
+            return zone["Id"].removeprefix("/hostedzone/")
+    raise AssertionError(
+        f"no public hosted zone for {domain} in this account. Register it once, by hand, "
+        "and set e2e_parent_domain in pytest.ini to its name"
+    )
 
 
 def private_dns_verification_state(fqdn, region):

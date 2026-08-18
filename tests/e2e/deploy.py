@@ -10,7 +10,7 @@ from .stacks import destroy_stack, stack_name
 from .wizard import generate_project, non_interactive_env
 
 
-def deployed_project(request, shape, **answers):
+def deployed_project(request, shape, configure=None, **answers):
     stack = stack_name(shape, "byoc")
     project_dir = generate_project(
         PROJECTS / stack,
@@ -18,6 +18,9 @@ def deployed_project(request, shape, **answers):
         "aws",
         non_interactive_env(request.config, os.environ["AWS_REGION"], stack, **answers),
     )
+
+    if configure is not None:
+        configure(project_dir, stack)
 
     stop_streaming = threading.Event()
     streamer = threading.Thread(
