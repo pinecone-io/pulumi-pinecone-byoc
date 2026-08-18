@@ -24,10 +24,18 @@ import os
 import threading
 
 import pytest
+from e2e.aws import cluster_from_outputs
 from e2e.commands import pulumi, pulumi_json
 from e2e.installer import supervise_pinetools_logs
+from e2e.kube import status_from_cluster, write_kubeconfig
 from e2e.paths import PROJECTS, REPO_ROOT
-from e2e.reachability import assert_data_plane_answers, assert_never_answers, data_plane_host
+from e2e.reachability import (
+    assert_data_plane_answers,
+    assert_never_answers,
+    cell_fqdn,
+    data_plane_host,
+    private_data_plane_host,
+)
 from e2e.settings import e2e_azs, keep_stacks
 from e2e.stacks import destroy_stack, stack_name
 from e2e.wizard import generate_project, non_interactive_env
@@ -72,7 +80,9 @@ def their_vpc(request):
 def byoc_in_their_vpc(request, their_vpc):
     shape = getattr(request, "param", "byovpc")
     stack = stack_name(shape, "byoc")
-    public_access = os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
+    public_access = (
+        "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
+    )
     project_dir = generate_project(
         PROJECTS / stack,
         stack,
@@ -121,20 +131,36 @@ def byoc_in_their_vpc(request, their_vpc):
             streamer.join(timeout=10)
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc"], indirect=True)
+@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc", "byovpc-private"], indirect=True)
 def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_in_their_vpc):
+    """Their VPC changes the network under the cell, so both ways in are asked separately.
+
+    Public mode is reached from the runner. Private mode has no internet-facing load
+    balancer to reach, so it is probed from inside the cluster over the PrivateLink
+    name - the same check the private shape makes in a VPC we built ourselves.
+    """
     project_dir = byoc_in_their_vpc["project_dir"]
+    fqdn = cell_fqdn(project_dir)
 
     if byoc_in_their_vpc["public_access"]:
         assert_data_plane_answers(project_dir)
         return
 
-    environment = pulumi_json("stack", "output", "--json", cwd=project_dir).get("environment")
-    assert environment, "the deploy exported no environment"
-    assert_never_answers(data_plane_host(environment))
+    outputs = pulumi_json("stack", "output", "--json", cwd=project_dir)
+    cluster = cluster_from_outputs(outputs)
+    assert cluster, "the deploy exported no cluster to reach it through"
+    kubeconfig = write_kubeconfig(cluster, os.environ["AWS_REGION"])
+
+    status = status_from_cluster(kubeconfig, f"https://{private_data_plane_host(fqdn)}/")
+    assert status == 200, (
+        f"{private_data_plane_host(fqdn)} answered {status} from inside their VPC, "
+        "so the PrivateLink path is the only way in and it does not serve the cell"
+    )
+
+    assert_never_answers(data_plane_host(fqdn))
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc"], indirect=True)
+@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc", "byovpc-private"], indirect=True)
 def test_the_module_built_no_vpc_and_no_egress_of_its_own(byoc_in_their_vpc, their_vpc):
     """The cluster is theirs to host: we add subnets, not a network.
 

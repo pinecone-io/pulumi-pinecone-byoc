@@ -68,12 +68,22 @@ jobs:
         env:
           PINECONE_API_KEY: ${{ secrets.PINECONE_API_KEY }}
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-        run: >-
-          uv run --extra aws pytest -m e2e -s --keep
-          -k ${{ inputs.shape
-          || (contains(github.event.pull_request.labels.*.name, 'test:e2e:private') && 'private')
-          || (contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc') && 'byovpc')
-          || 'vanilla' }}
+          SHAPE: ${{ inputs.shape
+            || (contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc-private')
+                && 'byovpc-private')
+            || (contains(github.event.pull_request.labels.*.name, 'test:e2e:private') && 'private')
+            || (contains(github.event.pull_request.labels.*.name, 'test:e2e:byovpc') && 'byovpc')
+            || 'vanilla' }}
+        # a shape's name is a substring of another's, so -k on the name alone selects
+        # both and the job deploys two clusters where it was asked for one
+        run: |
+          case "$SHAPE" in
+            byovpc-private) select="byovpc and private" ;;
+            byovpc)         select="byovpc and not private" ;;
+            private)        select="private and not byovpc" ;;
+            *)              select="$SHAPE" ;;
+          esac
+          uv run --extra aws pytest -m e2e -s --keep -k "$select"
 
       - name: Upload run logs
         if: always()
