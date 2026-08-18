@@ -3,7 +3,7 @@
 import pulumi
 import pulumi_kubernetes as k8s
 
-EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system"
+EXTRA_NAMESPACES = "prometheus metering tooling gloo-system kube-system foundationdb"
 
 REGISTRY_CONFIG = {
     "ecr": {

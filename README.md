@@ -77,8 +77,8 @@ Provisioning takes approximately 25-30 minutes.
 │  Observability (DD)  │   traces           │  │                                           ││
 │                      │                    │  └───────────────────────────────────────────┘│
 └──────────────────────┘                    │  ┌──────────┐  ┌───────────┐  ┌─────────────┐ │
-                                            │  │ S3/GCS/  │  |RDS/AlloyDB|  │ Route53/    │ │
-        No customer data                    │  │ AzureBlob│  │/AzurePGSQL|  | CloudDNS/   | │
+                                            │  │ S3/GCS/  │  |FoundationDB│  │ Route53/    │ │
+        No customer data                    │  │ AzureBlob│  │ (in-cluster)|  | CloudDNS/   | │
         leaves the cluster                  │  └──────────┘  └───────────┘  | Azure DNS   | │
                                             │                               └─────────────┘ │
                                             └───────────────────────────────────────────────┘
@@ -141,7 +141,7 @@ The setup wizard creates a Pulumi stack with these configurable options:
 | `region` | AWS region | `us-east-1` |
 | `availability_zones` | AZs for high availability | `["us-east-1a", "us-east-1b"]` |
 | `vpc_cidr` | VPC IP range | `10.0.0.0/16` |
-| `deletion_protection` | Protect RDS/S3 from accidental deletion | `true` |
+| `deletion_protection` | Protect S3 from accidental deletion | `true` |
 | `public_access_enabled` | Enable public endpoint (false = PrivateLink only) | `true` |
 | `tags` | Custom tags to apply to all resources | `{}` |
 
@@ -154,7 +154,7 @@ The setup wizard creates a Pulumi stack with these configurable options:
 | `region` | GCP region | `us-central1` |
 | `availability_zones` | Zones for high availability | `["us-central1-a", "us-central1-b"]` |
 | `vpc_cidr` | VPC IP range | `10.112.0.0/16` |
-| `deletion_protection` | Protect AlloyDB/GCS from accidental deletion | `true` |
+| `deletion_protection` | Protect GCS from accidental deletion | `true` |
 | `public_access_enabled` | Enable public endpoint (false = Private Service Connect only) | `true` |
 | `labels` | Custom labels to apply to all resources | `{}` |
 
@@ -167,7 +167,7 @@ The setup wizard creates a Pulumi stack with these configurable options:
 | `region` | Azure region | `eastus` |
 | `availability_zones` | Zones for high availability | `["1", "2"]` |
 | `vpc_cidr` | VNet IP range | `10.0.0.0/16` |
-| `deletion_protection` | Protect databases/storage from accidental deletion | `true` |
+| `deletion_protection` | Protect storage accounts from accidental deletion | `true` |
 | `public_access_enabled` | Enable public endpoint (false = Private Link only) | `true` |
 | `tags` | Custom tags to apply to all resources | `{}` |
 
@@ -231,7 +231,7 @@ The setup wizard runs preflight checks for cloud quotas. If these fail:
 4. **EKS Clusters** - Request a limit increase
 
 **GCP:**
-1. **APIs** - Enable required APIs (compute, container, alloydb, storage, dns)
+1. **APIs** - Enable required APIs (compute, container, storage, dns)
 2. **Compute Quotas** - Request CPU/disk quota increases via GCP Console
 3. **GKE Clusters** - Request a limit increase if at quota
 4. **IP Addresses** - Release unused static IPs or request more

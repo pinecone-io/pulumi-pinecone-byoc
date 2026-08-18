@@ -3,8 +3,8 @@
 ## Never echo a secret
 
 This module handles live credentials: the customer's Pinecone API key, a cpgw API
-key, a Datadog API key, RDS master passwords, and cloud credentials. The e2e
-harness streams command output to a log file, prints it to stdout, and uploads it
+key, a Datadog API key, and cloud credentials. The e2e harness streams command
+output to a log file, prints it to stdout, and uploads it
 as a CI artifact — and installer pod output is echoed into the GitHub job log,
 which anyone with read access to the repository can download for 90 days.
 
