@@ -387,7 +387,7 @@ class NLB(pulumi.ComponentResource):
         # wait for domain verification before creating VPC endpoint with private DNS
         # AWS verifies the TXT record asynchronously, so we poll until verified
         def wait_for_domain_verification(args) -> str:
-            service_id, service_name, _txt_fqdn = (
+            service_id, service_name, private_dns_name, _txt_fqdn = (
                 args  # _txt_fqdn ensures TXT record is created first
             )
             import boto3
@@ -399,10 +399,12 @@ class NLB(pulumi.ComponentResource):
             if configs:
                 state = configs[0].get("PrivateDnsNameConfiguration", {}).get("State", "")
                 if state == "verified":
-                    pulumi.log.info(f"Private DNS domain already verified for {service_id}")
+                    pulumi.log.info(f"{private_dns_name} already verified for {service_id}")
                     return service_name
 
-            pulumi.log.info("Waiting 60s for DNS propagation before verification...")
+            pulumi.log.info(
+                f"Waiting 60s for {private_dns_name} to propagate before verification..."
+            )
             time.sleep(60)
 
             max_attempts = 30
@@ -419,21 +421,23 @@ class NLB(pulumi.ComponentResource):
                     dns_configs = configs[0].get("PrivateDnsNameConfiguration", {})
                     state = dns_configs.get("State", "")
                     if state == "verified":
-                        pulumi.log.info(f"Private DNS domain verified for {service_id}")
+                        pulumi.log.info(f"{private_dns_name} verified for {service_id}")
                         return service_name
                     elif state == "failed":
-                        raise Exception(f"Private DNS domain verification failed for {service_id}")
+                        raise Exception(f"{private_dns_name} verification failed for {service_id}")
                     pulumi.log.info(
-                        f"Waiting for domain verification ({state})... attempt {attempt + 1}/{max_attempts}"
+                        f"Waiting for {private_dns_name} ({state})... "
+                        f"attempt {attempt + 1}/{max_attempts}"
                     )
                 time.sleep(10)
-            raise Exception(f"Timeout waiting for domain verification for {service_id}")
+            raise Exception(f"Timeout waiting for {private_dns_name} to verify ({service_id})")
 
         # service_name that only resolves after domain verification completes
         # include txt_record.fqdn to ensure TXT record is created before we start waiting
         verified_service_name = pulumi.Output.all(
             self.vpc_endpoint_service.id,
             self.vpc_endpoint_service.service_name,
+            self.vpc_endpoint_service.private_dns_name,
             txt_record.fqdn,
         ).apply(wait_for_domain_verification)
 

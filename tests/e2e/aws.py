@@ -112,3 +112,18 @@ def parent_zone_name(zone_id):
             "Register the BYO-DNS test domain once, by hand, and set PINECONE_PARENT_ZONE_ID"
         ) from exc
     return zone["Name"].rstrip(".")
+
+
+def private_dns_verification_state(fqdn, region):
+    """AWS resolves the PrivateLink ownership TXT out of public DNS to reach this state.
+
+    So a verified name is also proof the cell's zone answers from the root, which
+    under BYO-DNS is a delegation the control plane had no part in.
+    """
+    wanted = f"*.private.{fqdn}"
+    ec2 = boto3.client("ec2", region_name=region)
+    for page in ec2.get_paginator("describe_vpc_endpoint_service_configurations").paginate():
+        for service in page["ServiceConfigurations"]:
+            if service.get("PrivateDnsName") == wanted:
+                return service.get("PrivateDnsNameConfiguration", {}).get("State", "")
+    raise AssertionError(f"no endpoint service in {region} claims {wanted}")

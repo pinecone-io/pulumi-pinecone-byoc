@@ -3,7 +3,7 @@ import os
 import threading
 
 import pytest
-from e2e.aws import parent_zone_name
+from e2e.aws import parent_zone_name, private_dns_verification_state
 from e2e.commands import pulumi
 from e2e.installer import supervise_pinetools_logs
 from e2e.paths import PROJECTS
@@ -73,3 +73,4 @@ def test_e2e_byodns(byodns_project):
     fqdn = cell_fqdn(project_dir)
     assert fqdn.endswith(f".byoc.{domain}"), f"{fqdn} did not land under the domain we asked for"
     assert_answers(data_plane_host(fqdn))
+    assert private_dns_verification_state(fqdn, os.environ["AWS_REGION"]) == "verified"
