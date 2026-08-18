@@ -171,6 +171,7 @@ class BaseSetupWizard:
     DELETION_PROTECTION_DESC: str = ""
     PRIVATE_ACCESS_DESC: str = ""
     METADATA_NAME: str = "tags"
+    COMMAND_PREFIX: str = ""
 
     def __init__(
         self,
@@ -571,7 +572,7 @@ class BaseSetupWizard:
         console.print()
         dir_name = os.path.basename(os.path.abspath(output_dir))
         console.print("  [dim]To deploy, run:[/]")
-        console.print(f"    [bold {BLUE}]pulumi -C {dir_name} up[/]")
+        console.print(f"    [bold {BLUE}]{self.COMMAND_PREFIX}pulumi -C {dir_name} up[/]")
         console.print()
 
 
@@ -1388,6 +1389,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print()
 
         if profile:
+            self.COMMAND_PREFIX = f"AWS_PROFILE={profile} "
             os.environ["AWS_PROFILE"] = profile
             with contextlib.suppress(Exception):
                 boto3.setup_default_session(profile_name=profile)
