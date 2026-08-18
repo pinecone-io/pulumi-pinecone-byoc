@@ -15,6 +15,8 @@ from .aws import find_cluster_for_vpc, list_clusters
 NAMESPACE = "pc-control-plane"
 UNSCHEDULABLE = "Unschedulable"
 
+CAPTURE_GRACE_SECONDS = 120
+
 UNHEALTHY_WAITING = {
     "CrashLoopBackOff",
     "ImagePullBackOff",
@@ -102,6 +104,15 @@ def _unhealthy_pods(kubeconfig):
     return found
 
 
+def _due_for_capture(first_seen, current, now, grace=CAPTURE_GRACE_SECONDS):
+    for key in list(first_seen):
+        if key not in current:
+            del first_seen[key]
+    for key in current:
+        first_seen.setdefault(key, now)
+    return [key for key, since in first_seen.items() if now - since >= grace]
+
+
 def capture_nodes(kubeconfig, every_seconds=300):
     """What the cluster has to place pods on, when something cannot be placed.
 
@@ -112,7 +123,6 @@ def capture_nodes(kubeconfig, every_seconds=300):
     now = time.monotonic()
     if now - _STATUS["nodes_logged"] < every_seconds:
         return
-    _STATUS["nodes_logged"] = now
     listed = _kubectl(
         kubeconfig,
         "get",
@@ -126,6 +136,7 @@ def capture_nodes(kubeconfig, every_seconds=300):
         listed.returncode,
         listed.stdout or listed.stderr or "(nothing)",
     )
+    _STATUS["nodes_logged"] = now
 
 
 def capture_unhealthy_pod(kubeconfig, namespace, pod, reason):
@@ -367,6 +378,7 @@ def stream_pinetools_logs(vpc_id, stop_event, poll_seconds=15):
 
     followed = {}
     captured_unhealthy = set()
+    unhealthy_since = {}
     while not stop_event.is_set():
         try:
             listed = _kubectl(kubeconfig, "get", "pods", "-o", "name")
@@ -384,17 +396,18 @@ def stream_pinetools_logs(vpc_id, stop_event, poll_seconds=15):
             logging.info(f"[pinetools] pod poll retrying: {type(exc).__name__}: {exc}")
 
         try:
-            for namespace, pod, reason in _unhealthy_pods(kubeconfig):
-                # keyed by reason too: a pod that waits for a node it can fit on and
-                # then crashes on start fails twice, and it is the second one that
-                # says why. Keyed by pod alone, the empty Pending capture was the
-                # only one we ever took.
+            current = set(_unhealthy_pods(kubeconfig))
+            due = _due_for_capture(unhealthy_since, current, time.monotonic())
+            # keyed by reason too: a pod that waits for a node it can fit on and then
+            # crashes on start fails twice, and it is the second one that says why.
+            # Keyed by pod alone, the empty Pending capture was the only one we took.
+            for namespace, pod, reason in due:
                 if (namespace, pod, reason) in captured_unhealthy:
                     continue
-                captured_unhealthy.add((namespace, pod, reason))
                 if reason == UNSCHEDULABLE:
                     capture_nodes(kubeconfig)
                 capture_unhealthy_pod(kubeconfig, namespace, pod, reason)
+                captured_unhealthy.add((namespace, pod, reason))
         except Exception as exc:  # noqa: BLE001 - diagnostics must not stop the stream
             logging.info(f"[crashloop] scan retrying: {type(exc).__name__}: {exc}")
 
