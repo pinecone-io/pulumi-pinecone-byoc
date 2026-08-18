@@ -23,7 +23,7 @@ E2E_INSIDE_IT = (("byovpc", "byoc"), ("byovpc-private", "byoc"))
 
 DNS_PROGRAM_DIR = Path(__file__).resolve().parent / "dns" / "program"
 E2E_DELEGATED_ZONE = ("byodns", "zone")
-E2E_UNDER_IT = (("byodns-public", "byoc"), ("byodns-private", "byoc"))
+E2E_UNDER_IT = (("byodns", "byoc"), ("byodns-private", "byoc"))
 
 
 def pytest_generate_tests(metafunc):

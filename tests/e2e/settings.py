@@ -124,7 +124,7 @@ def destroy_targets(config):
         stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
         stack_name("byovpc-private", "byoc"),
-        stack_name("byodns-public", "byoc"),
+        stack_name("byodns", "byoc"),
         stack_name("byodns-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")

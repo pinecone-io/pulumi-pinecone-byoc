@@ -75,6 +75,7 @@ def their_delegated_zone(request):
 @pytest.fixture
 def byodns_project(request, their_delegated_zone):
     shape = getattr(request, "param", "byodns-public")
+    # the selector names the shape; the stack keeps the plainer name, as byovpc does
     domain = their_delegated_zone["domain"]
     public_access = "false" if shape.endswith("private") else "true"
 
@@ -91,7 +92,7 @@ def byodns_project(request, their_delegated_zone):
 
     for project_dir in deployed_project(
         request,
-        shape,
+        shape.removesuffix("-public"),
         configure=delegate_from_the_zone_we_host,
         PINECONE_DOMAIN=domain,
         PINECONE_PUBLIC_ACCESS=public_access,
