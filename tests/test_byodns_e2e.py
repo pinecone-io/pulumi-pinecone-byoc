@@ -1,3 +1,4 @@
+import logging
 import os
 
 import pytest
@@ -5,6 +6,7 @@ from e2e.aws import cluster_from_outputs, parent_zone_id, private_dns_verificati
 from e2e.commands import pulumi, pulumi_json
 from e2e.deploy import deployed_project
 from e2e.kube import status_from_cluster, write_kubeconfig
+from e2e.paths import REPO_ROOT
 from e2e.reachability import (
     assert_answers,
     assert_never_answers,
@@ -12,39 +14,79 @@ from e2e.reachability import (
     data_plane_host,
     private_data_plane_host,
 )
-from e2e.settings import e2e_parent_domain
+from e2e.settings import e2e_parent_domain, keep_stacks
+from e2e.stacks import destroy_stack, stack_name
 
 pytestmark = pytest.mark.e2e
 
+PROGRAM_DIR = REPO_ROOT / "tests" / "dns" / "program"
 
-@pytest.fixture
-def byodns_parent(request):
-    """The domain the cell hangs off, and the zone that already answers for it.
 
-    Named in pytest.ini rather than passed in, because it is a fact about the
-    account the shape runs in and not a choice a run makes. Nothing configured is
-    a reason to skip locally; CI refuses the run instead, since a label asked for
-    the shape and a skip would report a green run that deployed nothing.
+@pytest.fixture(scope="module")
+def their_delegated_zone(request):
+    """The zone a customer delegates to us, and the delegation they make to do it.
+
+    Made here rather than by the module, because that is the shape of the thing: a
+    customer keeps their own zone and hands us one name inside it. A run that let
+    the module write that record would be exercising the other case, where they
+    gave us their zone - and would never find out whether a delegation we do not
+    control resolves.
+
+    Only the registration is set up by hand, being a purchase with a 60-day lock.
+    Everything below it is built and destroyed with the run.
     """
     domain = e2e_parent_domain(request.config)
     if not domain:
         pytest.skip("no e2e_parent_domain: this shape needs the BYO-DNS test domain")
-    return parent_zone_id(domain), domain
+
+    stack = stack_name("byodns", "zone")
+    pulumi("stack", "select", "--create", stack, cwd=PROGRAM_DIR)
+    pulumi(
+        "config", "set", "aws:region", os.environ["AWS_REGION"], "--stack", stack, cwd=PROGRAM_DIR
+    )
+    pulumi("config", "set", "domain", domain, "--stack", stack, cwd=PROGRAM_DIR)
+    pulumi(
+        "config", "set", "parent-zone-id", parent_zone_id(domain), "--stack", stack, cwd=PROGRAM_DIR
+    )
+
+    try:
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=PROGRAM_DIR)
+        outputs = pulumi_json("stack", "output", "--json", "--stack", stack, cwd=PROGRAM_DIR)
+        yield {"zone_id": outputs["zone_id"], "fqdn": outputs["fqdn"], "domain": domain}
+    finally:
+        if keep_stacks(request):
+            logging.info(
+                "leaving delegated zone stack %s up - destroy it with: cd %s && "
+                "pulumi destroy --yes --stack %s",
+                stack,
+                PROGRAM_DIR,
+                stack,
+            )
+        else:
+            destroy_stack(PROGRAM_DIR, stack)
 
 
 @pytest.fixture
-def byodns_project(request, byodns_parent):
+def byodns_project(request, their_delegated_zone):
     shape = getattr(request, "param", "byodns-public")
-    zone_id, domain = byodns_parent
+    domain = their_delegated_zone["domain"]
     public_access = "false" if shape.endswith("private") else "true"
 
-    def delegate_from_their_zone(project_dir, stack):
-        pulumi("config", "set", "parent-zone-id", zone_id, "--stack", stack, cwd=project_dir)
+    def delegate_from_the_zone_we_host(project_dir, stack):
+        pulumi(
+            "config",
+            "set",
+            "parent-zone-id",
+            their_delegated_zone["zone_id"],
+            "--stack",
+            stack,
+            cwd=project_dir,
+        )
 
     for project_dir in deployed_project(
         request,
         shape,
-        configure=delegate_from_their_zone,
+        configure=delegate_from_the_zone_we_host,
         PINECONE_DOMAIN=domain,
         PINECONE_PUBLIC_ACCESS=public_access,
     ):
