@@ -79,7 +79,10 @@ def their_vpc(request):
 @pytest.fixture(scope="module")
 def byoc_in_their_vpc(request, their_vpc):
     shape = getattr(request, "param", "byovpc-public")
-    stack = stack_name(shape, "byoc")
+    # the selector says which shape; the stack keeps the name it has always had, so
+    # a byovpc stack from before the split is still the one this run reuses and
+    # destroys
+    stack = stack_name(shape.removesuffix("-public"), "byoc")
     public_access = (
         "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
     )
