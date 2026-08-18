@@ -1,15 +1,14 @@
 name: Weekly E2E
 
-# A PR pays for one shape on one cloud. Nothing on main covers the rest, so every
-# shape that CI can skip is a shape that only breaks in a customer's account.
+# A PR pays for one shape on one cloud; every shape it skips is one that only
+# breaks in a customer's account.
 on:
   schedule:
     - cron: "0 3 * * 0"
   workflow_dispatch: {}
 
 concurrency:
-  # the same group the PR run uses: these deploy into the same accounts, and two
-  # runs at once fight over quota rather than finishing sooner
+  # the group the PR run uses: same accounts, same quota
   group: byoc-e2e
   cancel-in-progress: false
 
@@ -20,8 +19,7 @@ permissions:
 jobs:
   aws:
     strategy:
-      # one at a time: the account has quota for one cluster, not two, and a failed
-      # shape must not stop the ones behind it
+      # one at a time, and a failed shape must not hide the ones behind it
       max-parallel: 1
       fail-fast: false
       matrix:

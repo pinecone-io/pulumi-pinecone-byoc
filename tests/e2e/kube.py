@@ -9,10 +9,6 @@ from pathlib import Path
 PROBE_IMAGE = "curlimages/curl:8.11.1"
 ATTEMPT = re.compile(r"attempt \d+: (\d{3})")
 
-# curl reports 000 when it never got a response at all: DNS, connect and TLS
-# failures all land there, and every one of them is worth another try while the
-# ingress path is still coming up - as is any status that is not the one that
-# means the cell served the host, which a warming mesh answers for a while
 PROBE_SCRIPT = (
     "for i in $(seq 1 $ATTEMPTS); do "
     'code=$(curl -s -o /dev/null -m 15 -w "%{http_code}" "$URL" || true); '
@@ -69,12 +65,6 @@ def ingresses_in(kubeconfig, namespace):
 
 
 def status_from_cluster(kubeconfig, url, image=PROBE_IMAGE, attempts=20, wait=30, expect=200):
-    """The HTTP status a pod in the cluster gets from url, or None if it never answered.
-
-    Run from inside the cluster on purpose: in private mode there is no
-    internet-facing load balancer, and the only way in is the PrivateLink endpoint
-    that resolves in the VPC.
-    """
     pod = f"pc-e2e-probe-{secrets.token_hex(3)}"
     result = kubectl(
         kubeconfig,

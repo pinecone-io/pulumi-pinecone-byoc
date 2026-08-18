@@ -88,7 +88,6 @@ def vpc_of_cluster(cluster, region):
 
 
 def load_balancers_in(vpc_id, region):
-    """Every load balancer in the VPC, as (name, scheme, type)."""
     elb = boto3.client("elbv2", region_name=region)
     return [
         (lb["LoadBalancerName"], lb.get("Scheme"), lb.get("Type"))

@@ -25,13 +25,6 @@ def private_project(request):
 
 
 def test_e2e_private(private_project):
-    """A cluster with no way in from the internet still serves over PrivateLink.
-
-    Public mode is checked from the runner, over the internet-facing ALB. There is
-    no such ALB here, so the probe runs in the cluster: the endpoint's private DNS
-    only resolves inside the VPC, and reaching it proves the whole private path -
-    endpoint, NLB, internal ALB, gateway-proxy - not just that the pods are up.
-    """
     outputs = pulumi_json("stack", "output", "--json", cwd=private_project)
     fqdn = cell_fqdn(private_project)
     assert outputs.get("vpc_endpoint_service_name"), (

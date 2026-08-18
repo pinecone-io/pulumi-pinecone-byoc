@@ -79,9 +79,6 @@ def their_vpc(request):
 @pytest.fixture(scope="module")
 def byoc_in_their_vpc(request, their_vpc):
     shape = getattr(request, "param", "byovpc-public")
-    # the selector says which shape; the stack keeps the name it has always had, so
-    # a byovpc stack from before the split is still the one this run reuses and
-    # destroys
     stack = stack_name(shape.removesuffix("-public"), "byoc")
     public_access = (
         "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
@@ -136,12 +133,6 @@ def byoc_in_their_vpc(request, their_vpc):
 
 @pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc-public", "byovpc-private"], indirect=True)
 def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_in_their_vpc):
-    """Their VPC changes the network under the cell, so both ways in are asked separately.
-
-    Public mode is reached from the runner. Private mode has no internet-facing load
-    balancer to reach, so it is probed from inside the cluster over the PrivateLink
-    name - the same check the private shape makes in a VPC we built ourselves.
-    """
     project_dir = byoc_in_their_vpc["project_dir"]
     fqdn = cell_fqdn(project_dir)
 

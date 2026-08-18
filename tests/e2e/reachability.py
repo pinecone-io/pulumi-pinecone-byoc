@@ -12,33 +12,16 @@ def data_plane_host(fqdn):
 
 
 def private_data_plane_host(fqdn):
-    """The same data plane, over PrivateLink.
-
-    The private certificate and the endpoint service's private DNS name both sit
-    under .private, so this only resolves from a VPC with an endpoint to the
-    service - which is the whole point of the shape.
-    """
     return f"probe.svc.private.{fqdn}"
 
 
 def cell_fqdn(project_dir):
-    """The zone the cell answers on, as the deploy built it.
-
-    Reassembling it from the environment name and a literal suffix is how
-    private-ingress.{subdomain}.pinecone.io came to name a host in nobody's zone.
-    """
     fqdn = pulumi_json("stack", "output", "--json", cwd=project_dir).get("cell_fqdn")
     assert fqdn, "the deploy exported no cell_fqdn"
     return fqdn
 
 
 def assert_answers(host, timeout_seconds=900, poll_seconds=15, expect=200):
-    """Answering is the cell serving the host, not merely terminating TLS on it.
-
-    A name that resolves and a listener that completes a handshake prove the DNS
-    and the certificate. Whether anything behind them knows the host is the part a
-    404 from the mesh would otherwise pass off as reachable.
-    """
     deadline = time.time() + timeout_seconds
     last = ""
     while time.time() < deadline:
