@@ -99,12 +99,6 @@ def load_balancers_in(vpc_id, region):
 
 
 def parent_zone(domain):
-    """The zone that answers for domain, and the nameservers it answers on.
-
-    Made once by the byodns-aws stack of pinecone-db's dns-zones and never here: a
-    zone the cells hang off has to outlive them, and its nameservers have to stay
-    put, because what points at them is a record in a zone we do not own.
-    """
     r53 = boto3.client("route53")
     listed = r53.list_hosted_zones_by_name(DNSName=domain, MaxItems="1")
     for zone in listed["HostedZones"]:
@@ -119,13 +113,6 @@ def parent_zone(domain):
 
 
 def assert_delegated(domain, nameservers):
-    """That the internet agrees those nameservers serve domain.
-
-    A zone exists because we made it and resolves because something above it says
-    so, and only the second is worth anything: ACM and PrivateLink each ask a
-    public resolver, an hour and twenty minutes into a deploy. Asking one now costs
-    a second and names the record that is missing.
-    """
     answer = requests.get(
         "https://dns.google/resolve", params={"name": domain, "type": "NS"}, timeout=15
     ).json()
@@ -147,11 +134,6 @@ def assert_delegated(domain, nameservers):
 
 
 def private_dns_verification_state(fqdn, region):
-    """AWS resolves the PrivateLink ownership TXT out of public DNS to reach this state.
-
-    So a verified name is also proof the cell's zone answers from the root, which
-    under BYO-DNS is a delegation the control plane had no part in.
-    """
     wanted = f"*.private.{fqdn}"
     ec2 = boto3.client("ec2", region_name=region)
     for page in ec2.get_paginator("describe_vpc_endpoint_service_configurations").paginate():

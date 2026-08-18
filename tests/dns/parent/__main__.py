@@ -1,23 +1,12 @@
-"""The zone that stands in for a customer's own, and outlives every run.
-
-Everything below this is made and destroyed with a run: the zone we host for them,
-the cell's zone, its records and certificates. This one is not. What makes it
-resolve is an NS record in pinecone.io, and pinecone.io is not in this account -
-so that record is written by hand, once, and stays right for exactly as long as
-this zone keeps the nameservers it was given. Destroying it would leave a record
-in a zone we do not own pointing at nameservers that answer for nobody, which is
-the shape of a subdomain takeover, so the zone is protected.
+"""Run by hand, once. Nothing destroys this zone: the record that points at it
+lives in a zone we do not own.
 
     pulumi -C tests/dns/parent stack init pinecone/byodns-parent
     pulumi -C tests/dns/parent config set aws:region us-east-2 --stack pinecone/byodns-parent
     pulumi -C tests/dns/parent config set aws:profile byoc-ci --stack pinecone/byodns-parent
-    pulumi -C tests/dns/parent config set domain byodns-ci.pinecone.io --stack pinecone/byodns-parent
+    pulumi -C tests/dns/parent config set domain dns.byoc.pinecone.io --stack pinecone/byodns-parent
     pulumi -C tests/dns/parent up --stack pinecone/byodns-parent
     pulumi -C tests/dns/parent stack output delegation --stack pinecone/byodns-parent
-
-The last of those prints the record to add. Until it is added the zone answers to
-nobody, and the byodns shapes refuse to deploy rather than find out an hour later
-inside ACM.
 """
 
 import pulumi
@@ -26,8 +15,6 @@ import pulumi_aws as aws
 config = pulumi.Config()
 domain = config.require("domain")
 
-# what the module's private certificate spends before this name starts, and ACM
-# will not issue a certificate whose first domain name is longer than 64
 BUDGET = 64 - len("*.svc.private.ci-aws-us-east-2-b3a7.byoc.")
 if len(domain) > BUDGET:
     raise ValueError(

@@ -104,12 +104,6 @@ def test_the_e2e_leaves_no_stand_in_vpc_behind():
 
 
 def test_the_delegated_zone_goes_last():
-    """The zone the cells hang off outlives them, and only just.
-
-    Destroying it first would strand every cell zone below it: the NS record that
-    made them reachable lives here, and ACM and PrivateLink both resolve through
-    it while a cell is being torn down.
-    """
     for under_it in E2E_UNDER_IT:
         cell = stack_name(*under_it)
         assert find_stack(cell) is None, f"{cell} still resolves through this zone - it goes first"

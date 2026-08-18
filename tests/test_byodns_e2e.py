@@ -29,17 +29,6 @@ PROGRAM_DIR = REPO_ROOT / "tests" / "dns" / "program"
 
 @pytest.fixture(scope="module")
 def their_delegated_zone(request):
-    """The zone a customer delegates to us, and the delegation they make to do it.
-
-    Made here rather than by the module, because that is the shape of the thing: a
-    customer keeps their own zone and hands us one name inside it. A run that let
-    the module write that record would be exercising the other case, where they
-    gave us their zone - and would never find out whether a delegation we do not
-    control resolves.
-
-    Only the registration is set up by hand, being a purchase with a 60-day lock.
-    Everything below it is built and destroyed with the run.
-    """
     domain = e2e_parent_domain(request.config)
     if not domain:
         pytest.skip("no e2e_parent_domain: this shape needs the BYO-DNS test domain")
@@ -75,7 +64,6 @@ def their_delegated_zone(request):
 @pytest.fixture
 def byodns_project(request, their_delegated_zone):
     shape = getattr(request, "param", "byodns-public")
-    # the selector names the shape; the stack keeps the plainer name, as byovpc does
     domain = their_delegated_zone["domain"]
     public_access = "false" if shape.endswith("private") else "true"
 
@@ -106,15 +94,6 @@ def byodns_project(request, their_delegated_zone):
 
 @pytest.mark.parametrize("byodns_project", ["byodns-public", "byodns-private"], indirect=True)
 def test_e2e_byodns(byodns_project):
-    """A cell whose zone Pinecone does not host still answers on it, both ways in.
-
-    Every check resolves the cell's own zone rather than asking the control plane
-    where the data plane lives, so the shape holds before a control plane that
-    reads a claimed zone has deployed. The PrivateLink name is the strongest of
-    them: AWS resolves its ownership record out of public DNS before it will
-    attach the name, so a verified one is proof the delegation answers from the
-    root - which is the part of BYO-DNS nothing else here can prove.
-    """
     project_dir, domain = byodns_project["project_dir"], byodns_project["domain"]
     region = os.environ["AWS_REGION"]
 

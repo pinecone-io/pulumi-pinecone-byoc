@@ -61,11 +61,6 @@ def dns(parent_zone_id=None, domain="pinecone.io"):
 )
 @pulumi.runtime.test
 def test_who_writes_the_delegation(parent_zone_id, domain, asks_control_plane, writes_ns_into):
-    """The control plane holds one parent zone and refuses to delegate any other.
-
-    So a cell under a customer's zone must never reach for it - either the module can
-    write the NS record itself, or the customer does and nothing here should try.
-    """
     engine, component = dns(parent_zone_id=parent_zone_id, domain=domain)
 
     def check(_arns):

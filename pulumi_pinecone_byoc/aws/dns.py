@@ -59,8 +59,6 @@ class DNS(pulumi.ComponentResource):
                 opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
             )
         else:
-            # Their zone, their account: the NS record is theirs to create, and the
-            # certificates below wait on a resolver until they have.
             self.delegation = None
 
         delegated = [self.delegation] if self.delegation is not None else []
