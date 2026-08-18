@@ -21,7 +21,9 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-94a9e90"
+PINECONE_VERSION = "main-e59b176"
+
+ZONES_OFFERED = 2
 
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
@@ -245,7 +247,15 @@ class BaseSetupWizard:
             saved = self._state.get(key)
             if saved and not all(z.strip() in available for z in saved.split(",")):
                 self._state.unset(key)
-        return ",".join(available[:2])
+        return ",".join(available[:ZONES_OFFERED])
+
+    def _prompt_zones(self, message: str, available: list[str]) -> list[str]:
+        answer = self._prompt(
+            message,
+            self._zone_default("PINECONE_AZS", available),
+            key="PINECONE_AZS",
+        )
+        return [z.strip() for z in answer.split(",") if z.strip()]
 
     def _maybe_resume(self, output_dir: str) -> None:
         """Load prior answers and, if present, offer to resume."""
@@ -1175,7 +1185,13 @@ class AWSPreflightChecker:
 
     def _check_instance_types(self):
         # check all instance types needed for the cluster
-        instance_types = ["m6idn.large", "i7ie.large", "m6idn.xlarge", "r6in.large"]
+        instance_types = [
+            "m6idn.large",
+            "i7ie.large",
+            "m6idn.xlarge",
+            "r6in.large",
+            "r6i.large",
+        ]
         all_available = True
         unavailable = []
 
@@ -1294,7 +1310,7 @@ class AWSSetupWizard(BaseSetupWizard):
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/20"
     CIDR_DESC = "The IP range for your VPC (a /16 to /20 from an RFC 1918 private range, currently supported down to /20, must not conflict with existing VPCs)"
-    DELETION_PROTECTION_DESC = "Protect RDS databases and S3 buckets from accidental deletion"
+    DELETION_PROTECTION_DESC = "Protect S3 buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
     CLOUD_NAME = "AWS"
@@ -1686,13 +1702,7 @@ class AWSSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        azs_input = self._prompt(
-            "Enter AZs (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        azs = [az.strip() for az in azs_input.split(",")]
-        return azs
+        return self._prompt_zones("Enter AZs (comma-separated)", available)
 
     def _get_custom_ami_id(self) -> str | None:
         console.print()
@@ -1711,12 +1721,8 @@ class AWSSetupWizard(BaseSetupWizard):
     def _get_kms_key_arn(self) -> str | None:
         console.print()
         console.print(f"  {self._step('KMS Key (Optional)')}")
-        console.print(
-            "  [dim]Provide a KMS key ARN to encrypt S3 buckets and RDS with your own key.[/]"
-        )
-        console.print(
-            "  [dim]Leave blank to use default AWS-managed encryption (AES256/default RDS key).[/]"
-        )
+        console.print("  [dim]Provide a KMS key ARN to encrypt S3 buckets with your own key.[/]")
+        console.print("  [dim]Leave blank to use default AWS-managed encryption (AES256).[/]")
         console.print()
         arn = self._prompt(
             "Enter KMS key ARN (or press Enter to skip)",
@@ -2292,7 +2298,7 @@ class GCPSetupWizard(BaseSetupWizard):
     HEADER_TITLE = "Pinecone BYOC Setup Wizard - GCP"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC on GCP."
     DEFAULT_CIDR = "10.112.0.0/16"
-    DELETION_PROTECTION_DESC = "Protect AlloyDB databases and GCS buckets from accidental deletion"
+    DELETION_PROTECTION_DESC = "Protect GCS buckets from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Private Service Connect (more secure)"
     METADATA_NAME = "labels"
     CLOUD_NAME = "GCP"
@@ -2442,13 +2448,7 @@ class GCPSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        zones_input = self._prompt(
-            "Enter zones (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        zones = [zone.strip() for zone in zones_input.split(",")]
-        return zones
+        return self._prompt_zones("Enter zones (comma-separated)", available)
 
     def _run_preflight_checks(
         self, project_id: str, region: str, zones: list[str], cidr: str
@@ -3123,9 +3123,7 @@ class AzureSetupWizard(BaseSetupWizard):
         "This wizard will set up everything you need to deploy Pinecone BYOC on Azure."
     )
     DEFAULT_CIDR = "10.0.0.0/16"
-    DELETION_PROTECTION_DESC = (
-        "Protect PostgreSQL databases and storage accounts from accidental deletion"
-    )
+    DELETION_PROTECTION_DESC = "Protect storage accounts from accidental deletion"
     PRIVATE_ACCESS_DESC = "Private access requires Azure Private Link (more secure)"
     METADATA_NAME = "tags"
     CLOUD_NAME = "Azure"
@@ -3283,13 +3281,7 @@ class AzureSetupWizard(BaseSetupWizard):
 
         console.print(f"  [dim]Available in {region}:[/] {', '.join(available)}")
 
-        zones_input = self._prompt(
-            "Enter zones (comma-separated)",
-            self._zone_default("PINECONE_AZS", available),
-            key="PINECONE_AZS",
-        )
-        zones = [zone.strip() for zone in zones_input.split(",")]
-        return zones
+        return self._prompt_zones("Enter zones (comma-separated)", available)
 
     def _run_preflight_checks(
         self, subscription_id: str, region: str, zones: list[str], cidr: str

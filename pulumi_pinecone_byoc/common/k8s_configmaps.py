@@ -9,6 +9,8 @@ import json
 import pulumi
 import pulumi_kubernetes as k8s
 
+DATA_PLANE_BACKEND = "fdb"
+
 
 class K8sConfigMaps(pulumi.ComponentResource):
     def __init__(
@@ -58,6 +60,7 @@ class K8sConfigMaps(pulumi.ComponentResource):
                 "public_access_enabled": pulumi.Output.from_input(public_access_enabled).apply(
                     lambda v: str(v)
                 ),
+                "data_plane_backend": DATA_PLANE_BACKEND,
             },
             opts=pulumi.ResourceOptions(
                 parent=self,
@@ -82,7 +85,13 @@ class K8sConfigMaps(pulumi.ComponentResource):
         )
 
         outputs_json = pulumi.Output.all(
-            **{k: pulumi.Output.from_input(v) for k, v in pulumi_outputs.items()}
+            **{
+                k: pulumi.Output.from_input(v)
+                for k, v in {
+                    **pulumi_outputs,
+                    "data_plane_backend": DATA_PLANE_BACKEND,
+                }.items()
+            }
         ).apply(
             lambda outputs: json.dumps({k: v for k, v in dict(outputs).items() if v is not None})
         )

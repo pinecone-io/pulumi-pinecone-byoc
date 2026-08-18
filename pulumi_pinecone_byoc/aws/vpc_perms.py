@@ -95,7 +95,7 @@ def explain(config: AWSConfig, vpc_id: str, denied: list[str]) -> str:
         "A policy conditioned on tags this deploy does not carry reads as a refusal "
         f"here too, and the tags asked for were {sorted(config.tags())}. "
         f"Neither refused nor allowed, having no dry run: {', '.join(NO_DRY_RUN)}, "
-        "along with the EKS, load balancer and RDS calls that come after the network."
+        "along with the EKS and load balancer calls that come after the network."
     )
 
 
