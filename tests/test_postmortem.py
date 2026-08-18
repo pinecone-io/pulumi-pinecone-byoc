@@ -65,3 +65,33 @@ def test_a_running_pod_that_never_went_ready_is_reported(monkeypatch):
     _listing(monkeypatch, _pods(pod("pc-admin", "admin-2", "Running", [{"ready": False}])))
 
     assert installer._not_ready_pods("kubeconfig") == [("pc-admin", "admin-2", "NotReady")]
+
+
+def test_a_reason_that_clears_inside_the_grace_is_never_captured():
+    seen = {}
+    pull = ("monitoring", "otel-collector-ingress-1", "ErrImagePull")
+
+    assert installer._due_for_capture(seen, {pull}, now=0) == []
+    assert installer._due_for_capture(seen, set(), now=20) == []
+    assert seen == {}
+
+
+def test_a_reason_that_outlives_the_grace_is_captured_once_it_has():
+    seen = {}
+    crash = ("pc-poolsnapper", "poolsnapper-1", "CrashLoopBackOff")
+
+    assert installer._due_for_capture(seen, {crash}, now=0) == []
+    assert installer._due_for_capture(seen, {crash}, now=installer.CAPTURE_GRACE_SECONDS) == [crash]
+
+
+def test_a_pod_that_fails_again_is_timed_from_the_second_failure():
+    seen = {}
+    pull = ("pc-query-routers", "query-router-1", "ImagePullBackOff")
+
+    installer._due_for_capture(seen, {pull}, now=0)
+    installer._due_for_capture(seen, set(), now=30)
+
+    assert installer._due_for_capture(seen, {pull}, now=60) == []
+    assert installer._due_for_capture(seen, {pull}, now=60 + installer.CAPTURE_GRACE_SECONDS) == [
+        pull
+    ]
