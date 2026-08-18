@@ -114,12 +114,6 @@ def _due_for_capture(first_seen, current, now, grace=CAPTURE_GRACE_SECONDS):
 
 
 def capture_nodes(kubeconfig, every_seconds=300):
-    """What the cluster has to place pods on, when something cannot be placed.
-
-    A pod pending on a node selector is either waiting for the group to scale or
-    asking for a group that does not exist, and the two read identically from the
-    pod alone. Rate limited: a scale-up leaves many pods pending at once.
-    """
     now = time.monotonic()
     if now - _STATUS["nodes_logged"] < every_seconds:
         return
@@ -194,13 +188,6 @@ def capture_unhealthy_pod(kubeconfig, namespace, pod, reason):
 
 
 def capture_failed_deploy(region, limit=20):
-    """Every pod that is not ready, at the moment the deploy gave up.
-
-    The install job fails by deadline, and its own log only names the workloads it
-    was still waiting for. Why each one is unhealthy lives in that pod, and the
-    teardown that follows takes the cluster with it - so this is the last chance
-    to ask, and the first place to look at a failed run.
-    """
     cluster = _STATUS["cluster"]
     if cluster is None:
         logging.info("[postmortem] no cluster was ever found - nothing to snapshot")
@@ -223,17 +210,27 @@ def capture_failed_deploy(region, limit=20):
             text=True,
             check=True,
         )
-    except Exception as exc:  # noqa: BLE001 - a postmortem must not replace the failure
+    except Exception as exc:  # noqa: BLE001
         logging.info("[postmortem] could not reach %s: %s: %s", cluster, type(exc).__name__, exc)
         return
 
     logging.info("[postmortem] %s: what was not ready when the deploy failed", cluster)
     try:
         capture_nodes(kubeconfig, every_seconds=0)
-        for namespace, pod, reason in _not_ready_pods(kubeconfig)[:limit]:
+    except Exception as exc:  # noqa: BLE001
+        logging.info("[postmortem] no node list: %s: %s", type(exc).__name__, exc)
+    try:
+        pods = _not_ready_pods(kubeconfig)[:limit]
+    except Exception as exc:  # noqa: BLE001
+        logging.info("[postmortem] could not list pods: %s: %s", type(exc).__name__, exc)
+        return
+    for namespace, pod, reason in pods:
+        try:
             capture_unhealthy_pod(kubeconfig, namespace, pod, reason)
-    except Exception as exc:  # noqa: BLE001 - same
-        logging.info("[postmortem] snapshot incomplete: %s: %s", type(exc).__name__, exc)
+        except Exception as exc:  # noqa: BLE001
+            logging.info(
+                "[postmortem] %s/%s not captured: %s: %s", namespace, pod, type(exc).__name__, exc
+            )
 
 
 def _not_ready_pods(kubeconfig):
@@ -250,10 +247,18 @@ def _not_ready_pods(kubeconfig):
         statuses = status.get("containerStatuses") or []
         if phase == "Running" and statuses and all(c.get("ready") for c in statuses):
             continue
-        waiting = [(c.get("state", {}).get("waiting") or {}).get("reason") for c in statuses]
+        inits = status.get("initContainerStatuses") or []
+        waiting = [
+            (c.get("state", {}).get("waiting") or {}).get("reason") for c in [*inits, *statuses]
+        ]
         reason = next((r for r in waiting if r), None)
         if reason is None and not statuses:
-            reason = UNSCHEDULABLE if phase == "Pending" else phase
+            scheduled = next(
+                (c for c in status.get("conditions") or [] if c.get("type") == "PodScheduled"),
+                {},
+            )
+            unscheduled = phase == "Pending" and scheduled.get("status") != "True"
+            reason = UNSCHEDULABLE if unscheduled else phase
         found.append((meta.get("namespace"), meta.get("name"), reason or "NotReady"))
     return found
 
@@ -398,9 +403,6 @@ def stream_pinetools_logs(vpc_id, stop_event, poll_seconds=15):
         try:
             current = set(_unhealthy_pods(kubeconfig))
             due = _due_for_capture(unhealthy_since, current, time.monotonic())
-            # keyed by reason too: a pod that waits for a node it can fit on and then
-            # crashes on start fails twice, and it is the second one that says why.
-            # Keyed by pod alone, the empty Pending capture was the only one we took.
             for namespace, pod, reason in due:
                 if (namespace, pod, reason) in captured_unhealthy:
                     continue

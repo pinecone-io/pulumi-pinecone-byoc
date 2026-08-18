@@ -1,9 +1,3 @@
-"""What the snapshot taken at a failed deploy considers worth asking about.
-
-The bug this covers cost a whole run: a pod was captured once, while it was still
-Pending, and the crash it hit ten minutes later was never recorded.
-"""
-
 import json
 
 from e2e import installer
@@ -13,11 +7,15 @@ def _pods(*items):
     return json.dumps({"items": list(items)})
 
 
-def pod(namespace, name, phase, containers=None):
-    return {
-        "metadata": {"namespace": namespace, "name": name},
-        "status": {"phase": phase, **({"containerStatuses": containers} if containers else {})},
-    }
+def pod(namespace, name, phase, containers=None, inits=None, scheduled=None):
+    status = {"phase": phase}
+    if containers:
+        status["containerStatuses"] = containers
+    if inits:
+        status["initContainerStatuses"] = inits
+    if scheduled is not None:
+        status["conditions"] = [{"type": "PodScheduled", "status": scheduled}]
+    return {"metadata": {"namespace": namespace, "name": name}, "status": status}
 
 
 def _listing(monkeypatch, payload):
@@ -68,8 +66,6 @@ def test_a_finished_job_pod_is_not_a_failure(monkeypatch):
 
 
 def test_a_running_pod_that_never_went_ready_is_reported(monkeypatch):
-    """No waiting reason and no restarts: a failing readiness probe looks like this,
-    and it is one of the shapes that leaves the install job waiting to its deadline."""
     _listing(monkeypatch, _pods(pod("pc-admin", "admin-2", "Running", [{"ready": False}])))
 
     assert installer._not_ready_pods("kubeconfig") == [("pc-admin", "admin-2", "NotReady")]
@@ -102,4 +98,44 @@ def test_a_pod_that_fails_again_is_timed_from_the_second_failure():
     assert installer._due_for_capture(seen, {pull}, now=60) == []
     assert installer._due_for_capture(seen, {pull}, now=60 + installer.CAPTURE_GRACE_SECONDS) == [
         pull
+    ]
+
+
+def test_a_pod_waiting_on_a_node_is_unschedulable(monkeypatch):
+    _listing(
+        monkeypatch, _pods(pod("foundationdb", "fdb-operator-1", "Pending", scheduled="False"))
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("foundationdb", "fdb-operator-1", installer.UNSCHEDULABLE)
+    ]
+
+
+def test_a_scheduled_pod_stuck_in_init_is_not_unschedulable(monkeypatch):
+    _listing(
+        monkeypatch,
+        _pods(pod("pc-control-plane", "pinetools-install-1", "Pending", scheduled="True")),
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("pc-control-plane", "pinetools-install-1", "Pending")
+    ]
+
+
+def test_an_init_container_gives_up_its_reason(monkeypatch):
+    _listing(
+        monkeypatch,
+        _pods(
+            pod(
+                "pc-control-plane",
+                "pinetools-install-2",
+                "Pending",
+                inits=[{"state": {"waiting": {"reason": "ImagePullBackOff"}}}],
+                scheduled="True",
+            )
+        ),
+    )
+
+    assert installer._not_ready_pods("kubeconfig") == [
+        ("pc-control-plane", "pinetools-install-2", "ImagePullBackOff")
     ]
