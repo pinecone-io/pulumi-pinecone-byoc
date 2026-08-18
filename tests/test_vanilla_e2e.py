@@ -1,7 +1,6 @@
 import pytest
-from e2e.commands import pulumi_json
 from e2e.deploy import deployed_project
-from e2e.reachability import assert_answers, data_plane_host
+from e2e.reachability import assert_answers, cell_fqdn, data_plane_host
 
 pytestmark = pytest.mark.e2e
 
@@ -12,6 +11,4 @@ def vanilla_project(request):
 
 
 def test_e2e_vanilla(vanilla_project):
-    environment = pulumi_json("stack", "output", "--json", cwd=vanilla_project).get("environment")
-    assert environment, "the deploy exported no environment"
-    assert_answers(data_plane_host(environment))
+    assert_answers(data_plane_host(cell_fqdn(vanilla_project)))

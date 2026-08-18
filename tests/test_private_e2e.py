@@ -6,7 +6,12 @@ from e2e.aws import cluster_from_outputs, load_balancers_in, vpc_of_cluster
 from e2e.commands import pulumi_json
 from e2e.deploy import deployed_project
 from e2e.kube import ingresses_in, status_from_cluster, write_kubeconfig
-from e2e.reachability import assert_never_answers, data_plane_host, private_data_plane_host
+from e2e.reachability import (
+    assert_never_answers,
+    cell_fqdn,
+    data_plane_host,
+    private_data_plane_host,
+)
 
 pytestmark = pytest.mark.e2e
 
@@ -28,8 +33,7 @@ def test_e2e_private(private_project):
     endpoint, NLB, internal ALB, gateway-proxy - not just that the pods are up.
     """
     outputs = pulumi_json("stack", "output", "--json", cwd=private_project)
-    environment = outputs.get("environment")
-    assert environment, "the deploy exported no environment"
+    fqdn = cell_fqdn(private_project)
     assert outputs.get("vpc_endpoint_service_name"), (
         "a private deploy exports the endpoint service consumers connect to; "
         "without it there is nothing for them to point a VPC endpoint at"
@@ -56,10 +60,10 @@ def test_e2e_private(private_project):
         f"nothing in this VPC may face the internet: {balancers}"
     )
 
-    status = status_from_cluster(kubeconfig, f"https://{private_data_plane_host(environment)}/")
-    assert status is not None, (
-        f"{private_data_plane_host(environment)} never answered from inside the cluster, "
-        "so the PrivateLink path is the only way in and it does not work"
+    status = status_from_cluster(kubeconfig, f"https://{private_data_plane_host(fqdn)}/")
+    assert status == 200, (
+        f"{private_data_plane_host(fqdn)} answered {status} from inside the cluster, "
+        "so the PrivateLink path is the only way in and it does not serve the cell"
     )
 
-    assert_never_answers(data_plane_host(environment))
+    assert_never_answers(data_plane_host(fqdn))

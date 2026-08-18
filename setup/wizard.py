@@ -1838,6 +1838,7 @@ update_kubeconfig_command = cluster.name.apply(
     lambda name: f"aws eks update-kubeconfig --region {config.require('region')} --name {name}"
 )
 pulumi.export("environment", cluster.environment_name)
+pulumi.export("cell_fqdn", cluster.cell_fqdn)
 pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
 if config.get_bool("public-access-enabled") is False:
     pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)

@@ -11,12 +11,13 @@ ATTEMPT = re.compile(r"attempt \d+: (\d{3})")
 
 # curl reports 000 when it never got a response at all: DNS, connect and TLS
 # failures all land there, and every one of them is worth another try while the
-# ingress path is still coming up
+# ingress path is still coming up - as is any status that is not the one that
+# means the cell served the host, which a warming mesh answers for a while
 PROBE_SCRIPT = (
     "for i in $(seq 1 $ATTEMPTS); do "
     'code=$(curl -s -o /dev/null -m 15 -w "%{http_code}" "$URL" || true); '
     'echo "attempt $i: $code"; '
-    'if [ "$code" != "000" ]; then exit 0; fi; '
+    'if [ "$code" = "$EXPECT" ]; then exit 0; fi; '
     "sleep $WAIT; done; exit 1"
 )
 
@@ -67,7 +68,7 @@ def ingresses_in(kubeconfig, namespace):
     return {i["metadata"]["name"]: i["metadata"].get("annotations", {}) for i in items}
 
 
-def status_from_cluster(kubeconfig, url, image=PROBE_IMAGE, attempts=20, wait=30):
+def status_from_cluster(kubeconfig, url, image=PROBE_IMAGE, attempts=20, wait=30, expect=200):
     """The HTTP status a pod in the cluster gets from url, or None if it never answered.
 
     Run from inside the cluster on purpose: in private mode there is no
@@ -87,6 +88,7 @@ def status_from_cluster(kubeconfig, url, image=PROBE_IMAGE, attempts=20, wait=30
         f"--env=URL={url}",
         f"--env=ATTEMPTS={attempts}",
         f"--env=WAIT={wait}",
+        f"--env=EXPECT={expect}",
         "--command",
         "--",
         "sh",
