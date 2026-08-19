@@ -192,14 +192,23 @@ def create_environment(
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}") from e
 
-    # An older control plane ignores an unknown field, creates the cell on the default
-    # zone and still answers 200. Left unchecked the installer would go on to serve the
-    # cell under the customer's zone while every advertised host names ours.
-    if domain is not None and environment.domain != domain:
-        raise PineconeApiError(
-            500,
-            f"control plane recorded domain {environment.domain!r}, expected {domain!r}",
-        )
+    if domain is not None:
+        # A control plane that knows the field answers with it. One that does not
+        # ignores it, creates the cell on the default zone and still answers 200 -
+        # so the cell would serve under the customer's zone while every host the
+        # control plane advertises named ours.
+        if not isinstance(resp, dict) or "domain" not in resp:
+            pulumi.log.warn(
+                f"this control plane does not record a domain, so it will advertise "
+                f"hosts under pinecone.io while the cell answers on {domain}. The cell "
+                f"itself is reachable; anything asking the control plane where it lives "
+                f"is not."
+            )
+        elif environment.domain != domain:
+            raise PineconeApiError(
+                500,
+                f"control plane recorded domain {environment.domain!r}, expected {domain!r}",
+            )
 
     return environment
 
