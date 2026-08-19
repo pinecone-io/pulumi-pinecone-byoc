@@ -74,7 +74,9 @@ class DNS(pulumi.ComponentResource):
                 DelegatedZoneArgs(
                     fqdn=fqdn,
                     nameservers=self.zone.name_servers,
-                    wait_seconds=180 if self.delegation is not None else 0,
+                    # a resolver caches the miss this plants, so the run that
+                    # follows the delegation has to outlast that rather than ask once
+                    wait_seconds=300,
                 ),
                 opts=pulumi.ResourceOptions(
                     parent=self,

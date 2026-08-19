@@ -4,7 +4,7 @@ import pytest
 from pulumi_pinecone_byoc.aws.dns import DNS
 from pulumi_pinecone_byoc.common.naming import refuse_a_domain_no_certificate_can_cover
 
-DELEGATION = "pulumi-python:dynamic:Resource"
+DYNAMIC = "pulumi-python:dynamic:Resource"
 NS_RECORD = "aws:route53/record:Record"
 
 
@@ -14,7 +14,19 @@ class Engine(pulumi.runtime.Mocks):
 
     def new_resource(self, args: pulumi.runtime.MockResourceArgs):
         self.resources.append((args.typ, args.name, args.inputs))
-        return f"{args.name}-id", args.inputs
+        outputs = dict(args.inputs)
+        if args.typ == "aws:acm/certificate:Certificate":
+            # the component indexes these to build its validation records, and a mock
+            # that does not answer with them fails where a real certificate would not
+            outputs["domainValidationOptions"] = [
+                {
+                    "resourceRecordName": f"_validation-{i}.{args.inputs.get('domainName', '')}",
+                    "resourceRecordType": "CNAME",
+                    "resourceRecordValue": f"_value-{i}.acm-validations.aws",
+                }
+                for i in range(3)
+            ]
+        return f"{args.name}-id", outputs
 
     def call(self, args: pulumi.runtime.MockCallArgs):
         return {}
@@ -27,12 +39,18 @@ class Engine(pulumi.runtime.Mocks):
         ]
 
     def delegations(self):
-        return [name for typ, name, _inputs in self.resources if typ == DELEGATION]
+        # DnsDelegation and DelegatedZone are both dynamic resources, and only one of
+        # them asks the control plane for anything
+        return [
+            name
+            for typ, name, inputs in self.resources
+            if typ == DYNAMIC and "cpgw_api_key" in inputs
+        ]
 
 
 def dns(parent_zone_id=None, domain="pinecone.io"):
     engine = Engine()
-    pulumi.runtime.set_mocks(engine, preview=True)
+    pulumi.runtime.set_mocks(engine, preview=False)
     component = DNS(
         "pc-dns",
         subdomain="aws-us-east-2-ab12",

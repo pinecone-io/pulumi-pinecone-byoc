@@ -914,16 +914,26 @@ class DelegatedZoneProvider(ResourceProvider):
         fqdn, wanted = props["fqdn"], {n.rstrip(".").lower() for n in props["nameservers"]}
         deadline = time.time() + int(props.get("wait_seconds") or 0)
 
+        records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
+        asked = False
+
         while True:
             served_by = resolve_nameservers(fqdn)
             if wanted <= served_by:
                 return CreateResult(id_=fqdn, outs={**props, "nameservers_seen": sorted(served_by)})
             if time.time() >= deadline:
                 break
+            if not asked:
+                # said once, up front: the wait is only useful to somebody who knows
+                # what it is waiting for
+                pulumi.log.info(
+                    f"nothing points at {fqdn} yet. Add these where "
+                    f"{fqdn.split('.', 1)[1]} is served:\n\n{records}\n"
+                )
+                asked = True
             pulumi.log.info(f"{fqdn} is not delegated yet, checking again in 30s")
             time.sleep(30)
 
-        records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
         raise Exception(
             f"{fqdn} does not resolve. Nothing points at this cell's zone, so its "
             f"certificates cannot be issued and the deploy would fail an hour from now.\n\n"
