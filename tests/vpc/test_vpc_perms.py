@@ -99,3 +99,38 @@ def test_the_explanation_names_the_way_out_and_what_it_could_not_ask(ec2):
     assert "existing_vpc_id" in message
     assert "ec2:AssociateVpcCidrBlock" in message
     assert "pinecone:managed-by" in message
+
+
+def adopting(public_access=True):
+    return AWSConfig(
+        region="us-east-2",
+        availability_zones=["us-east-2a", "us-east-2b"],
+        vpc_cidr="10.1.0.0/20",
+        existing_vpc_id=VPC_ID,
+        public_access=public_access,
+        private_subnet_ids=["subnet-theirs-a", "subnet-theirs-b"],
+    )
+
+
+def test_adopting_their_subnets_asks_only_about_the_security_group(ec2):
+    client = ec2()
+    vpc_perms.refused(adopting(), VPC_ID, {})
+
+    assert [name for name, _ in client.asked] == ["create_security_group"], (
+        "a subnet, a route table and an association are none of them created"
+    )
+
+
+def test_adopting_is_not_refused_over_a_subnet_it_never_creates(ec2):
+    ec2(create_subnet=DENIED, create_route_table=DENIED, associate_route_table=DENIED)
+    assert vpc_perms.refused(adopting(), VPC_ID, {"us-east-2a": "rtb-theirs"}) == []
+
+
+def test_adopting_still_needs_the_security_group(ec2):
+    ec2(create_security_group=DENIED)
+    assert vpc_perms.refused(adopting(), VPC_ID, {}) == ["ec2:CreateSecurityGroup"]
+
+
+def test_the_explanation_names_the_controllers_own_role(ec2):
+    message = vpc_perms.explain(adopting(), VPC_ID, ["ec2:CreateSecurityGroup"])
+    assert "load balancer controller" in message

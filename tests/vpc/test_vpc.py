@@ -29,6 +29,8 @@ SUBNET = "aws:ec2/subnet:Subnet"
 NAT = "aws:ec2/natGateway:NatGateway"
 EIP = "aws:ec2/eip:Eip"
 RTA = "aws:ec2/routeTableAssociation:RouteTableAssociation"
+ROUTE_TABLE = "aws:ec2/routeTable:RouteTable"
+CIDR_ASSOCIATION = "aws:ec2/vpcIpv4CidrBlockAssociation:VpcIpv4CidrBlockAssociation"
 
 
 def their_subnet(az):
@@ -49,6 +51,12 @@ THEIR_SUBNETS = {
     their_subnet("us-east-2b"): a_subnet("us-east-2b", "10.0.2.0/24"),
 }
 
+ADOPTED = {
+    "subnet-theirs-a": a_subnet("us-east-2a", "10.0.11.0/24"),
+    "subnet-theirs-b": a_subnet("us-east-2b", "10.0.12.0/24"),
+    "subnet-public-a": a_subnet("us-east-2a", "10.0.13.0/24"),
+}
+
 
 def their_table(table_id, az, egress, main=False):
     return {
@@ -61,10 +69,11 @@ def their_table(table_id, az, egress, main=False):
 
 
 class Engine(pulumi.runtime.Mocks):
-    def __init__(self, tables=None, subnets=None):
+    def __init__(self, tables=None, subnets=None, subnets_in_vpc=None):
         self.resources = []
         self.invokes = []
         self.subnets = THEIR_SUBNETS if subnets is None else subnets
+        self.subnets_in_vpc = set(self.subnets) if subnets_in_vpc is None else subnets_in_vpc
         # by default they run a NAT per AZ on a private table of their own
         self.tables = (
             tables
@@ -98,10 +107,10 @@ class Engine(pulumi.runtime.Mocks):
         if args.token == GET_ROUTE_TABLE:
             return self.tables[args.args["routeTableId"]]
         if args.token == GET_SUBNETS:
-            az = next(
-                (f["values"][0] for f in args.args["filters"] if f["name"] == "availability-zone"),
-                None,
-            )
+            by = {f["name"]: f["values"] for f in args.args["filters"]}
+            if "subnet-id" in by:
+                return {"ids": [s for s in by["subnet-id"] if s in self.subnets_in_vpc]}
+            az = by.get("availability-zone", [None])[0]
             return {
                 "ids": [
                     subnet_id
@@ -127,10 +136,27 @@ def engine():
     return mocks
 
 
-def engine_with(tables=None, subnets=None):
-    mocks = Engine(tables=tables, subnets=subnets)
+def engine_with(tables=None, subnets=None, subnets_in_vpc=None):
+    mocks = Engine(tables=tables, subnets=subnets, subnets_in_vpc=subnets_in_vpc)
     pulumi.runtime.set_mocks(mocks, preview=False)
     return mocks
+
+
+def adopting(public_access=True, private=("subnet-theirs-a", "subnet-theirs-b"), public=None):
+    from pulumi_pinecone_byoc.aws.vpc import VPC
+
+    return VPC(
+        "pc-vpc",
+        AWSConfig(
+            region="us-east-2",
+            availability_zones=["us-east-2a", "us-east-2b"],
+            vpc_cidr="10.1.0.0/20",
+            existing_vpc_id=VPC_ID,
+            public_access=public_access,
+            private_subnet_ids=list(private),
+            public_subnet_ids=list(public) if public else None,
+        ),
+    )
 
 
 def in_existing_vpc(public_access, azs=("us-east-2a", "us-east-2b"), route_tables=None):
@@ -538,3 +564,61 @@ def test_the_default_the_wizard_offers_is_a_range_the_vpc_will_lay_out():
         for is_public in (True, False):
             net = vpc_subnet.cidr(AWSSetupWizard.DEFAULT_CIDR, index, is_public)
             assert net.subnet_of(ipaddress.IPv4Network(AWSSetupWizard.DEFAULT_CIDR))
+
+
+def test_adopting_their_subnets_creates_no_network_of_ours():
+    engine = engine_with(subnets=ADOPTED)
+
+    @pulumi.runtime.test
+    def run():
+        adopting(public=("subnet-public-a",))
+
+    run()
+
+    for kind in (SUBNET, RTA, NAT, EIP, CIDR_ASSOCIATION, ROUTE_TABLE):
+        assert created(engine, kind) == [], (
+            f"{kind} is theirs already: adopting means we build no network"
+        )
+
+
+@pulumi.runtime.test
+def test_adopting_exposes_the_subnets_it_was_given():
+    engine_with(subnets=ADOPTED)
+
+    vpc = adopting(public=("subnet-public-a",))
+
+    assert vpc.private_subnet_ids == ["subnet-theirs-a", "subnet-theirs-b"]
+    assert vpc.public_subnet_ids == ["subnet-public-a"]
+
+
+@pulumi.runtime.test
+def test_adopting_reads_their_ranges_rather_than_the_layout_we_did_not_cut():
+    engine_with(subnets=ADOPTED)
+
+    vpc = adopting(public_access=False)
+
+    assert vpc.private_subnet_cidrs == ["10.0.11.0/24", "10.0.12.0/24"]
+
+
+@pulumi.runtime.test
+def test_adopting_without_public_access_needs_no_public_subnet():
+    engine_with(subnets=ADOPTED)
+
+    vpc = adopting(public_access=False)
+
+    assert vpc.public_subnet_ids == [], "a VPC with no gateway has none to give"
+    assert vpc.private_subnet_ids == ["subnet-theirs-a", "subnet-theirs-b"]
+
+
+def test_public_access_without_a_public_subnet_is_refused_with_the_alternative():
+    engine_with(subnets=ADOPTED)
+
+    with pytest.raises(ValueError, match="PrivateLink"):
+        adopting(public_access=True)
+
+
+def test_a_subnet_from_another_vpc_is_refused_by_name():
+    engine_with(subnets_in_vpc={"subnet-theirs-a"})
+
+    with pytest.raises(ValueError, match="subnet-stranger"):
+        adopting(public_access=False, private=("subnet-theirs-a", "subnet-stranger"))

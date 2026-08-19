@@ -27,6 +27,9 @@ class AWSConfig(BaseConfig):
 
     existing_route_table_ids: dict[str, str] | None = None
 
+    public_subnet_ids: list[str] | None = None
+    private_subnet_ids: list[str] | None = None
+
     # Custom AMI
     custom_ami_id: str | None = None
 
