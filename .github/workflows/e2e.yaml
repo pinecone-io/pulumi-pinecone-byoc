@@ -69,9 +69,21 @@ jobs:
           echo "shapes=$picked" >> "$GITHUB_OUTPUT"
           echo "running: $picked"
 
+  # where the deploy is driven from, not which cluster to build - so it is its own
+  # job rather than a member of the shape matrix. The aws leg waits on it because
+  # the two share one cluster's worth of quota
+  windows-client:
+    needs: changes
+    if: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:windows-client') }}
+    uses: ./.github/workflows/aws.yaml
+    with:
+      shape: vanilla
+      client: windows
+    secrets: inherit
+
   aws:
-    needs: [changes, shapes]
-    if: needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch'
+    needs: [changes, shapes, windows-client]
+    if: ${{ !cancelled() && (needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch') }}
     strategy:
       # one cluster's worth of quota, and shapes on a PR fail together - so stop at
       # the first. A leg is the whole called workflow, so its teardown still runs.
@@ -98,14 +110,15 @@ jobs:
 
   result:
     if: always()
-    needs: [changes, aws, gcp, azure]
+    needs: [changes, aws, gcp, azure, windows-client]
     runs-on: ubuntu-latest
     steps:
       - run: |
           echo "AWS: ${{ needs.aws.result }}"
           echo "GCP: ${{ needs.gcp.result }}"
           echo "Azure: ${{ needs.azure.result }}"
-          if [ "${{ needs.aws.result }}" = "failure" ] || [ "${{ needs.gcp.result }}" = "failure" ] || [ "${{ needs.azure.result }}" = "failure" ]; then
+          echo "Windows client: ${{ needs['windows-client'].result }}"
+          if [ "${{ needs.aws.result }}" = "failure" ] || [ "${{ needs.gcp.result }}" = "failure" ] || [ "${{ needs.azure.result }}" = "failure" ] || [ "${{ needs['windows-client'].result }}" = "failure" ]; then
             echo "E2E failed"
             exit 1
           fi

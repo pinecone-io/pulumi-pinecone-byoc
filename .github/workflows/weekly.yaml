@@ -41,9 +41,20 @@ jobs:
     uses: ./.github/workflows/azure.yaml
     secrets: inherit
 
+  # the wizard and the harness are the only things a customer runs on their own
+  # machine, and a windows one is the shape of that machine we never otherwise see
+  windows-client:
+    needs: azure
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/aws.yaml
+    with:
+      shape: vanilla
+      client: windows
+    secrets: inherit
+
   result:
     if: always()
-    needs: [aws, gcp, azure]
+    needs: [aws, gcp, azure, windows-client]
     runs-on: ubuntu-latest
     steps:
       - name: Report what ran
@@ -51,7 +62,8 @@ jobs:
           echo "AWS:   ${{ needs.aws.result }}"
           echo "GCP:   ${{ needs.gcp.result }}"
           echo "Azure: ${{ needs.azure.result }}"
-          for result in "${{ needs.aws.result }}" "${{ needs.gcp.result }}" "${{ needs.azure.result }}"; do
+          echo "Windows client: ${{ needs['windows-client'].result }}"
+          for result in "${{ needs.aws.result }}" "${{ needs.gcp.result }}" "${{ needs.azure.result }}" "${{ needs['windows-client'].result }}"; do
             case "$result" in
               failure|cancelled) echo "weekly e2e $result"; exit 1 ;;
             esac
