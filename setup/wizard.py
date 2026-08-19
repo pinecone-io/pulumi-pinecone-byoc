@@ -515,7 +515,10 @@ class BaseSetupWizard:
             return self._get_domain(region)
         console.print()
         console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
-        console.print(f"  [dim]The record you will be asked for delegates byoc.{response} to us[/]")
+        console.print(
+            "  [dim]The deploy will stop and print the record to add, once the control "
+            "plane has named the cell[/]"
+        )
         return response
 
     @staticmethod

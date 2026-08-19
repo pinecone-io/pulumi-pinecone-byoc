@@ -141,3 +141,30 @@ def private_dns_verification_state(fqdn, region):
             if service.get("PrivateDnsName") == wanted:
                 return service.get("PrivateDnsNameConfiguration", {}).get("State", "")
     raise AssertionError(f"no endpoint service in {region} claims {wanted}")
+
+
+def cell_zone(project_dir_state):
+    for resource in project_dir_state["deployment"]["resources"]:
+        if resource["type"] == "aws:route53/zone:Zone":
+            outputs = resource["outputs"]
+            return outputs["name"], outputs["nameServers"]
+    raise AssertionError("the deploy made no hosted zone for the cell")
+
+
+def delegate(zone_id, fqdn, nameservers):
+    boto3.client("route53").change_resource_record_sets(
+        HostedZoneId=zone_id,
+        ChangeBatch={
+            "Changes": [
+                {
+                    "Action": "UPSERT",
+                    "ResourceRecordSet": {
+                        "Name": fqdn,
+                        "Type": "NS",
+                        "TTL": 300,
+                        "ResourceRecords": [{"Value": server} for server in nameservers],
+                    },
+                }
+            ]
+        },
+    )

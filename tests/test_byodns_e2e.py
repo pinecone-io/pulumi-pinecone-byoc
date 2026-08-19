@@ -4,7 +4,9 @@ import os
 import pytest
 from e2e.aws import (
     assert_delegated,
+    cell_zone,
     cluster_from_outputs,
+    delegate,
     parent_zone,
     private_dns_verification_state,
 )
@@ -67,21 +69,15 @@ def byodns_project(request, their_delegated_zone):
     domain = their_delegated_zone["domain"]
     public_access = "false" if shape.endswith("private") else "true"
 
-    def delegate_from_the_zone_we_host(project_dir, stack):
-        pulumi(
-            "config",
-            "set",
-            "parent-zone-id",
-            their_delegated_zone["zone_id"],
-            "--stack",
-            stack,
-            cwd=project_dir,
-        )
+    def as_the_customer_would(project_dir):
+        fqdn, nameservers = cell_zone(pulumi_json("stack", "export", cwd=project_dir))
+        logging.info("[byodns] delegating %s to %s", fqdn, nameservers)
+        delegate(their_delegated_zone["zone_id"], fqdn, nameservers)
 
     for project_dir in deployed_project(
         request,
         shape.removesuffix("-public"),
-        configure=delegate_from_the_zone_we_host,
+        delegate=as_the_customer_would,
         PINECONE_DOMAIN=domain,
         PINECONE_PUBLIC_ACCESS=public_access,
     ):
