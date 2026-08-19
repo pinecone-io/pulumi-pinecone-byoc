@@ -2,7 +2,12 @@ import pulumi
 import pulumi_aws as aws
 
 from ..common.naming import DNS_CNAMES
-from ..common.providers import DnsDelegation, DnsDelegationArgs
+from ..common.providers import (
+    DelegatedZone,
+    DelegatedZoneArgs,
+    DnsDelegation,
+    DnsDelegationArgs,
+)
 
 
 class DNS(pulumi.ComponentResource):
@@ -61,7 +66,27 @@ class DNS(pulumi.ComponentResource):
         else:
             self.delegation = None
 
-        delegated = [self.delegation] if self.delegation is not None else []
+        # on our own zone cpgw has just written the record and there is nothing to
+        # wait for. On theirs the certificates cannot issue until something above the
+        # zone says it is here, and ACM would take an hour to say so
+        self.delegated = (
+            None
+            if pinecone_hosted
+            else DelegatedZone(
+                f"{name}-delegated",
+                DelegatedZoneArgs(
+                    fqdn=fqdn,
+                    nameservers=self.zone.name_servers,
+                    wait_seconds=180 if self.delegation is not None else 0,
+                ),
+                opts=pulumi.ResourceOptions(
+                    parent=self,
+                    depends_on=[self.delegation] if self.delegation is not None else [self.zone],
+                ),
+            )
+        )
+
+        delegated = [r for r in (self.delegated or self.delegation,) if r is not None]
 
         # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB

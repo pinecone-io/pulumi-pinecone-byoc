@@ -76,6 +76,22 @@ def get_access_token(api_url: str, auth0: Auth0Config) -> str:
     return response.json().get("access_token")
 
 
+def resolve_nameservers(fqdn: str) -> set[str]:
+    """What a public resolver says serves fqdn, asked over HTTPS.
+
+    The machine running the deploy may resolve from a cache or a VPC with its own
+    view; the question is whether the internet can find this zone.
+    """
+    answer = requests.get(
+        "https://dns.google/resolve", params={"name": fqdn, "type": "NS"}, timeout=15
+    ).json()
+    return {
+        record["data"].rstrip(".").lower()
+        for record in answer.get("Answer", [])
+        if record.get("type") == 2
+    }
+
+
 def management_plane_url(api_url: str) -> str:
     return f"{api_url}/management"
 

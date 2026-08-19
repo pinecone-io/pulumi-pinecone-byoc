@@ -36,6 +36,7 @@ from .api import (
     delete_dns_delegation,
     delete_environment,
     delete_service_account,
+    resolve_nameservers,
 )
 
 # =============================================================================
@@ -892,5 +893,69 @@ class CpgwApiKey(Resource):
             CpgwApiKeyProvider(),
             name,
             full_args,
+            opts,
+        )
+
+
+class DelegatedZoneArgs:
+    def __init__(
+        self,
+        fqdn: pulumi.Input[str],
+        nameservers: pulumi.Input[Sequence[str]],
+        wait_seconds: pulumi.Input[int] = 0,
+    ):
+        self.fqdn = fqdn
+        self.nameservers = nameservers
+        self.wait_seconds = wait_seconds
+
+
+class DelegatedZoneProvider(ResourceProvider):
+    def create(self, props: dict[str, Any]) -> CreateResult:
+        fqdn, wanted = props["fqdn"], {n.rstrip(".").lower() for n in props["nameservers"]}
+        deadline = time.time() + int(props.get("wait_seconds") or 0)
+
+        while True:
+            served_by = resolve_nameservers(fqdn)
+            if wanted <= served_by:
+                return CreateResult(id_=fqdn, outs={**props, "nameservers_seen": sorted(served_by)})
+            if time.time() >= deadline:
+                break
+            pulumi.log.info(f"{fqdn} is not delegated yet, checking again in 30s")
+            time.sleep(30)
+
+        records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
+        raise Exception(
+            f"{fqdn} does not resolve. Nothing points at this cell's zone, so its "
+            f"certificates cannot be issued and the deploy would fail an hour from now.\n\n"
+            f"Add these where {fqdn.split('.', 1)[1]} is served, then run pulumi up again:\n\n"
+            f"{records}\n\n"
+            f"A public resolver currently says {sorted(served_by) or 'nothing'} serves it."
+        )
+
+    def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
+        return DiffResult(changes=_olds.get("fqdn") != _news.get("fqdn"), replaces=["fqdn"])
+
+    def delete(self, _id: str, _props: dict[str, Any]) -> None:
+        return None
+
+
+class DelegatedZone(Resource):
+    nameservers_seen: Output[list]
+
+    def __init__(
+        self,
+        name: str,
+        args: DelegatedZoneArgs,
+        opts: pulumi.ResourceOptions | None = None,
+    ):
+        super().__init__(
+            DelegatedZoneProvider(),
+            name,
+            {
+                "nameservers_seen": None,
+                "fqdn": args.fqdn,
+                "nameservers": args.nameservers,
+                "wait_seconds": args.wait_seconds,
+            },
             opts,
         )

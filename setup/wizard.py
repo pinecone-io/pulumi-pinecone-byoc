@@ -490,6 +490,9 @@ class BaseSetupWizard:
         if not self._domain_is_well_formed(response):
             console.print("  [red]A domain looks like corp.example.com — lowercase, with a dot[/]")
             return self._get_domain()
+        console.print()
+        console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
+        console.print(f"  [dim]The record you will be asked for delegates byoc.{response} to us[/]")
         return response
 
     @staticmethod

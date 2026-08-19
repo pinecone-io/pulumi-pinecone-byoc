@@ -186,12 +186,31 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
+        self._subdomain = self._environment.env_name
+
+        self._dns = DNS(
+            f"{config.resource_prefix}-dns",
+            subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
+            parent_zone_name=f"byoc.{args.domain}",
+            api_url=args.api_url,
+            cpgw_api_key=self._cpgw_api_key.key,
+            parent_zone_id=args.parent_zone_id,
+            pinecone_hosted=args.domain == "pinecone.io",
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
+        )
+
+        # on a customer's domain the cluster waits on the zone being reachable: seconds
+        # of work against twenty minutes of cluster, and a cell nobody delegated fails
+        # here rather than an hour later inside ACM
         self._eks = EKS(
             f"{config.resource_prefix}-eks",
             config,
             self._vpc,
             cell_name=self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
+            opts=pulumi.ResourceOptions(
+                parent=self,
+                depends_on=[self._vpc, *filter(None, [self._dns.delegated])],
+            ),
         )
 
         self._s3 = S3Buckets(
@@ -264,19 +283,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 }
             ),
             opts=child_opts,
-        )
-
-        self._subdomain = self._environment.env_name
-
-        self._dns = DNS(
-            f"{config.resource_prefix}-dns",
-            subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            parent_zone_name=f"byoc.{args.domain}",
-            api_url=args.api_url,
-            cpgw_api_key=self._cpgw_api_key.key,
-            parent_zone_id=args.parent_zone_id,
-            pinecone_hosted=args.domain == "pinecone.io",
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
         self._k8s_addons = K8sAddons(
