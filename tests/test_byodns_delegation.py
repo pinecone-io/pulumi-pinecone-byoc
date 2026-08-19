@@ -2,6 +2,7 @@ import pulumi
 import pytest
 
 from pulumi_pinecone_byoc.aws.dns import DNS
+from pulumi_pinecone_byoc.common.naming import refuse_a_domain_no_certificate_can_cover
 
 DELEGATION = "pulumi-python:dynamic:Resource"
 NS_RECORD = "aws:route53/record:Record"
@@ -74,3 +75,21 @@ def test_who_writes_the_delegation(parent_zone_id, domain, asks_control_plane, w
     return pulumi.Output.all(component.certificate_arn, component.private_certificate_arn).apply(
         check
     )
+
+
+@pytest.mark.parametrize(
+    ("domain", "region", "global_env", "fits"),
+    [
+        ("corp.example.com", "us-east-1", "prod", True),
+        ("pinecone.acme.com", "ap-southeast-1", "prod", True),
+        ("dns.byoc.pinecone.io", "us-east-2", "ci", True),
+        ("pinecone.some-long-company-name.com", "us-east-1", "prod", False),
+        ("pinecone.acme.com", "us-east-2", "staging", True),
+    ],
+)
+def test_a_domain_no_certificate_could_cover_is_refused(domain, region, global_env, fits):
+    if fits:
+        refuse_a_domain_no_certificate_can_cover(domain, region, global_env)
+        return
+    with pytest.raises(ValueError, match="characters"):
+        refuse_a_domain_no_certificate_can_cover(domain, region, global_env)

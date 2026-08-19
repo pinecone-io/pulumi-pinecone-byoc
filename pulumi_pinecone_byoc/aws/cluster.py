@@ -11,6 +11,7 @@ from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
+from ..common.naming import refuse_a_domain_no_certificate_can_cover
 from ..common.pinetools import Pinetools
 from ..common.providers import (
     AmpAccess,
@@ -185,6 +186,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             ),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
+
+        refuse_a_domain_no_certificate_can_cover(args.domain, args.region, args.global_env)
 
         self._subdomain = self._environment.env_name
 

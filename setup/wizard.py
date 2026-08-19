@@ -471,11 +471,16 @@ class BaseSetupWizard:
         )
         return self._yes(response)
 
-    def _get_domain(self) -> str | None:
+    def _get_domain(self, region: str) -> str | None:
+        budget = self._domain_budget(region)
         console.print()
         console.print(f"  {self._step('DNS Domain')}")
         console.print("  [dim]By default the cell resolves under a Pinecone-owned zone.[/]")
         console.print("  [dim]Enter a domain you own to have it resolve under yours instead.[/]")
+        console.print(
+            "  [dim]A subdomain kept for us is the usual shape: pinecone.acme.com, "
+            "or pc.acme.com where there is less room[/]"
+        )
         console.print(
             "  [dim]You will be asked to create one NS record before certificates issue.[/]"
         )
@@ -489,11 +494,40 @@ class BaseSetupWizard:
             return None
         if not self._domain_is_well_formed(response):
             console.print("  [red]A domain looks like corp.example.com — lowercase, with a dot[/]")
-            return self._get_domain()
+            return self._get_domain(region)
+        if len(response) > budget:
+            console.print(
+                f"  [red]{response} is {len(response)} characters; {budget} is the most "
+                f"that fits in {region}[/]"
+            )
+            console.print(
+                "  [dim]A certificate's first domain name cannot exceed 64 characters, and "
+                "the cell's own name takes the rest[/]"
+            )
+            shorter = f"pc.{response.split('.', 1)[1]}"
+            if len(shorter) <= budget:
+                console.print(f"  [dim]{shorter} would fit, at {len(shorter)}[/]")
+            else:
+                console.print(
+                    f"  [dim]Even one label over {response.split('.', 1)[1]} is too long here; "
+                    f"the zone this hangs off has to be shorter[/]"
+                )
+            return self._get_domain(region)
         console.print()
         console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
         console.print(f"  [dim]The record you will be asked for delegates byoc.{response} to us[/]")
         return response
+
+    @staticmethod
+    def _domain_budget(region: str) -> int:
+        """What is left of a certificate's 64 characters once the cell has its say.
+
+        The private cert's first domain name is *.svc.private.{cloud}-{region}-{id}
+        .byoc.{domain}, and ACM will not issue one longer than 64 - which a deploy
+        would otherwise discover an hour in.
+        """
+        longest_cell = f"aws-{region}-ab12.byoc"
+        return 64 - len(f"*.svc.private.{longest_cell}.")
 
     @staticmethod
     def _domain_is_well_formed(domain: str) -> bool:
@@ -1395,7 +1429,7 @@ class AWSSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr(vpc_id, region)
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access(vpc_id=vpc_id, region=region)
-        domain = self._get_domain()
+        domain = self._get_domain(region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
@@ -2387,7 +2421,7 @@ class GCPSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
-        domain = self._get_domain()
+        domain = self._get_domain(region)
         labels = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(project_id, region, zones, cidr):
@@ -3217,7 +3251,7 @@ class AzureSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
-        domain = self._get_domain()
+        domain = self._get_domain(region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
