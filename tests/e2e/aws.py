@@ -79,3 +79,19 @@ def find_cluster_for_vpc(vpc_id, region, baseline=None):
         if vpc_id is None or cluster.get("resourcesVpcConfig", {}).get("vpcId") == vpc_id:
             return name, cluster.get("status")
     return None, None
+
+
+def vpc_of_cluster(cluster, region):
+    eks = boto3.client("eks", region_name=region)
+    described = eks.describe_cluster(name=cluster)["cluster"]
+    return described.get("resourcesVpcConfig", {}).get("vpcId")
+
+
+def load_balancers_in(vpc_id, region):
+    elb = boto3.client("elbv2", region_name=region)
+    return [
+        (lb["LoadBalancerName"], lb.get("Scheme"), lb.get("Type"))
+        for page in elb.get_paginator("describe_load_balancers").paginate()
+        for lb in page["LoadBalancers"]
+        if lb.get("VpcId") == vpc_id
+    ]

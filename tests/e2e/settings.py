@@ -112,7 +112,9 @@ def destroy_targets(config):
     # every cluster an e2e run can leave, so a teardown needs no flags to find them
     stacks = config.getoption("--destroy-stack") or [
         stack_name("vanilla", "byoc"),
+        stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
+        stack_name("byovpc-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")
     region = config.getoption("--destroy-region") or aws_region(config)

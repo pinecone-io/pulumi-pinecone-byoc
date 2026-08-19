@@ -19,7 +19,7 @@ pytestmark = pytest.mark.destroy
 
 VPC_PROGRAM_DIR = Path(__file__).resolve().parent / "vpc" / "program"
 E2E_STANDIN = ("byovpc", "vpc")
-E2E_INSIDE_IT = ("byovpc", "byoc")
+E2E_INSIDE_IT = (("byovpc", "byoc"), ("byovpc-private", "byoc"))
 
 
 def pytest_generate_tests(metafunc):
@@ -85,10 +85,11 @@ def test_the_e2e_leaves_no_stand_in_vpc_behind():
     tests - the destroy would fail on subnets it does not own, and leave the
     network up.
     """
-    inside = stack_name(*E2E_INSIDE_IT)
-    assert find_stack(inside) is None, (
-        f"{inside} still holds subnets in the stand-in VPC - it has to go first"
-    )
+    for shape in E2E_INSIDE_IT:
+        inside = stack_name(*shape)
+        assert find_stack(inside) is None, (
+            f"{inside} still holds subnets in the stand-in VPC - it has to go first"
+        )
 
     stack = stack_name(*E2E_STANDIN)
     if find_stack(stack) is None:

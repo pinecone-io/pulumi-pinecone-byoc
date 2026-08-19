@@ -1,0 +1,59 @@
+name: Weekly E2E
+
+# A PR pays for one shape on one cloud; every shape it skips is one that only
+# breaks in a customer's account.
+on:
+  schedule:
+    - cron: "0 3 * * 0"
+  workflow_dispatch: {}
+
+concurrency:
+  # the group the PR run uses: same accounts, same quota
+  group: byoc-e2e
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  aws:
+    strategy:
+      # one at a time, and a failed shape must not hide the ones behind it
+      max-parallel: 1
+      fail-fast: false
+      matrix:
+        shape: [vanilla, private, byovpc-public, byovpc-private]
+    uses: ./.github/workflows/aws.yaml
+    with:
+      shape: ${{ matrix.shape }}
+    secrets: inherit
+
+  gcp:
+    needs: aws
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/gcp.yaml
+    secrets: inherit
+
+  azure:
+    needs: gcp
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/azure.yaml
+    secrets: inherit
+
+  result:
+    if: always()
+    needs: [aws, gcp, azure]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report what ran
+        run: |
+          echo "AWS:   ${{ needs.aws.result }}"
+          echo "GCP:   ${{ needs.gcp.result }}"
+          echo "Azure: ${{ needs.azure.result }}"
+          for result in "${{ needs.aws.result }}" "${{ needs.gcp.result }}" "${{ needs.azure.result }}"; do
+            case "$result" in
+              failure|cancelled) echo "weekly e2e $result"; exit 1 ;;
+            esac
+          done
+          echo "OK"

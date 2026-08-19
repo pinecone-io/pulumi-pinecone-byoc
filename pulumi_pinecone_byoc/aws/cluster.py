@@ -631,6 +631,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         return self._dns.name_servers
 
     @property
+    def cell_fqdn(self) -> pulumi.Output[str]:
+        return self._dns.fqdn
+
+    @property
     def nlb_dns_name(self) -> pulumi.Output[str]:
         return self._nlb.nlb_dns_name
 
