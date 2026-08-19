@@ -36,7 +36,7 @@ def dns(parent_zone_id=None, domain="pinecone.io"):
     component = DNS(
         "pc-dns",
         subdomain="aws-us-east-2-ab12",
-        parent_zone_name=f"byoc.{domain}",
+        fqdn=f"aws-us-east-2-ab12.byoc.{domain}",
         api_url="https://api-staging.pinecone.io",
         cpgw_api_key="not-a-key",
         parent_zone_id=parent_zone_id,

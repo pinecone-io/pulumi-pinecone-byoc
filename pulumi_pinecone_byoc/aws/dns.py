@@ -15,7 +15,7 @@ class DNS(pulumi.ComponentResource):
         self,
         name: str,
         subdomain: pulumi.Input[str],
-        parent_zone_name: pulumi.Input[str],
+        fqdn: pulumi.Input[str],
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         parent_zone_id: pulumi.Input[str] | None = None,
@@ -28,10 +28,7 @@ class DNS(pulumi.ComponentResource):
 
         tags = {"pinecone:managed-by": "pulumi"}
 
-        def build_fqdn(sub: str) -> str:
-            return f"{sub}.{parent_zone_name}"
-
-        fqdn = pulumi.Output.from_input(subdomain).apply(build_fqdn)
+        fqdn = pulumi.Output.from_input(fqdn)
 
         self.zone = aws.route53.Zone(
             f"{name}-zone",

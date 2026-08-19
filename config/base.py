@@ -38,7 +38,6 @@ class BaseConfig(BaseModel):
     vpc_cidr: str = "10.0.0.0/16"
     kubernetes_version: str = "1.35"
     node_pools: list[NodePoolConfig] = Field(default_factory=list)
-    parent_zone_name: str = "pinecone.io"
 
     @property
     def resource_prefix(self) -> str:

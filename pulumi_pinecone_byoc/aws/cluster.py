@@ -193,8 +193,12 @@ class PineconeAWSCluster(pulumi.ComponentResource):
 
         self._dns = DNS(
             f"{config.resource_prefix}-dns",
+            # the control plane advertises {environment}.{domain}, so the zone is that
+            # name and not one reassembled from a label spelled the same in two repos.
+            # The subdomain is separate because cpgw's delegation takes one and appends
+            # the rest itself
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            parent_zone_name=f"byoc.{args.domain}",
+            fqdn=self._subdomain.apply(lambda name: f"{name}.{args.domain}"),
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             parent_zone_id=args.parent_zone_id,
@@ -582,7 +586,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
-            parent_zone_name=f"byoc.{args.domain}",
             custom_ami_id=args.custom_ami_id,
             kms_key_arn=args.kms_key_arn,
             custom_tags=args.tags or {},

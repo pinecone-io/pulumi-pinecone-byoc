@@ -437,7 +437,6 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             availability_zones=args.availability_zones,
             vpc_cidr=args.vpc_cidr,
             kubernetes_version=args.kubernetes_version,
-            parent_zone_name=f"byoc.{args.domain}",
             node_pools=node_pools,
             database=AlloyDBConfig(
                 control_db=AlloyDBInstanceConfig(

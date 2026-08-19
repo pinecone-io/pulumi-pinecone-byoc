@@ -497,7 +497,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             vpc_cidr=args.vpc_cidr,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
-            parent_zone_name=f"byoc.{args.domain}",
             database=FlexibleServerConfig(
                 deletion_protection=args.deletion_protection,
             ),
