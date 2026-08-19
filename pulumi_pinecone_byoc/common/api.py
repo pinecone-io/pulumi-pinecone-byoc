@@ -195,7 +195,7 @@ def create_environment(
     # An older control plane ignores an unknown field, creates the cell on the default
     # zone and still answers 200. Left unchecked the installer would go on to serve the
     # cell under the customer's zone while every advertised host names ours.
-    if environment.domain != domain:
+    if domain is not None and environment.domain != domain:
         raise PineconeApiError(
             500,
             f"control plane recorded domain {environment.domain!r}, expected {domain!r}",

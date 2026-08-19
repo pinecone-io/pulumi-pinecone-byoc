@@ -651,33 +651,6 @@ class BaseSetupWizard:
 # ---------------------------------------------------------------------------
 
 
-def check_domain_publicly_resolvable(domain: str) -> tuple[bool, str, list[str]]:
-    """Resolve the domain's authoritative nameservers from outside any local resolver.
-
-    ACM validates over the public internet and so does AWS's PrivateLink domain
-    verification, so a zone that only answers inside the customer's network yields a
-    cell whose certificates never issue.
-    """
-    import socket
-
-    try:
-        socket.setdefaulttimeout(10)
-        socket.getaddrinfo(domain, None)
-    except socket.gaierror:
-        return (
-            False,
-            f"{domain} does not resolve",
-            [
-                "The zone must be answerable from the public internet:",
-                "certificates are validated there, not from inside your VPC.",
-                f"Check with: dig +trace NS {domain}",
-            ],
-        )
-    except OSError as e:
-        return False, f"could not resolve {domain}: {e}", []
-    return True, f"{domain} resolves publicly", []
-
-
 class AWSPreflightChecker:
     def __init__(
         self,
