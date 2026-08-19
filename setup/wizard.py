@@ -591,6 +591,8 @@ class AWSPreflightChecker:
         route_table_ids: dict[str, str] | None = None,
         public_access: bool = True,
         tags: dict[str, str] | None = None,
+        private_subnet_ids: list[str] | None = None,
+        public_subnet_ids: list[str] | None = None,
         non_interactive: bool = False,
     ):
         import boto3
@@ -604,6 +606,8 @@ class AWSPreflightChecker:
         self.route_table_ids = route_table_ids
         self.public_access = public_access
         self.tags = tags or {}
+        self.private_subnet_ids = private_subnet_ids
+        self.public_subnet_ids = public_subnet_ids
         self.results: list[PreflightResult] = []
 
         self.ec2 = boto3.client("ec2", region_name=region)
@@ -614,7 +618,19 @@ class AWSPreflightChecker:
         # deploying into their VPC asks nothing of our own VPC, gateway or EIP quota,
         # and the range has to fit beside what they already carry rather than beside
         # our other VPCs
-        if self.vpc_id:
+        if self.vpc_id and self.private_subnet_ids:
+            checks = [
+                ("VPC Exists", self._check_vpc_exists),
+                ("VPC DNS", self._check_vpc_dns),
+                ("Subnets", self._check_their_subnets),
+                ("Ingress Subnets", self._check_their_ingress_subnets),
+                ("VPC Permissions", self._check_permissions),
+                ("Subnet Egress", self._check_their_egress),
+                ("EKS Clusters", self._check_eks_cluster_quota),
+                ("Network Load Balancers", self._check_nlb_quota),
+                ("Instance Types", self._check_instance_types),
+            ]
+        elif self.vpc_id:
             checks = [
                 ("VPC Exists", self._check_vpc_exists),
                 ("VPC DNS", self._check_vpc_dns),
@@ -783,6 +799,53 @@ class AWSPreflightChecker:
             return
         self._add_result("VPC CIDR", True, f"{ours} is free to associate with {self.vpc_id}")
 
+    def _zones_of_theirs(self, name: str, subnet_ids: list[str]) -> set[str] | None:
+        try:
+            found = self.ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result(name, False, "Could not read the subnets given", str(e))
+            return None
+
+        strangers = [s["SubnetId"] for s in found if s["VpcId"] != self.vpc_id]
+        if strangers:
+            self._add_result(name, False, f"{', '.join(strangers)} are not in {self.vpc_id}")
+            return None
+
+        zones = {s["AvailabilityZone"] for s in found}
+        if len(zones) < 2:
+            self._add_result(
+                name,
+                False,
+                f"the subnets given are all in {', '.join(sorted(zones))}",
+                "EKS, RDS and a load balancer all need two availability zones; give one "
+                "subnet per zone",
+            )
+            return None
+        self._add_result(name, True, f"{len(found)} subnets across {', '.join(sorted(zones))}")
+        return zones
+
+    def _check_their_subnets(self):
+        self._zones_of_theirs("Subnets", list(self.private_subnet_ids or []))
+
+    def _check_their_ingress_subnets(self):
+        if not self.public_access:
+            self._add_result(
+                "Ingress Subnets", True, "no public access, so the data plane needs none"
+            )
+            return
+        wanted = list(self.public_subnet_ids or [])
+        if not wanted:
+            self._add_result(
+                "Ingress Subnets",
+                False,
+                f"public access was asked for, and {self.vpc_id} was given no public subnets",
+                "Adopting their subnets creates none, so give one public subnet per "
+                "availability zone in PINECONE_PUBLIC_SUBNET_IDS, or turn public access "
+                "off and reach the data plane over PrivateLink",
+            )
+            return
+        self._zones_of_theirs("Ingress Subnets", wanted)
+
     @staticmethod
     def _egress_target(route):
         """What a default route leaves by, or nothing when it cannot leave.
@@ -811,21 +874,68 @@ class AWSPreflightChecker:
                 return target
         return None
 
+    def _main_tables(self):
+        return self.ec2.describe_route_tables(
+            Filters=[
+                {"Name": "vpc-id", "Values": [self.vpc_id]},
+                {"Name": "association.main", "Values": ["true"]},
+            ]
+        )["RouteTables"]
+
+    def _tables_for(self, subnet_ids):
+        associated = (
+            self.ec2.describe_route_tables(
+                Filters=[{"Name": "association.subnet-id", "Values": subnet_ids}]
+            )["RouteTables"]
+            if subnet_ids
+            else []
+        )
+        return associated or self._main_tables()
+
+    def _their_tables_in(self, az: str):
+        subnets = self.ec2.describe_subnets(
+            Filters=[
+                {"Name": "vpc-id", "Values": [self.vpc_id]},
+                {"Name": "availability-zone", "Values": [az]},
+            ]
+        )["Subnets"]
+        return self._tables_for([s["SubnetId"] for s in subnets])
+
+    def _zones_to_check(self):
+        if self.private_subnet_ids:
+            given = self.ec2.describe_subnets(SubnetIds=self.private_subnet_ids)["Subnets"]
+            grouped: dict[str, list[str]] = {}
+            for subnet in given:
+                grouped.setdefault(subnet["AvailabilityZone"], []).append(subnet["SubnetId"])
+            return {az: self._tables_for(ids) for az, ids in grouped.items()}
+        named = self.route_table_ids or {}
+        return {
+            az: (
+                self.ec2.describe_route_tables(RouteTableIds=[named[az]])["RouteTables"]
+                if az in named
+                else self._their_tables_in(az)
+            )
+            for az in self.azs
+        }
+
     def _tables_we_would_associate(self):
         """Per zone, the table our subnet would be associated with.
 
-        A zone that inherits the main table is left out: nothing is associated for
-        it, so nothing needs permission to be.
+        Adopted subnets are associated with nothing new, and a zone that inherits
+        the main table is left out: nothing is associated for it, so nothing needs
+        permission to be.
         """
+        if self.private_subnet_ids:
+            return {}
         named = self.route_table_ids or {}
-        main = {t["RouteTableId"] for t in self._main_table()}
+        main = {t["RouteTableId"] for t in self._main_tables()}
         resolved = dict(named)
-        for az in self.azs:
+        for az, tables in self._zones_to_check().items():
             if az in named:
                 continue
             leaving = [
                 table["RouteTableId"]
-                for table in self._their_tables_in(az)
+                for table in tables
                 if self._egress_of(table) and table["RouteTableId"] not in main
             ]
             if len(leaving) == 1:
@@ -835,24 +945,16 @@ class AWSPreflightChecker:
     def _check_their_egress(self):
         """Every zone the nodes run in, not whichever table happens to leave.
 
-        With tables named per AZ ours use those; with none named the module detects
-        the table their own subnets in that zone use. Either way a zone whose table
-        cannot reach the registry is a zone whose nodes cannot pull an image, and it
-        has to fail here rather than an hour later.
+        A zone whose table cannot reach the registry is a zone whose nodes cannot
+        pull an image, and it has to fail here rather than an hour later.
         """
         named = self.route_table_ids or {}
+        adopting = bool(self.private_subnet_ids)
         try:
-            by_zone = {
-                az: (
-                    self.ec2.describe_route_tables(RouteTableIds=[named[az]])["RouteTables"]
-                    if az in named
-                    else self._their_tables_in(az)
-                )
-                for az in self.azs
-            }
+            by_zone = self._zones_to_check()
             # read here rather than where it is needed, so a throttled lookup is a
             # failed check like any other and not an aborted preflight
-            main = self._main_table()
+            main = [] if adopting else self._main_tables()
         except Exception as e:  # noqa: BLE001 - reported as a failed check
             self._add_result("Subnet Egress", False, "Failed to check", str(e))
             return
@@ -861,11 +963,11 @@ class AWSPreflightChecker:
         for az, tables in by_zone.items():
             leaving = {t["RouteTableId"]: self._egress_of(t) for t in tables}
             leaving = {k: v for k, v in leaving.items() if v}
-            if az not in named and len(leaving) > 1:
+            if not adopting and az not in named and len(leaving) > 1:
                 # detection refuses to guess between them, so this deploy would stop
                 ambiguous[az] = ", ".join(f"{k} via {v}" for k, v in sorted(leaving.items()))
                 continue
-            if not leaving and az not in named:
+            if not leaving and not adopting and az not in named:
                 # our subnets are associated with nothing, so what they inherit is the
                 # main table - which egresses in a VPC whose own subnets are public
                 inherited = {t["RouteTableId"]: self._egress_of(t) for t in main}
@@ -899,29 +1001,6 @@ class AWSPreflightChecker:
         self._add_result(
             "Subnet Egress", True, "; ".join(f"{az}: {v}" for az, v in sorted(egressing.items()))
         )
-
-    def _their_tables_in(self, az: str):
-        """The tables their own subnets in that zone use."""
-        subnets = self.ec2.describe_subnets(
-            Filters=[
-                {"Name": "vpc-id", "Values": [self.vpc_id]},
-                {"Name": "availability-zone", "Values": [az]},
-            ]
-        )["Subnets"]
-        ids = [s["SubnetId"] for s in subnets]
-        if not ids:
-            return []
-        return self.ec2.describe_route_tables(
-            Filters=[{"Name": "association.subnet-id", "Values": ids}]
-        )["RouteTables"]
-
-    def _main_table(self):
-        return self.ec2.describe_route_tables(
-            Filters=[
-                {"Name": "vpc-id", "Values": [self.vpc_id]},
-                {"Name": "association.main", "Values": ["true"]},
-            ]
-        )["RouteTables"]
 
     def _check_igw_attached(self):
         try:
@@ -964,35 +1043,40 @@ class AWSPreflightChecker:
         A role scoped to their own networking is denied our subnets long before it is
         denied our cluster, and the deploy would find out an hour in.
         """
-        try:
-            ipaddress.ip_network(self.cidr)
-        except ValueError:
-            self._add_result("VPC Permissions", True, "not checked: the range is not a CIDR")
-            return
+        adopting = bool(self.private_subnet_ids)
 
-        # a policy conditioned on tags refuses a probe that does not carry them, and
-        # the ones the module adds at deploy time are not known here
-        tag_spec = (
-            [
-                {
-                    "ResourceType": "subnet",
-                    "Tags": [{"Key": k, "Value": v} for k, v in self.tags.items()],
-                }
-            ]
-            if self.tags
-            else []
-        )
-        probes = [
-            (
-                "ec2:CreateSubnet",
-                self.ec2.create_subnet,
-                {
-                    "VpcId": self.vpc_id,
-                    "CidrBlock": self.cidr,
-                    "AvailabilityZone": self.azs[0],
-                    "TagSpecifications": tag_spec,
-                },
-            ),
+        if not adopting:
+            try:
+                ipaddress.ip_network(self.cidr)
+            except ValueError:
+                self._add_result("VPC Permissions", True, "not checked: the range is not a CIDR")
+                return
+
+        probes = []
+        if not adopting:
+            tag_spec = (
+                [
+                    {
+                        "ResourceType": "subnet",
+                        "Tags": [{"Key": k, "Value": v} for k, v in self.tags.items()],
+                    }
+                ]
+                if self.tags
+                else []
+            )
+            probes.append(
+                (
+                    "ec2:CreateSubnet",
+                    self.ec2.create_subnet,
+                    {
+                        "VpcId": self.vpc_id,
+                        "CidrBlock": self.cidr,
+                        "AvailabilityZone": self.azs[0],
+                        "TagSpecifications": tag_spec,
+                    },
+                )
+            )
+        probes.append(
             (
                 "ec2:CreateSecurityGroup",
                 self.ec2.create_security_group,
@@ -1001,26 +1085,25 @@ class AWSPreflightChecker:
                     "GroupName": "pinecone-preflight-lb-backend-sg",
                     "Description": "Shared backend security group for load balancers",
                 },
-            ),
-        ]
-        if self.public_access:
-            probes.append(
-                ("ec2:CreateRouteTable", self.ec2.create_route_table, {"VpcId": self.vpc_id})
             )
-        try:
-            associable = set(self._tables_we_would_associate().values())
-        except Exception:  # noqa: BLE001 - the rest of the probes stand without it
-            associable = set((self.route_table_ids or {}).values())
-        for table_id in sorted(associable):
-            probes.append(
-                (
-                    f"ec2:AssociateRouteTable on {table_id}",
-                    self.ec2.associate_route_table,
-                    # no subnet of ours exists yet; authorization is decided before the
-                    # lookup, so a scoped policy answers and a NotFound reads as unknown
-                    {"RouteTableId": table_id, "SubnetId": "subnet-" + "0" * 17},
+        )
+        if not adopting:
+            if self.public_access:
+                probes.append(
+                    ("ec2:CreateRouteTable", self.ec2.create_route_table, {"VpcId": self.vpc_id})
                 )
-            )
+            try:
+                associable = set(self._tables_we_would_associate().values())
+            except Exception:  # noqa: BLE001 - the rest of the probes stand without it
+                associable = set((self.route_table_ids or {}).values())
+            for table_id in sorted(associable):
+                probes.append(
+                    (
+                        f"ec2:AssociateRouteTable on {table_id}",
+                        self.ec2.associate_route_table,
+                        {"RouteTableId": table_id, "SubnetId": "subnet-" + "0" * 17},
+                    )
+                )
 
         refused = [name for name, call, kwargs in probes if self._refused(name, call, **kwargs)]
         if not refused:
@@ -1330,15 +1413,34 @@ class AWSSetupWizard(BaseSetupWizard):
         kms_key_arn = self._get_kms_key_arn()
         vpc_id = self._get_existing_vpc(region)
         if vpc_id:
-            self.TOTAL_STEPS += 1  # egress, asked only of a VPC we did not create
-        route_table_ids = self._get_route_table_ids(region, vpc_id, azs)
-        cidr = self._get_cidr(vpc_id, region)
+            self.TOTAL_STEPS += 1
+        private_subnet_ids, public_subnet_ids = self._get_subnet_ids(region, vpc_id)
+        if private_subnet_ids:
+            self.TOTAL_STEPS -= 1
+        elif vpc_id:
+            self.TOTAL_STEPS += 1
+        route_table_ids = (
+            None if private_subnet_ids else self._get_route_table_ids(region, vpc_id, azs)
+        )
+        cidr = self.DEFAULT_CIDR if private_subnet_ids else self._get_cidr(vpc_id, region)
         deletion_protection = self._get_deletion_protection()
-        public_access = self._get_public_access(vpc_id=vpc_id, region=region)
+        public_access = self._get_public_access(
+            vpc_id=vpc_id,
+            region=region,
+            adopted_public_subnets=bool(public_subnet_ids) if private_subnet_ids else None,
+        )
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
-            region, azs, cidr, vpc_id, route_table_ids, public_access, tags
+            region,
+            azs,
+            cidr,
+            vpc_id,
+            route_table_ids,
+            public_access,
+            tags,
+            private_subnet_ids,
+            public_subnet_ids,
         ):
             return False
 
@@ -1361,6 +1463,8 @@ class AWSSetupWizard(BaseSetupWizard):
             kms_key_arn=kms_key_arn,
             vpc_id=vpc_id,
             route_table_ids=route_table_ids,
+            private_subnet_ids=private_subnet_ids,
+            public_subnet_ids=public_subnet_ids,
             control_plane=self._control_plane_overrides(),
         )
 
@@ -1553,6 +1657,61 @@ class AWSSetupWizard(BaseSetupWizard):
             found[az] = seen
         return found
 
+    def _fetch_subnets(self, region: str, vpc_id: str) -> list[tuple[str, str, str]]:
+        import boto3
+
+        client = boto3.Session().client("ec2", region_name=region)
+        found = client.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
+        return [
+            (
+                subnet["SubnetId"],
+                subnet["AvailabilityZone"],
+                subnet.get("CidrBlock", ""),
+            )
+            for subnet in found.get("Subnets", [])
+        ]
+
+    def _get_subnet_ids(self, region: str, vpc_id: str | None) -> tuple[list[str], list[str]]:
+        if not vpc_id:
+            return [], []
+
+        console.print()
+        console.print(f"  {self._step('Existing Subnets')}")
+        console.print("  [dim]Subnets to deploy into, if the VPC already has them.[/]")
+        console.print("  [dim]Leave blank and the module creates its own from a range[/]")
+        console.print()
+
+        if not self._non_interactive:
+            with contextlib.suppress(Exception):
+                for subnet_id, az, cidr in self._fetch_subnets(region, vpc_id):
+                    console.print(f"    [dim]{subnet_id}  {az}  {cidr}[/]")
+
+        private = self._parse_subnet_ids(
+            self._prompt(
+                "Private subnet ids, one per AZ (blank to create them)",
+                "",
+                key="PINECONE_PRIVATE_SUBNET_IDS",
+            )
+        )
+        if not private:
+            return [], []
+        public = self._parse_subnet_ids(
+            self._prompt(
+                "Public subnet ids for ingress (blank for PrivateLink only)",
+                "",
+                key="PINECONE_PUBLIC_SUBNET_IDS",
+            )
+        )
+        return private, public
+
+    @staticmethod
+    def _parse_subnet_ids(value: str) -> list[str]:
+        entries = [entry for entry in value.replace(" ", "").split(",") if entry]
+        for entry in entries:
+            if not entry.startswith("subnet-"):
+                raise ValueError(f"{entry!r} is not a subnet id")
+        return entries
+
     def _get_route_table_ids(
         self, region: str, vpc_id: str | None, azs: list[str]
     ) -> dict[str, str] | None:
@@ -1647,13 +1806,23 @@ class AWSSetupWizard(BaseSetupWizard):
         note: str = "",
         vpc_id: str | None = None,
         region: str | None = None,
+        adopted_public_subnets: bool | None = None,
     ) -> bool:
         """An internet-facing load balancer needs an internet gateway in their VPC.
 
         Offering public access by default in a VPC that has none is offering a
         deployment that cannot come up, so ask the VPC first and let the answer pick
         the default.
+
+        Adopting their subnets creates none, so a gateway is not enough: without a
+        public subnet to put the load balancer in, the answer this offers has to be no.
         """
+        if adopted_public_subnets is False:
+            return super()._get_public_access(
+                "n",
+                "no public subnets were given, and adopting theirs creates none - so "
+                "there is nowhere to put an internet-facing load balancer",
+            )
         if vpc_id and region and not self._non_interactive:
             with contextlib.suppress(Exception):
                 gateway = self._internet_gateway(region, vpc_id)
@@ -1742,6 +1911,8 @@ class AWSSetupWizard(BaseSetupWizard):
         route_table_ids: dict[str, str] | None = None,
         public_access: bool = True,
         tags: dict[str, str] | None = None,
+        private_subnet_ids: list[str] | None = None,
+        public_subnet_ids: list[str] | None = None,
     ) -> bool:
         console.print()
         console.print(f"  {self._step('Preflight Checks')}")
@@ -1755,6 +1926,8 @@ class AWSSetupWizard(BaseSetupWizard):
             route_table_ids=route_table_ids,
             public_access=public_access,
             tags=tags,
+            private_subnet_ids=private_subnet_ids,
+            public_subnet_ids=public_subnet_ids,
             non_interactive=self._non_interactive,
         )
         if not checker.run_checks():
@@ -1781,6 +1954,8 @@ class AWSSetupWizard(BaseSetupWizard):
         kms_key_arn: str | None = None,
         vpc_id: str | None = None,
         route_table_ids: dict[str, str] | None = None,
+        private_subnet_ids: list[str] | None = None,
+        public_subnet_ids: list[str] | None = None,
         control_plane: dict[str, str] | None = None,
     ):
         console.print()
@@ -1832,6 +2007,8 @@ cluster = PineconeAWSCluster(
         tags=config.get_object("tags"),
         existing_vpc_id=config.get("existing-vpc-id"),
         existing_route_table_ids=config.get_object("existing-route-table-ids"),
+        private_subnet_ids=config.get_object("private-subnet-ids"),
+        public_subnet_ids=config.get_object("public-subnet-ids"),
         **control_plane,
     ),
 )
@@ -1883,6 +2060,14 @@ if config.get_bool("public-access-enabled") is False:
             config_content += f"  {project_name}:existing-route-table-ids:\n"
             for az, route_table_id in route_table_ids.items():
                 config_content += f"    {az}: {route_table_id}\n"
+        for key, ids in (
+            ("private-subnet-ids", private_subnet_ids),
+            ("public-subnet-ids", public_subnet_ids),
+        ):
+            if ids:
+                config_content += f"  {project_name}:{key}:\n"
+                for subnet_id in ids:
+                    config_content += f"    - {subnet_id}\n"
 
         # add tags if provided (quote values to handle YAML special chars)
         if tags:

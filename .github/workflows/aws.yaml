@@ -72,7 +72,7 @@ jobs:
         # private is a substring of byovpc-private, and would take its cluster too
         run: |
           case "$SHAPE" in
-            private) select="private and not byovpc" ;;
+            private) select="private and not byovpc and not byosubnet" ;;
             *)       select="$SHAPE" ;;
           esac
           uv run --extra aws pytest -m e2e -s --keep -k "$select"

@@ -38,29 +38,37 @@ def refused(config: AWSConfig, vpc_id: str, route_table_ids: dict[str, str]) -> 
     ec2 = boto3.client("ec2", region_name=config.region)
     az = config.availability_zones[0]
 
-    probes = [
-        (
-            "ec2:CreateSubnet",
-            ec2.create_subnet,
-            {
-                "VpcId": vpc_id,
-                "CidrBlock": str(vpc_subnet.cidr(config.vpc_cidr, 0, is_public=False)),
-                "AvailabilityZone": az,
-                # a policy conditioned on tags refuses a probe that does not carry them
-                "TagSpecifications": [
-                    {
-                        "ResourceType": "subnet",
-                        "Tags": [
-                            {"Key": key, "Value": value}
-                            for key, value in config.tags(
-                                Name=f"{config.resource_prefix}-private-{az}",
-                                **{"kubernetes.io/role/internal-elb": "1"},
-                            ).items()
-                        ],
-                    }
-                ],
-            },
-        ),
+    adopting = bool(config.private_subnet_ids)
+
+    probes = (
+        []
+        if adopting
+        else [
+            (
+                "ec2:CreateSubnet",
+                ec2.create_subnet,
+                {
+                    "VpcId": vpc_id,
+                    "CidrBlock": str(vpc_subnet.cidr(config.vpc_cidr, 0, is_public=False)),
+                    "AvailabilityZone": az,
+                    "TagSpecifications": [
+                        {
+                            "ResourceType": "subnet",
+                            "Tags": [
+                                {"Key": key, "Value": value}
+                                for key, value in config.tags(
+                                    Name=f"{config.resource_prefix}-private-{az}",
+                                    **{"kubernetes.io/role/internal-elb": "1"},
+                                ).items()
+                            ],
+                        }
+                    ],
+                },
+            )
+        ]
+    )
+
+    probes.append(
         (
             "ec2:CreateSecurityGroup",
             ec2.create_security_group,
@@ -69,20 +77,20 @@ def refused(config: AWSConfig, vpc_id: str, route_table_ids: dict[str, str]) -> 
                 "GroupName": f"{config.resource_prefix}-lb-backend-sg",
                 "Description": "Shared backend security group for load balancers",
             },
-        ),
-    ]
-
-    if config.public_access:
-        probes.append(("ec2:CreateRouteTable", ec2.create_route_table, {"VpcId": vpc_id}))
-
-    for table_id in sorted(set(route_table_ids.values())):
-        probes.append(
-            (
-                f"ec2:AssociateRouteTable on {table_id}",
-                ec2.associate_route_table,
-                {"RouteTableId": table_id, "SubnetId": UNMADE_SUBNET},
-            )
         )
+    )
+
+    if not adopting:
+        if config.public_access:
+            probes.append(("ec2:CreateRouteTable", ec2.create_route_table, {"VpcId": vpc_id}))
+        for table_id in sorted(set(route_table_ids.values())):
+            probes.append(
+                (
+                    f"ec2:AssociateRouteTable on {table_id}",
+                    ec2.associate_route_table,
+                    {"RouteTableId": table_id, "SubnetId": UNMADE_SUBNET},
+                )
+            )
 
     return [name for name, call, kwargs in probes if _verdict(name, call, **kwargs)]
 
@@ -95,7 +103,9 @@ def explain(config: AWSConfig, vpc_id: str, denied: list[str]) -> str:
         "A policy conditioned on tags this deploy does not carry reads as a refusal "
         f"here too, and the tags asked for were {sorted(config.tags())}. "
         f"Neither refused nor allowed, having no dry run: {', '.join(NO_DRY_RUN)}, "
-        "along with the EKS and load balancer calls that come after the network."
+        "along with the EKS and load balancer calls that come after the network - "
+        "and the load balancer controller acts as a role of its own, which a dry run "
+        "with this credential says nothing about."
     )
 
 

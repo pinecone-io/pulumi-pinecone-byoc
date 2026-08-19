@@ -115,6 +115,8 @@ def destroy_targets(config):
         stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
         stack_name("byovpc-private", "byoc"),
+        stack_name("byosubnet", "byoc"),
+        stack_name("byosubnet-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")
     region = config.getoption("--destroy-region") or aws_region(config)

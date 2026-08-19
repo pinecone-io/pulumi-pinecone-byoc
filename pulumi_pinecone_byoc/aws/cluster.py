@@ -63,6 +63,8 @@ class PineconeAWSClusterArgs:
     vpc_cidr: str = "10.0.0.0/16"
     existing_vpc_id: str | None = None
     existing_route_table_ids: dict[str, str] | None = None
+    public_subnet_ids: list[str] | None = None
+    private_subnet_ids: list[str] | None = None
 
     # kubernetes
     kubernetes_version: str = "1.35"
@@ -565,6 +567,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             vpc_cidr=args.vpc_cidr,
             existing_vpc_id=args.existing_vpc_id,
             existing_route_table_ids=args.existing_route_table_ids,
+            public_subnet_ids=args.public_subnet_ids,
+            private_subnet_ids=args.private_subnet_ids,
             public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,

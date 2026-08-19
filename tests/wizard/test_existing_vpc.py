@@ -22,6 +22,8 @@ def checker(**kwargs):
     made.route_table_ids = kwargs.get("route_table_ids")
     made.public_access = kwargs.get("public_access", True)
     made.tags = kwargs.get("tags", {})
+    made.private_subnet_ids = kwargs.get("private_subnet_ids")
+    made.public_subnet_ids = kwargs.get("public_subnet_ids")
     made.non_interactive = True
     if "ec2" in kwargs:
         made.ec2 = kwargs["ec2"]
@@ -344,7 +346,7 @@ def test_a_main_table_lookup_that_fails_is_a_failed_check_not_a_crash(monkeypatc
     def throttled():
         raise Exception("RequestLimitExceeded: Request limit exceeded")
 
-    monkeypatch.setattr(check, "_main_table", throttled)
+    monkeypatch.setattr(check, "_main_tables", throttled)
 
     check._check_their_egress()
 
@@ -398,6 +400,46 @@ def test_a_named_table_that_cannot_leave_is_not_excused_by_the_main_table():
     check._check_their_egress()
 
     assert not check.results[-1].passed
+
+
+def test_an_adopted_subnet_on_a_table_that_cannot_leave_is_not_excused_by_the_main_table():
+    check = checker(
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        ec2=_ec2(
+            subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2b": ["subnet-b"]},
+            tables={
+                "rtb-theirs-a": {"VpcPeeringConnectionId": "pcx-a", "subnets": ["subnet-a"]},
+                "rtb-theirs-b": {"NatGatewayId": "nat-b", "subnets": ["subnet-b"]},
+                "rtb-main": {"NatGatewayId": "nat-main", "main": True},
+            },
+        ),
+    )
+
+    check._check_their_egress()
+
+    assert not check.results[-1].passed
+    assert "us-east-2a" in check.results[-1].message
+    assert "nat-main" not in check.results[-1].message
+
+
+def test_two_adopted_subnets_in_a_zone_need_no_choice_between_their_tables():
+    check = checker(
+        private_subnet_ids=["subnet-a1", "subnet-a2", "subnet-b"],
+        ec2=_ec2(
+            subnets_by_az={"us-east-2a": ["subnet-a1", "subnet-a2"], "us-east-2b": ["subnet-b"]},
+            tables={
+                "rtb-a1": {"NatGatewayId": "nat-a1", "subnets": ["subnet-a1"]},
+                "rtb-a2": {"NatGatewayId": "nat-a2", "subnets": ["subnet-a2"]},
+                "rtb-b": {"NatGatewayId": "nat-b", "subnets": ["subnet-b"]},
+            },
+        ),
+    )
+
+    check._check_their_egress()
+
+    assert check.results[-1].passed, (
+        "nothing is being associated, so there is nothing to be told which of"
+    )
 
 
 def test_peering_is_not_egress_however_it_looks():
@@ -488,7 +530,14 @@ def test_public_access_is_offered_by_what_their_vpc_can_carry(gateways, expected
     assert answer is bool(gateways)
 
 
-def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=None, subnets=None):
+def _ec2(
+    cidr_blocks=None,
+    tables=None,
+    subnets_by_az=None,
+    internet_gateways=None,
+    vpc_of=None,
+    subnets=None,
+):
     """A VPC as the checks see it: subnets per zone, and the tables they use.
 
     tables maps an id to the route it carries plus which subnets use it, e.g.
@@ -528,7 +577,11 @@ def _ec2(cidr_blocks=None, tables=None, subnets_by_az=None, internet_gateways=No
                 wanted = SubnetIds
                 return {
                     "Subnets": [
-                        {"SubnetId": s, "AvailabilityZone": az, "VpcId": "vpc-theirs"}
+                        {
+                            "SubnetId": s,
+                            "AvailabilityZone": az,
+                            "VpcId": (vpc_of or {}).get(s, "vpc-theirs"),
+                        }
                         for az, ids in (subnets_by_az or {}).items()
                         for s in ids
                         if s in wanted
@@ -648,3 +701,170 @@ def test_a_range_that_is_not_a_cidr_is_not_reported_as_a_permission_problem():
     made._check_permissions()
 
     assert made.results[-1].passed, "the CIDR check already failed the run by itself"
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("subnet-a,subnet-b", ["subnet-a", "subnet-b"]),
+        ("subnet-a, subnet-b", ["subnet-a", "subnet-b"]),
+        ("", []),
+    ],
+)
+def test_subnet_ids_are_read_as_a_list(value, expected):
+    assert AWSSetupWizard._parse_subnet_ids(value) == expected
+
+
+def test_something_that_is_not_a_subnet_id_is_refused():
+    with pytest.raises(ValueError, match="not a subnet id"):
+        AWSSetupWizard._parse_subnet_ids("subnet-a,rtb-b")
+
+
+def test_subnets_in_one_zone_are_refused_because_two_are_needed():
+    check = checker(private_subnet_ids=["subnet-a", "subnet-b"])
+    check.ec2 = _ec2(subnets_by_az={"us-east-2a": ["subnet-a", "subnet-b"]})
+
+    check._check_their_subnets()
+
+    assert not check.results[-1].passed
+    assert "two availability zones" in check.results[-1].details
+
+
+def test_a_subnet_from_another_vpc_is_named():
+    check = checker(private_subnet_ids=["subnet-a", "subnet-b"])
+    check.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2b": ["subnet-b"]},
+        vpc_of={"subnet-b": "vpc-someone-else"},
+    )
+
+    check._check_their_subnets()
+
+    assert not check.results[-1].passed
+    assert "subnet-b" in check.results[-1].message
+
+
+def test_egress_is_read_per_zone_from_the_subnets_we_were_given():
+    check = checker(private_subnet_ids=["subnet-a", "subnet-b"])
+    check.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2b": ["subnet-b"]},
+        tables={
+            "rtb-a": {"TransitGatewayId": "tgw-hub", "subnets": ["subnet-a"]},
+            "rtb-b": {"GatewayId": "igw-theirs", "subnets": ["subnet-b"]},
+        },
+    )
+
+    check._check_their_egress()
+
+    assert not check.results[-1].passed, "the zone behind an internet gateway cannot leave"
+    assert "us-east-2b" in check.results[-1].message
+
+
+def test_adopting_their_subnets_asks_only_about_the_security_group():
+    client = DryRuns({})
+    checker(ec2=client, private_subnet_ids=["subnet-a", "subnet-b"])._check_permissions()
+
+    assert [name for name, _ in client.asked] == ["create_security_group"]
+
+
+def test_adopting_is_not_refused_over_a_subnet_it_never_creates():
+    made = checker(
+        ec2=DryRuns({"create_subnet": "UnauthorizedOperation"}),
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        route_table_ids={"us-east-2a": "rtb-1"},
+    )
+    made._check_permissions()
+
+    assert made.results[-1].passed
+
+
+def test_adopting_still_stops_when_the_security_group_is_refused():
+    made = checker(
+        ec2=DryRuns({"create_security_group": "UnauthorizedOperation"}),
+        private_subnet_ids=["subnet-a", "subnet-b"],
+    )
+    made._check_permissions()
+
+    assert not made.results[-1].passed
+    assert "ec2:CreateSecurityGroup" in made.results[-1].message
+
+
+def test_public_access_needs_the_ingress_subnets_before_a_deploy_asks_for_them():
+    made = checker(public_access=True, private_subnet_ids=["subnet-a", "subnet-b"])
+    made.ec2 = _ec2()
+
+    made._check_their_ingress_subnets()
+
+    assert not made.results[-1].passed
+    assert "PINECONE_PUBLIC_SUBNET_IDS" in made.results[-1].details
+
+
+def test_a_private_deploy_is_not_asked_for_ingress_subnets():
+    made = checker(public_access=False, private_subnet_ids=["subnet-a", "subnet-b"])
+    made.ec2 = _ec2()
+
+    made._check_their_ingress_subnets()
+
+    assert made.results[-1].passed
+
+
+def test_one_ingress_subnet_is_refused_because_a_load_balancer_needs_two_zones():
+    made = checker(
+        public_access=True,
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        public_subnet_ids=["subnet-pub-a"],
+    )
+    made.ec2 = _ec2(subnets_by_az={"us-east-2a": ["subnet-pub-a"]})
+
+    made._check_their_ingress_subnets()
+
+    assert not made.results[-1].passed
+    assert "two availability zones" in made.results[-1].details
+
+
+def test_ingress_subnets_in_two_zones_pass():
+    made = checker(
+        public_access=True,
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        public_subnet_ids=["subnet-pub-a", "subnet-pub-b"],
+    )
+    made.ec2 = _ec2(subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]})
+
+    made._check_their_ingress_subnets()
+
+    assert made.results[-1].passed
+
+
+def test_an_ingress_subnet_from_another_vpc_is_refused():
+    made = checker(
+        public_access=True,
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        public_subnet_ids=["subnet-pub-a", "subnet-pub-b"],
+    )
+    made.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]},
+        vpc_of={"subnet-pub-b": "vpc-someone-elses"},
+    )
+
+    made._check_their_ingress_subnets()
+
+    assert not made.results[-1].passed
+    assert "subnet-pub-b" in made.results[-1].message
+
+
+def test_adopting_without_public_subnets_offers_no_public_access_however_their_gateway_looks():
+    wizard = object.__new__(AWSSetupWizard)
+    wizard._current_step = 0
+    wizard._non_interactive = False
+    wizard._internet_gateway = lambda region, vpc_id: "igw-theirs"
+    asked = {}
+
+    def prompt(message, default, **kwargs):
+        asked["default"] = default
+        return default
+
+    wizard._prompt = prompt
+
+    assert not wizard._get_public_access(
+        vpc_id="vpc-theirs", region="us-east-2", adopted_public_subnets=False
+    )
+    assert asked["default"] == "n"

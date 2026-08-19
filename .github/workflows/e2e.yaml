@@ -2,6 +2,7 @@ name: E2E
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
 
 concurrency:
@@ -14,6 +15,7 @@ permissions:
 
 jobs:
   changes:
+    if: ${{ github.event.action != 'labeled' || startsWith(github.event.label.name, 'test:e2e:') }}
     runs-on: ubuntu-latest
     outputs:
       aws: ${{ steps.filter.outputs.aws }}
@@ -52,6 +54,7 @@ jobs:
 
   # a PR may ask for more than one shape; unasked, it gets vanilla
   shapes:
+    if: ${{ github.event.action != 'labeled' || startsWith(github.event.label.name, 'test:e2e:') }}
     runs-on: ubuntu-latest
     outputs:
       aws: ${{ steps.pick.outputs.shapes }}
@@ -61,7 +64,7 @@ jobs:
           LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
           # label to shape: byovpc named the public one before there was a private one
-          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private"}'
+          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private","byosubnet":"byosubnet-public","byosubnet-private":"byosubnet-private"}'
           picked=$(jq -c --argjson labels "$LABELS" \
             '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | .value]' \
             <<<"$known")
