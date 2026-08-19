@@ -429,6 +429,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "region": args.region,
             "global_env": args.global_env,
             "subdomain": self._subdomain,
+            # netstack builds every host it serves from this, defaulting to
+            # pinecone.io when it is absent - so a cell on a customer's domain that
+            # did not say so would resolve on their name and serve on ours
+            "domain": args.domain,
             "availability_zones": args.availability_zones,
             "certificate_arn": self._dns.certificate_arn,
             "dns_zone_id": self._dns.zone_id,
