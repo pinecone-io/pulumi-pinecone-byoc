@@ -151,13 +151,13 @@ def cell_zone(project_dir_state):
     raise AssertionError("the deploy made no hosted zone for the cell")
 
 
-def delegate(zone_id, fqdn, nameservers):
+def delegate(zone_id, fqdn, nameservers, action="UPSERT"):
     boto3.client("route53").change_resource_record_sets(
         HostedZoneId=zone_id,
         ChangeBatch={
             "Changes": [
                 {
-                    "Action": "UPSERT",
+                    "Action": action,
                     "ResourceRecordSet": {
                         "Name": fqdn,
                         "Type": "NS",

@@ -1,3 +1,4 @@
+import contextlib
 import logging
 import os
 
@@ -69,10 +70,19 @@ def byodns_project(request, their_delegated_zone):
     domain = their_delegated_zone["domain"]
     public_access = "false" if shape.endswith("private") else "true"
 
+    delegated = []
+
     def as_the_customer_would(project_dir):
         fqdn, nameservers = cell_zone(pulumi_json("stack", "export", cwd=project_dir))
         logging.info("[byodns] delegating %s to %s", fqdn, nameservers)
         delegate(their_delegated_zone["zone_id"], fqdn, nameservers)
+        delegated.append((fqdn, nameservers))
+
+    def undelegate():
+        # the module never owned this record, so no destroy takes it with the cell
+        for fqdn, nameservers in delegated:
+            with contextlib.suppress(Exception):
+                delegate(their_delegated_zone["zone_id"], fqdn, nameservers, action="DELETE")
 
     for project_dir in deployed_project(
         request,
@@ -81,11 +91,14 @@ def byodns_project(request, their_delegated_zone):
         PINECONE_DOMAIN=domain,
         PINECONE_PUBLIC_ACCESS=public_access,
     ):
-        yield {
-            "project_dir": project_dir,
-            "domain": domain,
-            "public_access": public_access == "true",
-        }
+        try:
+            yield {
+                "project_dir": project_dir,
+                "domain": domain,
+                "public_access": public_access == "true",
+            }
+        finally:
+            undelegate()
 
 
 @pytest.mark.parametrize("byodns_project", ["byodns-public", "byodns-private"], indirect=True)

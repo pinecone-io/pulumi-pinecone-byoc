@@ -288,6 +288,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "region": config.region,
             "global_env": config.global_env,
             "subdomain": self._subdomain,
+            "domain": args.domain,
             "availability_zones": config.availability_zones,
             "api_url": args.api_url,
             "dns_zone_name": self._dns.dns_zone.name,

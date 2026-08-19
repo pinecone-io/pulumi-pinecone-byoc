@@ -23,9 +23,18 @@ def deploy(project_dir, delegate=None):
 
     try:
         pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
-    except Exception:
-        logging.info("[byodns] the deploy stopped for a delegation, as it should have")
-    delegate(project_dir)
+    except Exception as stopped:
+        logging.info("[byodns] the first deploy stopped, as a customer's would: %s", stopped)
+        try:
+            delegate(project_dir)
+        except Exception as before_the_zone:
+            # it did not get as far as the zone, so it stopped for something else
+            raise stopped from before_the_zone
+    else:
+        raise AssertionError(
+            "the deploy did not stop for a delegation, so nothing here exercised one - "
+            "an earlier run may have left an NS record for this cell in the parent zone"
+        )
     pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
 
 

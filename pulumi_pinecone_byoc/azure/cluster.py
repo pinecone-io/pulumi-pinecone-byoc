@@ -344,6 +344,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "region": config.region,
             "global_env": config.global_env,
             "subdomain": self._subdomain,
+            "domain": args.domain,
             "availability_zones": config.availability_zones,
             "dns_zone_name": self._dns.zone.name,
             "azure_k8s_version": args.kubernetes_version,
