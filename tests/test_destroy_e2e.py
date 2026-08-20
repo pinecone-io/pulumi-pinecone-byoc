@@ -19,7 +19,12 @@ pytestmark = pytest.mark.destroy
 
 VPC_PROGRAM_DIR = Path(__file__).resolve().parent / "vpc" / "program"
 E2E_STANDIN = ("byovpc", "vpc")
-E2E_INSIDE_IT = (("byovpc", "byoc"), ("byovpc-private", "byoc"))
+E2E_INSIDE_IT = (
+    ("byovpc", "byoc"),
+    ("byovpc-private", "byoc"),
+    ("byosubnet", "byoc"),
+    ("byosubnet-private", "byoc"),
+)
 
 
 def pytest_generate_tests(metafunc):

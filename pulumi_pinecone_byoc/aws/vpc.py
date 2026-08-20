@@ -5,6 +5,7 @@ Creates a production-ready VPC with public and private subnets across multiple A
 """
 
 import ipaddress
+from collections.abc import Sequence
 
 import pulumi
 import pulumi_aws as aws
@@ -32,11 +33,57 @@ class VPC(pulumi.ComponentResource):
         super().__init__("pinecone:byoc:VPC", name, None, opts)
 
         self.config = config
+        self._private_cidrs: list[str] | None = None
 
-        if config.existing_vpc_id:
+        if config.existing_vpc_id and (config.private_subnet_ids or config.public_subnet_ids):
+            self._adopt_subnets(name, config, config.existing_vpc_id)
+        elif config.existing_vpc_id:
             self._create_subnets_in_existing_vpc(name, config, config.existing_vpc_id)
         else:
             self._create(name, config)
+
+    def _adopt_subnets(self, name: str, config: AWSConfig, vpc_id: str) -> None:
+        private_ids = config.private_subnet_ids or []
+        public_ids = config.public_subnet_ids or []
+        if not private_ids:
+            raise ValueError(
+                f"Adopting subnets in {vpc_id} requires private_subnet_ids, one per "
+                "availability zone: the nodes and the database go in them."
+            )
+        if config.public_access and not public_ids:
+            raise ValueError(
+                f"public_access needs public_subnet_ids in {vpc_id}, because adopting "
+                "subnets creates none. Give one per availability zone, or deploy with "
+                "public access disabled to reach the data plane over PrivateLink."
+            )
+
+        self._verify_in_vpc(vpc_id, private_ids + public_ids)
+
+        self._private_cidrs = [aws.ec2.get_subnet(id=subnet).cidr_block for subnet in private_ids]
+
+        vpc_perms.warn(config, vpc_id, {})
+
+        self.private_subnets: list[aws.ec2.Subnet] = []
+        self.public_subnets: list[aws.ec2.Subnet] = []
+        self._create_lb_backend_sg(name, config, vpc_id, pulumi.ResourceOptions(parent=self))
+        self._register_outputs(vpc_id, public_ids, private_ids)
+
+    @staticmethod
+    def _verify_in_vpc(vpc_id: str, subnet_ids: list[str]) -> None:
+        found = set(
+            aws.ec2.get_subnets(
+                filters=[
+                    {"name": "vpc-id", "values": [vpc_id]},
+                    {"name": "subnet-id", "values": subnet_ids},
+                ]
+            ).ids
+        )
+        missing = [subnet for subnet in subnet_ids if subnet not in found]
+        if missing:
+            raise ValueError(
+                f"{', '.join(missing)} is not in {vpc_id}. A subnet we are given has to "
+                "be one the cluster can actually use."
+            )
 
     def _create(self, name: str, config: AWSConfig) -> None:
         vpc_subnet.validate_vpc_cidr(config.vpc_cidr)
@@ -282,10 +329,23 @@ class VPC(pulumi.ComponentResource):
             opts=opts,
         )
 
-    def _register_outputs(self, vpc_id: pulumi.Input[str]) -> None:
+    def _register_outputs(
+        self,
+        vpc_id: pulumi.Input[str],
+        public_subnet_ids: Sequence[pulumi.Input[str]] | None = None,
+        private_subnet_ids: Sequence[pulumi.Input[str]] | None = None,
+    ) -> None:
         self._vpc_id = vpc_id
-        self._public_subnet_ids = [s.id for s in self.public_subnets]
-        self._private_subnet_ids = [s.id for s in self.private_subnets]
+        self._public_subnet_ids = (
+            list(public_subnet_ids)
+            if public_subnet_ids is not None
+            else [s.id for s in self.public_subnets]
+        )
+        self._private_subnet_ids = (
+            list(private_subnet_ids)
+            if private_subnet_ids is not None
+            else [s.id for s in self.private_subnets]
+        )
 
         self.register_outputs(
             {
@@ -378,6 +438,8 @@ class VPC(pulumi.ComponentResource):
 
     @property
     def private_subnet_cidrs(self) -> list[str]:
+        if self._private_cidrs is not None:
+            return self._private_cidrs
         return [
             str(vpc_subnet.cidr(self.config.vpc_cidr, i, is_public=False))
             for i in range(len(self.config.availability_zones))

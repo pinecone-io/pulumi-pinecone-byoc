@@ -62,7 +62,12 @@ def their_vpc(request):
     try:
         pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=PROGRAM_DIR)
         outputs = pulumi_json("stack", "output", "--json", "--stack", stack, cwd=PROGRAM_DIR)
-        yield {"vpc_id": outputs["vpc_id"], "azs": azs}
+        yield {
+            "vpc_id": outputs["vpc_id"],
+            "azs": azs,
+            "private_subnet_ids": outputs["private_subnet_ids"],
+            "public_subnet_ids": outputs["public_subnet_ids"],
+        }
     finally:
         if keep_stacks(request):
             logging.info(
@@ -83,6 +88,7 @@ def byoc_in_their_vpc(request, their_vpc):
     public_access = (
         "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
     )
+    adopt = shape.startswith("byosubnet")
     project_dir = generate_project(
         PROJECTS / stack,
         stack,
@@ -95,6 +101,18 @@ def byoc_in_their_vpc(request, their_vpc):
             PINECONE_EXISTING_VPC_ID=their_vpc["vpc_id"],
             PINECONE_VPC_CIDR="10.1.0.0/16",
             PINECONE_PUBLIC_ACCESS=public_access,
+            **(
+                {
+                    "PINECONE_PRIVATE_SUBNET_IDS": ",".join(their_vpc["private_subnet_ids"]),
+                    **(
+                        {"PINECONE_PUBLIC_SUBNET_IDS": ",".join(their_vpc["public_subnet_ids"])}
+                        if public_access == "true"
+                        else {}
+                    ),
+                }
+                if adopt
+                else {}
+            ),
         ),
     )
 
@@ -114,6 +132,7 @@ def byoc_in_their_vpc(request, their_vpc):
             # probe the deploy they produced actually needs
             "public_access": AWSSetupWizard._yes(public_access),
             "shape": shape,
+            "adopt": adopt,
         }
     finally:
         try:
@@ -131,7 +150,11 @@ def byoc_in_their_vpc(request, their_vpc):
             streamer.join(timeout=10)
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc-public", "byovpc-private"], indirect=True)
+@pytest.mark.parametrize(
+    "byoc_in_their_vpc",
+    ["byovpc-public", "byovpc-private", "byosubnet-public", "byosubnet-private"],
+    indirect=True,
+)
 def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_in_their_vpc):
     project_dir = byoc_in_their_vpc["project_dir"]
     fqdn = cell_fqdn(project_dir)
@@ -154,7 +177,11 @@ def test_a_cluster_deployed_into_their_vpc_is_reachable_as_the_shape_asked(byoc_
     assert_never_answers(data_plane_host(fqdn))
 
 
-@pytest.mark.parametrize("byoc_in_their_vpc", ["byovpc-public", "byovpc-private"], indirect=True)
+@pytest.mark.parametrize(
+    "byoc_in_their_vpc",
+    ["byovpc-public", "byovpc-private", "byosubnet-public", "byosubnet-private"],
+    indirect=True,
+)
 def test_the_module_built_no_vpc_and_no_egress_of_its_own(byoc_in_their_vpc, their_vpc):
     """The cluster is theirs to host: we add subnets, not a network.
 
@@ -167,6 +194,12 @@ def test_the_module_built_no_vpc_and_no_egress_of_its_own(byoc_in_their_vpc, the
 
     assert "aws:ec2/vpc:Vpc" not in types, "the customer's VPC is the one it should have used"
     assert "aws:ec2/natGateway:NatGateway" not in types, "egress in their VPC is theirs to route"
+
+    if byoc_in_their_vpc["adopt"]:
+        assert "aws:ec2/subnet:Subnet" not in types, (
+            "given their subnets, the module builds no network at all"
+        )
+        return
 
     vpc_ids = {
         resource["outputs"]["vpcId"]
