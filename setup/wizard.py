@@ -21,7 +21,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-e59b176"
+PINECONE_VERSION = "main-1f97e6c"
 
 ZONES_OFFERED = 2
 
