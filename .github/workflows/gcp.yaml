@@ -63,8 +63,8 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GCP_PROJECT: staging-pinecone-byoc
           PULUMI_BACKEND: "cloud"
-          PINECONE_REGION: us-central1
-          PINECONE_AZS: "us-central1-a,us-central1-b"
+          PINECONE_REGION: us-west1
+          PINECONE_AZS: "us-west1-a,us-west1-b"
           PINECONE_VPC_CIDR: "10.112.0.0/16"
           PINECONE_DELETION_PROTECTION: "false"
           PINECONE_PUBLIC_ACCESS: "false"
@@ -160,8 +160,8 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GCP_PROJECT: staging-pinecone-byoc
           PULUMI_BACKEND: "cloud"
-          PINECONE_REGION: us-central1
-          PINECONE_AZS: "us-central1-a,us-central1-b"
+          PINECONE_REGION: us-west1
+          PINECONE_AZS: "us-west1-a,us-west1-b"
           PINECONE_VPC_CIDR: "10.112.0.0/16"
           PINECONE_DELETION_PROTECTION: "false"
           PINECONE_PUBLIC_ACCESS: "false"
