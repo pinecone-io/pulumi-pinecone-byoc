@@ -2685,7 +2685,6 @@ class AzurePreflightChecker:
     def run_checks(self) -> bool:
         checks = [
             ("Resource Providers", self._check_resource_providers),
-            ("PostgreSQL Flexible Server", self._check_postgres_availability),
             ("vCPU Quota", self._check_vcpu_quota),
             ("AKS Clusters", self._check_aks_quota),
             ("VM SKUs", self._check_vm_skus),
@@ -2726,7 +2725,6 @@ class AzurePreflightChecker:
         required_providers = [
             "Microsoft.Compute",
             "Microsoft.ContainerService",
-            "Microsoft.DBforPostgreSQL",
             "Microsoft.Storage",
             "Microsoft.Network",
             "Microsoft.KeyVault",
@@ -2756,81 +2754,6 @@ class AzurePreflightChecker:
                 )
         except Exception as e:
             self._add_result("Resource Providers", False, f"Failed to check: {e}")
-
-    def _check_postgres_availability(self):
-        try:
-            result = subprocess.run(
-                [
-                    "az",
-                    "postgres",
-                    "flexible-server",
-                    "list-skus",
-                    "--location",
-                    self.region,
-                    "--subscription",
-                    self.subscription_id,
-                    "--output",
-                    "json",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=30,
-            )
-            if result.returncode != 0:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"Failed: {result.stderr.strip().split(chr(10))[0]}",
-                )
-                return
-
-            skus = json.loads(result.stdout)
-            if not skus:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"No SKUs available in {self.region}",
-                    "Choose a different region",
-                )
-                return
-
-            # check if provisioning is restricted in this region
-            reason = skus[0].get("reason") or ""
-            if "restricted" in reason.lower():
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"Provisioning restricted in {self.region}",
-                    "Choose a different region or request a quota increase",
-                )
-                return
-
-            # check that our target SKU (Standard_D2s_v3) is available
-            target_sku = "Standard_D2s_v3"
-            found = False
-            for cap in skus:
-                for edition in cap.get("supportedServerEditions", []):
-                    if edition.get("name") == "GeneralPurpose":
-                        for sku in edition.get("supportedServerSkus", []):
-                            if sku.get("name") == target_sku:
-                                found = True
-                                break
-
-            if found:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    True,
-                    f"{target_sku} available in {self.region}",
-                )
-            else:
-                self._add_result(
-                    "PostgreSQL Flexible Server",
-                    False,
-                    f"{target_sku} not available in {self.region}",
-                    "Choose a different region or VM SKU",
-                )
-        except Exception as e:
-            self._add_result("PostgreSQL Flexible Server", False, f"Failed to check: {e}")
 
     def _check_vcpu_quota(self):
         try:

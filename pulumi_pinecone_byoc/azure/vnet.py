@@ -61,7 +61,6 @@ class VNet(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # derive db subnet from vpc_cidr: next adjacent /16 block
         aks_net = ipaddress.IPv4Network(config.vpc_cidr)
         db_net = ipaddress.IPv4Network(
             f"{aks_net.network_address + aks_net.num_addresses}/{aks_net.prefixlen}"
@@ -99,22 +98,6 @@ class VNet(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        # flexible server subnet with PostgreSQL delegation
-        self.db_subnet = network.Subnet(
-            f"{name}-db-subnet",
-            subnet_name=self._cell_name.apply(lambda cn: f"db-subnet-{cn}"),
-            resource_group_name=self._rg_name,
-            virtual_network_name=self.vnet.name,
-            address_prefix=str(db_net),
-            delegations=[
-                network.DelegationArgs(
-                    name="postgresql-delegation",
-                    service_name="Microsoft.DBforPostgreSQL/flexibleServers",
-                ),
-            ],
-            opts=child_opts,
-        )
-
         # PLS subnet for Private Link Service NAT IPs
         self.pls_subnet = network.Subnet(
             f"{name}-pls-subnet",
@@ -131,7 +114,6 @@ class VNet(pulumi.ComponentResource):
                 "vnet_id": self.vnet.id,
                 "vnet_name": self.vnet.name,
                 "aks_subnet_id": self.aks_subnet.id,
-                "db_subnet_id": self.db_subnet.id,
                 "pls_subnet_id": self.pls_subnet.id,
                 "resource_group_name": self._rg_name,
             }
@@ -148,10 +130,6 @@ class VNet(pulumi.ComponentResource):
     @property
     def aks_subnet_id(self) -> pulumi.Output[str]:
         return self.aks_subnet.id
-
-    @property
-    def db_subnet_id(self) -> pulumi.Output[str]:
-        return self.db_subnet.id
 
     @property
     def pls_subnet_id(self) -> pulumi.Output[str]:
