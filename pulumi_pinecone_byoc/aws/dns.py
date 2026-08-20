@@ -2,7 +2,12 @@ import pulumi
 import pulumi_aws as aws
 
 from ..common.naming import DNS_CNAMES
-from ..common.providers import DnsDelegation, DnsDelegationArgs
+from ..common.providers import (
+    DelegatedZone,
+    DelegatedZoneArgs,
+    DnsDelegation,
+    DnsDelegationArgs,
+)
 
 
 class DNS(pulumi.ComponentResource):
@@ -10,9 +15,11 @@ class DNS(pulumi.ComponentResource):
         self,
         name: str,
         subdomain: pulumi.Input[str],
-        parent_zone_name: pulumi.Input[str],
+        fqdn: pulumi.Input[str],
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
+        parent_zone_id: pulumi.Input[str] | None = None,
+        pinecone_hosted: bool = True,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
@@ -21,10 +28,7 @@ class DNS(pulumi.ComponentResource):
 
         tags = {"pinecone:managed-by": "pulumi"}
 
-        def build_fqdn(sub: str) -> str:
-            return f"{sub}.{parent_zone_name}"
-
-        fqdn = pulumi.Output.from_input(subdomain).apply(build_fqdn)
+        fqdn = pulumi.Output.from_input(fqdn)
 
         self.zone = aws.route53.Zone(
             f"{name}-zone",
@@ -34,16 +38,54 @@ class DNS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self.delegation = DnsDelegation(
-            f"{name}-delegation",
-            DnsDelegationArgs(
-                subdomain=subdomain,
-                nameservers=self.zone.name_servers,
-                api_url=api_url,
-                cpgw_api_key=cpgw_api_key,
-            ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+        if parent_zone_id is not None:
+            self.delegation = aws.route53.Record(
+                f"{name}-delegation",
+                zone_id=parent_zone_id,
+                name=fqdn,
+                type="NS",
+                records=self.zone.name_servers,
+                ttl=300,
+                allow_overwrite=True,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        elif pinecone_hosted:
+            self.delegation = DnsDelegation(
+                f"{name}-delegation",
+                DnsDelegationArgs(
+                    subdomain=subdomain,
+                    nameservers=self.zone.name_servers,
+                    api_url=api_url,
+                    cpgw_api_key=cpgw_api_key,
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        else:
+            self.delegation = None
+
+        # on our own zone cpgw has just written the record and there is nothing to
+        # wait for. On theirs the certificates cannot issue until something above the
+        # zone says it is here, and ACM would take an hour to say so
+        self.delegated = (
+            None
+            if pinecone_hosted
+            else DelegatedZone(
+                f"{name}-delegated",
+                DelegatedZoneArgs(
+                    fqdn=fqdn,
+                    nameservers=self.zone.name_servers,
+                    # a resolver caches the miss this plants, so the run that
+                    # follows the delegation has to outlast that rather than ask once
+                    wait_seconds=300,
+                ),
+                opts=pulumi.ResourceOptions(
+                    parent=self,
+                    depends_on=[self.delegation] if self.delegation is not None else [self.zone],
+                ),
+            )
         )
+
+        delegated = [r for r in (self.delegated or self.delegation,) if r is not None]
 
         # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB
@@ -73,7 +115,7 @@ class DNS(pulumi.ComponentResource):
             tags={**tags, "Name": f"{name}-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,  # cert may be in use by ALBs
             ),
         )
@@ -115,7 +157,7 @@ class DNS(pulumi.ComponentResource):
             tags={**tags, "Name": f"{name}-private-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,
             ),
         )

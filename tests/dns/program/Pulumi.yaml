@@ -1,0 +1,3 @@
+name: pinecone-byoc-parent-zone
+description: The zone a BYO-DNS customer delegates to us, and the delegation itself.
+runtime: python

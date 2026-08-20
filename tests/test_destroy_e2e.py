@@ -21,6 +21,10 @@ VPC_PROGRAM_DIR = Path(__file__).resolve().parent / "vpc" / "program"
 E2E_STANDIN = ("byovpc", "vpc")
 E2E_INSIDE_IT = (("byovpc", "byoc"), ("byovpc-private", "byoc"))
 
+DNS_PROGRAM_DIR = Path(__file__).resolve().parent / "dns" / "program"
+E2E_DELEGATED_ZONE = ("byodns", "zone")
+E2E_UNDER_IT = (("byodns", "byoc"), ("byodns-private", "byoc"))
+
 
 def pytest_generate_tests(metafunc):
     if "target" in metafunc.fixturenames:
@@ -97,3 +101,16 @@ def test_the_e2e_leaves_no_stand_in_vpc_behind():
 
     logging.info("destroying %s left behind in %s", stack, VPC_PROGRAM_DIR)
     destroy_stack(VPC_PROGRAM_DIR, stack)
+
+
+def test_the_delegated_zone_goes_last():
+    for under_it in E2E_UNDER_IT:
+        cell = stack_name(*under_it)
+        assert find_stack(cell) is None, f"{cell} still resolves through this zone - it goes first"
+
+    stack = stack_name(*E2E_DELEGATED_ZONE)
+    if find_stack(stack) is None:
+        pytest.skip(f"no stack named {stack} in the organization, nothing to destroy")
+
+    logging.info("destroying %s left behind in %s", stack, DNS_PROGRAM_DIR)
+    destroy_stack(DNS_PROGRAM_DIR, stack)

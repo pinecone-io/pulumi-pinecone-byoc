@@ -2,6 +2,7 @@ import logging
 import re
 
 import boto3
+import requests
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -95,3 +96,75 @@ def load_balancers_in(vpc_id, region):
         for lb in page["LoadBalancers"]
         if lb.get("VpcId") == vpc_id
     ]
+
+
+def parent_zone(domain):
+    r53 = boto3.client("route53")
+    listed = r53.list_hosted_zones_by_name(DNSName=domain, MaxItems="1")
+    for zone in listed["HostedZones"]:
+        if zone["Name"].rstrip(".") == domain and not zone["Config"]["PrivateZone"]:
+            zone_id = zone["Id"].removeprefix("/hostedzone/")
+            return zone_id, r53.get_hosted_zone(Id=zone_id)["DelegationSet"]["NameServers"]
+    raise AssertionError(
+        f"no public hosted zone for {domain} in this account. Deploy the byodns-aws stack "
+        "of pinecone-platform/pulumi/dns-zones, and name the zone it makes as "
+        "e2e_parent_domain in pytest.ini"
+    )
+
+
+def assert_delegated(domain, nameservers):
+    answer = requests.get(
+        "https://dns.google/resolve", params={"name": domain, "type": "NS"}, timeout=15
+    ).json()
+    served_by = {
+        record["data"].rstrip(".").lower()
+        for record in answer.get("Answer", [])
+        if record.get("type") == 2  # NS
+    }
+    expected = {server.rstrip(".").lower() for server in nameservers}
+    if expected <= served_by:
+        return
+
+    records = "\n".join(f"      {domain}.  NS  {server}." for server in sorted(expected))
+    raise AssertionError(
+        f"{domain} is not delegated: a public resolver says "
+        f"{sorted(served_by) or 'nothing'} serves it, not {sorted(expected)}.\n"
+        f"    Add this in the zone that serves {domain.split('.', 1)[1]}:\n{records}"
+    )
+
+
+def private_dns_verification_state(fqdn, region):
+    wanted = f"*.private.{fqdn}"
+    ec2 = boto3.client("ec2", region_name=region)
+    for page in ec2.get_paginator("describe_vpc_endpoint_service_configurations").paginate():
+        for service in page["ServiceConfigurations"]:
+            if service.get("PrivateDnsName") == wanted:
+                return service.get("PrivateDnsNameConfiguration", {}).get("State", "")
+    raise AssertionError(f"no endpoint service in {region} claims {wanted}")
+
+
+def cell_zone(project_dir_state):
+    for resource in project_dir_state["deployment"]["resources"]:
+        if resource["type"] == "aws:route53/zone:Zone":
+            outputs = resource["outputs"]
+            return outputs["name"], outputs["nameServers"]
+    raise AssertionError("the deploy made no hosted zone for the cell")
+
+
+def delegate(zone_id, fqdn, nameservers, action="UPSERT"):
+    boto3.client("route53").change_resource_record_sets(
+        HostedZoneId=zone_id,
+        ChangeBatch={
+            "Changes": [
+                {
+                    "Action": action,
+                    "ResourceRecordSet": {
+                        "Name": fqdn,
+                        "Type": "NS",
+                        "TTL": 300,
+                        "ResourceRecords": [{"Value": server} for server in nameservers],
+                    },
+                }
+            ]
+        },
+    )

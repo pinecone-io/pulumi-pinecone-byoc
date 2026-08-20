@@ -29,6 +29,7 @@ class CreateEnvironmentResponse(BaseModel):
     name: str
     org_id: str
     org_name: str
+    domain: str | None = None
 
 
 class CreateServiceAccountResponse(BaseModel):
@@ -73,6 +74,22 @@ def get_access_token(api_url: str, auth0: Auth0Config) -> str:
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json().get("access_token")
+
+
+def resolve_nameservers(fqdn: str) -> set[str]:
+    """What a public resolver says serves fqdn, asked over HTTPS.
+
+    The machine running the deploy may resolve from a cache or a VPC with its own
+    view; the question is whether the internet can find this zone.
+    """
+    answer = requests.get(
+        "https://dns.google/resolve", params={"name": fqdn, "type": "NS"}, timeout=15
+    ).json()
+    return {
+        record["data"].rstrip(".").lower()
+        for record in answer.get("Answer", [])
+        if record.get("type") == 2
+    }
 
 
 def management_plane_url(api_url: str) -> str:
@@ -153,6 +170,7 @@ def create_environment(
     api_url: str,
     secret: str,
     is_public_endpoint_enabled: bool = True,
+    domain: str | None = None,
 ) -> CreateEnvironmentResponse:
     body = {
         "cloud": cloud,
@@ -160,6 +178,8 @@ def create_environment(
         "global_env": global_env,
         "is_public_endpoint_enabled": is_public_endpoint_enabled,
     }
+    if domain is not None:
+        body["domain"] = domain
     resp = request(
         "POST",
         f"{cpgw_bootstrap_url(api_url)}/environments",
@@ -171,6 +191,24 @@ def create_environment(
         environment = CreateEnvironmentResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}") from e
+
+    if domain is not None:
+        # A control plane that knows the field answers with it. One that does not
+        # ignores it, creates the cell on the default zone and still answers 200 -
+        # so the cell would serve under the customer's zone while every host the
+        # control plane advertises named ours.
+        if not isinstance(resp, dict) or "domain" not in resp:
+            pulumi.log.warn(
+                f"this control plane does not record a domain, so it will advertise "
+                f"hosts under pinecone.io while the cell answers on {domain}. The cell "
+                f"itself is reachable; anything asking the control plane where it lives "
+                f"is not."
+            )
+        elif environment.domain != domain:
+            raise PineconeApiError(
+                500,
+                f"control plane recorded domain {environment.domain!r}, expected {domain!r}",
+            )
 
     return environment
 

@@ -1,0 +1,3 @@
+name: pinecone-byoc-e2e-parent
+description: The zone the byodns shapes hang their cells off. Run by hand, once.
+runtime: python

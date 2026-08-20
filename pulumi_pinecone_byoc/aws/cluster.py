@@ -11,6 +11,7 @@ from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import cell_name as _cell_name
+from ..common.naming import refuse_a_domain_no_certificate_can_cover
 from ..common.pinetools import Pinetools
 from ..common.providers import (
     AmpAccess,
@@ -69,7 +70,8 @@ class PineconeAWSClusterArgs:
     node_pools: list[NodePool] | None = None
 
     # dns
-    parent_dns_zone_name: str = "byoc.pinecone.io"
+    domain: str = "pinecone.io"
+    parent_zone_id: str | None = None
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
@@ -132,6 +134,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
                 api_url=args.api_url,
                 secret=args.pinecone_api_key,
                 is_public_endpoint_enabled=args.public_access_enabled,
+                domain=args.domain if args.domain != "pinecone.io" else None,
             ),
             opts=child_opts,
         )
@@ -184,12 +187,37 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
         )
 
+        refuse_a_domain_no_certificate_can_cover(args.domain, args.region, args.global_env)
+
+        self._subdomain = self._environment.env_name
+
+        self._dns = DNS(
+            f"{config.resource_prefix}-dns",
+            # the control plane advertises {environment}.{domain}, so the zone is that
+            # name and not one reassembled from a label spelled the same in two repos.
+            # The subdomain is separate because cpgw's delegation takes one and appends
+            # the rest itself
+            subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
+            fqdn=self._subdomain.apply(lambda name: f"{name}.{args.domain}"),
+            api_url=args.api_url,
+            cpgw_api_key=self._cpgw_api_key.key,
+            parent_zone_id=args.parent_zone_id,
+            pinecone_hosted=args.domain == "pinecone.io",
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
+        )
+
+        # on a customer's domain the cluster waits on the zone being reachable: seconds
+        # of work against twenty minutes of cluster, and a cell nobody delegated fails
+        # here rather than an hour later inside ACM
         self._eks = EKS(
             f"{config.resource_prefix}-eks",
             config,
             self._vpc,
             cell_name=self._cell_name,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vpc]),
+            opts=pulumi.ResourceOptions(
+                parent=self,
+                depends_on=[self._vpc, *filter(None, [self._dns.delegated])],
+            ),
         )
 
         self._s3 = S3Buckets(
@@ -264,17 +292,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self._subdomain = self._environment.env_name
-
-        self._dns = DNS(
-            f"{config.resource_prefix}-dns",
-            subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            parent_zone_name=args.parent_dns_zone_name,
-            api_url=args.api_url,
-            cpgw_api_key=self._cpgw_api_key.key,
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
-        )
-
         self._k8s_addons = K8sAddons(
             f"{config.resource_prefix}-k8s-addons",
             config,
@@ -326,6 +343,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             k8s_provider=self._eks.provider,
             cluster_security_group_id=self._eks.cluster_security_group_id,
             cell_name=self._cell_name,
+            domain=args.domain,
             public_access_enabled=args.public_access_enabled,
             opts=pulumi.ResourceOptions(
                 parent=self,
@@ -411,6 +429,10 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "region": args.region,
             "global_env": args.global_env,
             "subdomain": self._subdomain,
+            # netstack builds every host it serves from this, defaulting to
+            # pinecone.io when it is absent - so a cell on a customer's domain that
+            # did not say so would resolve on their name and serve on ours
+            "domain": args.domain,
             "availability_zones": args.availability_zones,
             "certificate_arn": self._dns.certificate_arn,
             "dns_zone_id": self._dns.zone_id,
@@ -568,7 +590,6 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             public_access=args.public_access_enabled,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
-            parent_zone_name=args.parent_dns_zone_name,
             custom_ami_id=args.custom_ami_id,
             kms_key_arn=args.kms_key_arn,
             custom_tags=args.tags or {},

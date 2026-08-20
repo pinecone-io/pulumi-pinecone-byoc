@@ -22,9 +22,12 @@ class InternalLoadBalancer(pulumi.ComponentResource):
         external_ip_address: pulumi.Output[str],
         cell_name: pulumi.Input[str],
         public_access_enabled: bool = True,
+        domain: str = "pinecone.io",
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:InternalLoadBalancer", name, None, opts)
+
+        wildcard_host = f"*.{domain}"
 
         self._cell_name = pulumi.Output.from_input(cell_name)
 
@@ -161,7 +164,7 @@ class InternalLoadBalancer(pulumi.ComponentResource):
                 ),
                 rules=[
                     k8s.networking.v1.IngressRuleArgs(
-                        host="*.pinecone.io",
+                        host=wildcard_host,
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
                                 k8s.networking.v1.HTTPIngressPathArgs(

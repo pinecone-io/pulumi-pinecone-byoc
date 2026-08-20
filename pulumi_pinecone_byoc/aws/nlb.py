@@ -47,10 +47,13 @@ class NLB(pulumi.ComponentResource):
         k8s_provider: pulumi.ProviderResource,
         cluster_security_group_id: pulumi.Output[str],
         cell_name: pulumi.Input[str],
+        domain: str = "pinecone.io",
         public_access_enabled: bool = True,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:NLB", name, None, opts)
+
+        wildcard_host = f"*.{domain}"
 
         self.config = config
         self._cell_name = pulumi.Output.from_input(cell_name)
@@ -140,17 +143,17 @@ class NLB(pulumi.ComponentResource):
                 "alb.ingress.kubernetes.io/tags": tags_str,
             }
 
-        def build_http2_annotations(cert_arn: str, subdomain: str, subnets: str) -> dict:
+        def build_http2_annotations(cert_arn: str, subdomain: str, subnets: str, fqdn: str) -> dict:
             return {
                 **_base_annotations(cert_arn, subdomain, subnets),
                 "alb.ingress.kubernetes.io/backend-protocol-version": "HTTP2",
                 "alb.ingress.kubernetes.io/conditions.gateway-proxy": '[{"field":"http-header","httpHeaderConfig":{"httpHeaderName": "Content-Type", "values":["application/grpc"]}}]',
-                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{subdomain}.pinecone.io",
+                "external-dns.alpha.kubernetes.io/hostname": f"private-ingress.{fqdn}",
                 "alb.ingress.kubernetes.io/group.order": "1",
             }
 
         http2_annotations = pulumi.Output.all(
-            dns.private_certificate_arn, dns.subdomain, private_subnets
+            dns.private_certificate_arn, dns.subdomain, private_subnets, dns.fqdn
         ).apply(lambda args: build_http2_annotations(*args))
 
         # private ingress for HTTP2/gRPC traffic
@@ -164,7 +167,7 @@ class NLB(pulumi.ComponentResource):
             spec=k8s.networking.v1.IngressSpecArgs(
                 rules=[
                     k8s.networking.v1.IngressRuleArgs(
-                        host="*.pinecone.io",
+                        host=wildcard_host,
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
                                 k8s.networking.v1.HTTPIngressPathArgs(
@@ -237,7 +240,7 @@ class NLB(pulumi.ComponentResource):
                         ),
                     ),
                     k8s.networking.v1.IngressRuleArgs(
-                        host="*.pinecone.io",
+                        host=wildcard_host,
                         http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                             paths=[
                                 k8s.networking.v1.HTTPIngressPathArgs(
@@ -353,15 +356,12 @@ class NLB(pulumi.ComponentResource):
 
         # PrivateLink setup for private endpoint access
         # consumers create VPC endpoints to this service and get DNS resolution via PrivateLink
-        subdomain = dns.subdomain
         self.vpc_endpoint_service = aws.ec2.VpcEndpointService(
             f"{name}-vpces",
             acceptance_required=False,
             allowed_principals=["*"],
             network_load_balancer_arns=[self.nlb.arn],
-            private_dns_name=pulumi.Output.from_input(subdomain).apply(
-                lambda s: f"*.private.{s}.byoc.pinecone.io"
-            ),
+            private_dns_name=dns.fqdn.apply(lambda f: f"*.private.{f}"),
             opts=child_opts,
         )
 
@@ -387,7 +387,7 @@ class NLB(pulumi.ComponentResource):
         # wait for domain verification before creating VPC endpoint with private DNS
         # AWS verifies the TXT record asynchronously, so we poll until verified
         def wait_for_domain_verification(args) -> str:
-            service_id, service_name, _txt_fqdn = (
+            service_id, service_name, private_dns_name, _txt_fqdn = (
                 args  # _txt_fqdn ensures TXT record is created first
             )
             import boto3
@@ -399,10 +399,12 @@ class NLB(pulumi.ComponentResource):
             if configs:
                 state = configs[0].get("PrivateDnsNameConfiguration", {}).get("State", "")
                 if state == "verified":
-                    pulumi.log.info(f"Private DNS domain already verified for {service_id}")
+                    pulumi.log.info(f"{private_dns_name} already verified for {service_id}")
                     return service_name
 
-            pulumi.log.info("Waiting 60s for DNS propagation before verification...")
+            pulumi.log.info(
+                f"Waiting 60s for {private_dns_name} to propagate before verification..."
+            )
             time.sleep(60)
 
             max_attempts = 30
@@ -419,21 +421,23 @@ class NLB(pulumi.ComponentResource):
                     dns_configs = configs[0].get("PrivateDnsNameConfiguration", {})
                     state = dns_configs.get("State", "")
                     if state == "verified":
-                        pulumi.log.info(f"Private DNS domain verified for {service_id}")
+                        pulumi.log.info(f"{private_dns_name} verified for {service_id}")
                         return service_name
                     elif state == "failed":
-                        raise Exception(f"Private DNS domain verification failed for {service_id}")
+                        raise Exception(f"{private_dns_name} verification failed for {service_id}")
                     pulumi.log.info(
-                        f"Waiting for domain verification ({state})... attempt {attempt + 1}/{max_attempts}"
+                        f"Waiting for {private_dns_name} ({state})... "
+                        f"attempt {attempt + 1}/{max_attempts}"
                     )
                 time.sleep(10)
-            raise Exception(f"Timeout waiting for domain verification for {service_id}")
+            raise Exception(f"Timeout waiting for {private_dns_name} to verify ({service_id})")
 
         # service_name that only resolves after domain verification completes
         # include txt_record.fqdn to ensure TXT record is created before we start waiting
         verified_service_name = pulumi.Output.all(
             self.vpc_endpoint_service.id,
             self.vpc_endpoint_service.service_name,
+            self.vpc_endpoint_service.private_dns_name,
             txt_record.fqdn,
         ).apply(wait_for_domain_verification)
 
@@ -491,7 +495,7 @@ class NLB(pulumi.ComponentResource):
                 spec=k8s.networking.v1.IngressSpecArgs(
                     rules=[
                         k8s.networking.v1.IngressRuleArgs(
-                            host="*.pinecone.io",
+                            host=wildcard_host,
                             http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                                 paths=[
                                     k8s.networking.v1.HTTPIngressPathArgs(
@@ -562,7 +566,7 @@ class NLB(pulumi.ComponentResource):
                 spec=k8s.networking.v1.IngressSpecArgs(
                     rules=[
                         k8s.networking.v1.IngressRuleArgs(
-                            host="*.pinecone.io",
+                            host=wildcard_host,
                             http=k8s.networking.v1.HTTPIngressRuleValueArgs(
                                 paths=[
                                     k8s.networking.v1.HTTPIngressPathArgs(

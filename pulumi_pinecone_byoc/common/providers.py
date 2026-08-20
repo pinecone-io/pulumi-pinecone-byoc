@@ -36,6 +36,7 @@ from .api import (
     delete_dns_delegation,
     delete_environment,
     delete_service_account,
+    resolve_nameservers,
 )
 
 # =============================================================================
@@ -61,6 +62,7 @@ class EnvironmentArgs:
         api_url: pulumi.Input[str],
         secret: pulumi.Input[str],
         is_public_endpoint_enabled: pulumi.Input[bool] = True,
+        domain: pulumi.Input[str] | None = None,
     ):
         self.cloud = cloud
         self.region = region
@@ -68,6 +70,7 @@ class EnvironmentArgs:
         self.api_url = api_url
         self.secret = secret
         self.is_public_endpoint_enabled = is_public_endpoint_enabled
+        self.domain = domain
 
 
 class EnvironmentProvider(ResourceProvider):
@@ -82,6 +85,7 @@ class EnvironmentProvider(ResourceProvider):
             props["secret"],
         )
         is_public_endpoint_enabled = props.get("is_public_endpoint_enabled", True)
+        domain = props.get("domain")
         environment = asyncio.run(
             asyncio.to_thread(
                 create_environment,
@@ -91,6 +95,7 @@ class EnvironmentProvider(ResourceProvider):
                 api_url=api_url,
                 secret=secret,
                 is_public_endpoint_enabled=is_public_endpoint_enabled,
+                domain=domain,
             )
         )
 
@@ -123,6 +128,8 @@ class EnvironmentProvider(ResourceProvider):
             "is_public_endpoint_enabled", True
         ):
             replaces.append("is_public_endpoint_enabled")
+        if _olds.get("domain") != _news.get("domain"):
+            replaces.append("domain")
         return DiffResult(
             changes=len(replaces) > 0 or _olds.get("cloud") != _news.get("cloud"),
             replaces=replaces,
@@ -184,6 +191,7 @@ class Environment(Resource):
             "api_url": args.api_url,
             "secret": args.secret,
             "is_public_endpoint_enabled": args.is_public_endpoint_enabled,
+            "domain": args.domain,
         }
         super().__init__(
             EnvironmentProvider(),
@@ -885,5 +893,79 @@ class CpgwApiKey(Resource):
             CpgwApiKeyProvider(),
             name,
             full_args,
+            opts,
+        )
+
+
+class DelegatedZoneArgs:
+    def __init__(
+        self,
+        fqdn: pulumi.Input[str],
+        nameservers: pulumi.Input[Sequence[str]],
+        wait_seconds: pulumi.Input[int] = 0,
+    ):
+        self.fqdn = fqdn
+        self.nameservers = nameservers
+        self.wait_seconds = wait_seconds
+
+
+class DelegatedZoneProvider(ResourceProvider):
+    def create(self, props: dict[str, Any]) -> CreateResult:
+        fqdn, wanted = props["fqdn"], {n.rstrip(".").lower() for n in props["nameservers"]}
+        deadline = time.time() + int(props.get("wait_seconds") or 0)
+
+        records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
+        asked = False
+
+        while True:
+            served_by = resolve_nameservers(fqdn)
+            if wanted <= served_by:
+                return CreateResult(id_=fqdn, outs={**props, "nameservers_seen": sorted(served_by)})
+            if time.time() >= deadline:
+                break
+            if not asked:
+                # said once, up front: the wait is only useful to somebody who knows
+                # what it is waiting for
+                pulumi.log.info(
+                    f"nothing points at {fqdn} yet. Add these where "
+                    f"{fqdn.split('.', 1)[1]} is served:\n\n{records}\n"
+                )
+                asked = True
+            pulumi.log.info(f"{fqdn} is not delegated yet, checking again in 30s")
+            time.sleep(30)
+
+        raise Exception(
+            f"{fqdn} does not resolve. Nothing points at this cell's zone, so its "
+            f"certificates cannot be issued and the deploy would fail an hour from now.\n\n"
+            f"Add these where {fqdn.split('.', 1)[1]} is served, then run pulumi up again:\n\n"
+            f"{records}\n\n"
+            f"A public resolver currently says {sorted(served_by) or 'nothing'} serves it."
+        )
+
+    def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
+        return DiffResult(changes=_olds.get("fqdn") != _news.get("fqdn"), replaces=["fqdn"])
+
+    def delete(self, _id: str, _props: dict[str, Any]) -> None:
+        return None
+
+
+class DelegatedZone(Resource):
+    nameservers_seen: Output[list]
+
+    def __init__(
+        self,
+        name: str,
+        args: DelegatedZoneArgs,
+        opts: pulumi.ResourceOptions | None = None,
+    ):
+        super().__init__(
+            DelegatedZoneProvider(),
+            name,
+            {
+                "nameservers_seen": None,
+                "fqdn": args.fqdn,
+                "nameservers": args.nameservers,
+                "wait_seconds": args.wait_seconds,
+            },
             opts,
         )

@@ -21,7 +21,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-e59b176"
+PINECONE_VERSION = "main-1f97e6c"
 
 ZONES_OFFERED = 2
 
@@ -470,6 +470,76 @@ class BaseSetupWizard:
             f"Enable public access? ({label})", default, key="PINECONE_PUBLIC_ACCESS"
         )
         return self._yes(response)
+
+    def _get_domain(self, region: str) -> str | None:
+        budget = self._domain_budget(region)
+        console.print()
+        console.print(f"  {self._step('DNS Domain')}")
+        console.print("  [dim]By default the cell resolves under a Pinecone-owned zone.[/]")
+        console.print("  [dim]Enter a domain you own to have it resolve under yours instead.[/]")
+        console.print(
+            "  [dim]A subdomain kept for us is the usual shape: pinecone.acme.com, "
+            "or pc.acme.com where there is less room[/]"
+        )
+        console.print(
+            "  [dim]You will be asked to create one NS record before certificates issue.[/]"
+        )
+        console.print()
+        response = self._prompt(
+            "Domain (blank for pinecone.io)",
+            "",
+            key="PINECONE_DOMAIN",
+        ).strip()
+        if not response:
+            return None
+        if not self._domain_is_well_formed(response):
+            console.print("  [red]A domain looks like corp.example.com — lowercase, with a dot[/]")
+            return self._get_domain(region)
+        if len(response) > budget:
+            console.print(
+                f"  [red]{response} is {len(response)} characters; {budget} is the most "
+                f"that fits in {region}[/]"
+            )
+            console.print(
+                "  [dim]A certificate's first domain name cannot exceed 64 characters, and "
+                "the cell's own name takes the rest[/]"
+            )
+            shorter = f"pc.{response.split('.', 1)[1]}"
+            if len(shorter) <= budget:
+                console.print(f"  [dim]{shorter} would fit, at {len(shorter)}[/]")
+            else:
+                console.print(
+                    f"  [dim]Even one label over {response.split('.', 1)[1]} is too long here; "
+                    f"the zone this hangs off has to be shorter[/]"
+                )
+            return self._get_domain(region)
+        console.print()
+        console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
+        console.print(
+            "  [dim]The deploy will stop and print the record to add, once the control "
+            "plane has named the cell[/]"
+        )
+        return response
+
+    @staticmethod
+    def _domain_budget(region: str) -> int:
+        """What is left of a certificate's 64 characters once the cell has its say.
+
+        The private cert's first domain name is *.svc.private.{cloud}-{region}-{id}
+        .byoc.{domain}, and ACM will not issue one longer than 64 - which a deploy
+        would otherwise discover an hour in.
+        """
+        longest_cell = f"aws-{region}-ab12.byoc"
+        return 64 - len(f"*.svc.private.{longest_cell}.")
+
+    @staticmethod
+    def _domain_is_well_formed(domain: str) -> bool:
+        return (
+            "." in domain
+            and not domain.startswith(".")
+            and not domain.endswith(".")
+            and all(c.islower() or c.isdigit() or c in "-." for c in domain)
+        )
 
     def _get_custom_metadata(self) -> dict[str, str]:
         name = self.METADATA_NAME
@@ -1335,6 +1405,7 @@ class AWSSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr(vpc_id, region)
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access(vpc_id=vpc_id, region=region)
+        domain = self._get_domain(region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
@@ -1356,6 +1427,7 @@ class AWSSetupWizard(BaseSetupWizard):
             cidr,
             deletion_protection,
             public_access,
+            domain,
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
@@ -1776,6 +1848,7 @@ class AWSSetupWizard(BaseSetupWizard):
         cidr: str,
         deletion_protection: bool,
         public_access: bool,
+        domain: str | None,
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
@@ -1827,6 +1900,8 @@ cluster = PineconeAWSCluster(
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        domain=config.get("domain") or "pinecone.io",
+        parent_zone_id=config.get("parent-zone-id"),
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
@@ -1854,6 +1929,7 @@ if config.get_bool("public-access-enabled") is False:
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
         public_access_str = str(public_access).lower()
+        domain_config_line = f"  {project_name}:domain: {domain}\n" if domain else ""
         config_content = f"""config:
   aws:region: {region}
   {project_name}:region: {region}
@@ -1861,7 +1937,7 @@ if config.get_bool("public-access-enabled") is False:
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:availability-zones:
+{domain_config_line}  {project_name}:availability-zones:
 """
         for az in azs:
             config_content += f"    - {az}\n"
@@ -2319,6 +2395,7 @@ class GCPSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
+        domain = self._get_domain(region)
         labels = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(project_id, region, zones, cidr):
@@ -2339,6 +2416,7 @@ class GCPSetupWizard(BaseSetupWizard):
             cidr,
             deletion_protection,
             public_access,
+            domain,
             labels,
             control_plane=self._control_plane_overrides(),
         )
@@ -2481,6 +2559,7 @@ class GCPSetupWizard(BaseSetupWizard):
         cidr: str,
         deletion_protection: bool,
         public_access: bool,
+        domain: str | None,
         labels: dict[str, str],
         control_plane: dict[str, str] | None = None,
     ):
@@ -2528,6 +2607,7 @@ cluster = PineconeGCPCluster(
         vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/16",
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        domain=config.get("domain") or "pinecone.io",
         labels=config.get_object("labels") or {},
         **control_plane,
     ),
@@ -2550,6 +2630,7 @@ if config.get_bool("public-access-enabled") is False:
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
         public_access_str = str(public_access).lower()
+        domain_config_line = f"  {project_name}:domain: {domain}\n" if domain else ""
         config_content = f"""config:
   gcp:project: {project_id}
   {project_name}:region: {region}
@@ -2557,7 +2638,7 @@ if config.get_bool("public-access-enabled") is False:
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:availability-zones:
+{domain_config_line}  {project_name}:availability-zones:
 """
         for zone in zones:
             config_content += f"    - {zone}\n"
@@ -3144,6 +3225,7 @@ class AzureSetupWizard(BaseSetupWizard):
         cidr = self._get_cidr()
         deletion_protection = self._get_deletion_protection()
         public_access = self._get_public_access()
+        domain = self._get_domain(region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
@@ -3166,6 +3248,7 @@ class AzureSetupWizard(BaseSetupWizard):
             cidr,
             deletion_protection,
             public_access,
+            domain,
             tags,
             control_plane=self._control_plane_overrides(),
         )
@@ -3314,6 +3397,7 @@ class AzureSetupWizard(BaseSetupWizard):
         cidr: str,
         deletion_protection: bool,
         public_access: bool,
+        domain: str | None,
         tags: dict[str, str],
         control_plane: dict[str, str] | None = None,
     ):
@@ -3358,6 +3442,7 @@ cluster = PineconeAzureCluster(
         vpc_cidr=config.get("vpc-cidr") or "10.0.0.0/16",
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        domain=config.get("domain") or "pinecone.io",
         tags=config.get_object("tags"),
         **control_plane,
     ),
@@ -3381,6 +3466,7 @@ if config.get_bool("public-access-enabled") is False:
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
         public_access_str = str(public_access).lower()
+        domain_config_line = f"  {project_name}:domain: {domain}\n" if domain else ""
         config_content = f"""config:
   {project_name}:subscription-id: {subscription_id}
   {project_name}:region: {region}
@@ -3388,7 +3474,7 @@ if config.get_bool("public-access-enabled") is False:
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:availability-zones:
+{domain_config_line}  {project_name}:availability-zones:
 """
         for zone in zones:
             config_content += f'    - "{zone}"\n'
