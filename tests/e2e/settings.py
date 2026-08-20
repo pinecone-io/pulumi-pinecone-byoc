@@ -26,6 +26,8 @@ def add_options(parser):
         "comma-separated AZs the e2e deploy uses",
         default="us-east-2a,us-east-2b",
     )
+    parser.addini("azure_region", "Azure region used by integration tests", default="eastus2")
+    parser.addini("azure_azs", "comma-separated Azure zones the e2e deploy uses", default="1,3")
     for ini_key in CONTROL_PLANE_INI:
         parser.addini(ini_key, f"control plane setting passed to the wizard as {ini_key.upper()}")
     parser.addoption(
@@ -74,8 +76,15 @@ def aws_region(config):
     return os.environ.get("AWS_REGION") or config.getini("aws_region")
 
 
-def e2e_azs(config):
-    return os.environ.get("PINECONE_AZS") or config.getini("e2e_azs")
+def e2e_region(config, cloud="aws"):
+    if cloud == "azure":
+        return os.environ.get("PINECONE_REGION") or config.getini("azure_region")
+    return aws_region(config)
+
+
+def e2e_azs(config, cloud="aws"):
+    ini = "azure_azs" if cloud == "azure" else "e2e_azs"
+    return os.environ.get("PINECONE_AZS") or config.getini(ini)
 
 
 def apply_to_environment(config):
@@ -117,8 +126,12 @@ def destroy_targets(config):
         stack_name("byovpc-private", "byoc"),
     ]
     cloud_override = config.getoption("--destroy-cloud")
-    region = config.getoption("--destroy-region") or aws_region(config)
-    return [DestroyTarget(s, _cloud_of(s, cloud_override), region) for s in stacks]
+    override = config.getoption("--destroy-region")
+    targets = []
+    for stack in stacks:
+        cloud = _cloud_of(stack, cloud_override)
+        targets.append(DestroyTarget(stack, cloud, override or e2e_region(config, cloud)))
+    return targets
 
 
 def remember_report(item, report) -> None:
