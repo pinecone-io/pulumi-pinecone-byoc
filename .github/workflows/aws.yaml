@@ -75,7 +75,7 @@ jobs:
             private) select="private and not byovpc" ;;
             *)       select="$SHAPE" ;;
           esac
-          uv run --extra aws pytest -m e2e -s --keep -k "$select"
+          uv run --extra aws pytest -m "e2e and not azure" -s --keep -k "$select"
 
       - name: Upload run logs
         if: always()
