@@ -2,6 +2,7 @@ import contextlib
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .aws import find_cluster_for_vpc, list_clusters
+from .commands import pulumi_json
 
 NAMESPACE = "pc-control-plane"
 UNSCHEDULABLE = "Unschedulable"
@@ -187,34 +189,27 @@ def capture_unhealthy_pod(kubeconfig, namespace, pod, reason):
         )
 
 
-def capture_failed_deploy(region, limit=20):
-    cluster = _STATUS["cluster"]
-    if cluster is None:
-        logging.info("[postmortem] no cluster was ever found - nothing to snapshot")
-        return
+def capture_failed_deploy(project_dir, stack, limit=20):
+    kubeconfig = str(Path(tempfile.mkdtemp()) / "kubeconfig")
     try:
-        kubeconfig = str(Path(tempfile.mkdtemp()) / "kubeconfig")
+        command = pulumi_json("stack", "output", "--json", "--stack", stack, cwd=project_dir)[
+            "update_kubeconfig_command"
+        ]
+        argv = shlex.split(command)
+        if argv[0] == "az":
+            argv += ["--file", kubeconfig]
         subprocess.run(
-            [
-                "aws",
-                "eks",
-                "update-kubeconfig",
-                "--name",
-                cluster,
-                "--region",
-                region,
-                "--kubeconfig",
-                kubeconfig,
-            ],
+            argv,
             capture_output=True,
             text=True,
             check=True,
+            env={**os.environ, "KUBECONFIG": kubeconfig},
         )
     except Exception as exc:  # noqa: BLE001
-        logging.info("[postmortem] could not reach %s: %s: %s", cluster, type(exc).__name__, exc)
+        logging.info("[postmortem] no kubeconfig: %s: %s", type(exc).__name__, exc)
         return
 
-    logging.info("[postmortem] %s: what was not ready when the deploy failed", cluster)
+    logging.info("[postmortem] %s: what was not ready when the deploy failed", stack)
     try:
         capture_nodes(kubeconfig, every_seconds=0)
     except Exception as exc:  # noqa: BLE001
