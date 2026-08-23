@@ -47,7 +47,7 @@ class Engine(pulumi.runtime.Mocks):
         ]
 
 
-def dns(parent_zone_id=None, domain="pinecone.io"):
+def dns(parent_zone_id=None, domain="pinecone.io", delegation_wait_seconds=0):
     engine = Engine()
     pulumi.runtime.set_mocks(engine, preview=False)
     component = DNS(
@@ -58,7 +58,7 @@ def dns(parent_zone_id=None, domain="pinecone.io"):
         cpgw_api_key="not-a-key",
         parent_zone_id=parent_zone_id,
         pinecone_hosted=domain == "pinecone.io",
-        delegation_wait_seconds=0,
+        delegation_wait_seconds=delegation_wait_seconds,
     )
     return engine, component
 
@@ -173,6 +173,45 @@ def test_every_private_name_gets_a_validation_record(domain, records):
             if typ == "aws:route53/record:Record" and "private-cert-validation" in name
         ]
         assert len(validations) == records
+
+    return pulumi.Output.all(component.certificate_arn, component.private_certificate_arn).apply(
+        check
+    )
+
+
+def waits(engine):
+    return [
+        inputs
+        for typ, _name, inputs in engine.resources
+        if typ == DYNAMIC and "wait_seconds" in inputs
+    ]
+
+
+def attempts(engine):
+    return [
+        name for typ, name, inputs in engine.resources if typ == DYNAMIC and "attempts" in inputs
+    ]
+
+
+@pytest.mark.parametrize(
+    ("parent_zone_id", "wait", "counters"),
+    [("Z0PARENT", 300, 0), (None, 0, 1)],
+    ids=[
+        "a_zone_we_write_into_is_waited_for_from_the_first_up",
+        "a_zone_we_cannot_reach_is_not",
+    ],
+)
+@pulumi.runtime.test
+def test_how_long_the_first_up_waits(parent_zone_id, wait, counters):
+    engine, component = dns(
+        parent_zone_id=parent_zone_id, domain="corp.example.com", delegation_wait_seconds=300
+    )
+
+    def check(_arns):
+        waits = [i for typ, _n, i in engine.resources if typ == DYNAMIC and "wait_seconds" in i]
+        attempts = [n for typ, n, _i in engine.resources if typ == DYNAMIC and "attempt" in n]
+        assert [i["wait_seconds"] for i in waits] == [wait]
+        assert len(attempts) == counters
 
     return pulumi.Output.all(component.certificate_arn, component.private_certificate_arn).apply(
         check

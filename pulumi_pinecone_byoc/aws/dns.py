@@ -70,18 +70,27 @@ class DNS(pulumi.ComponentResource):
             self.attempt = None
             self.delegated = None
         else:
-            self.attempt = DelegationAttempt(
-                f"{name}-delegation-attempt",
-                DelegationAttemptArgs(fqdn=fqdn),
-                opts=pulumi.ResourceOptions(parent=self),
+            # nobody has been told the records yet only if nothing here wrote them
+            self.attempt = (
+                None
+                if self.delegation is not None
+                else DelegationAttempt(
+                    f"{name}-delegation-attempt",
+                    DelegationAttemptArgs(fqdn=fqdn),
+                    opts=pulumi.ResourceOptions(parent=self),
+                )
             )
             self.delegated = DelegatedZone(
                 f"{name}-delegated",
                 DelegatedZoneArgs(
                     fqdn=fqdn,
                     nameservers=self.zone.name_servers,
-                    wait_seconds=self.attempt.attempts.apply(
-                        lambda n: 0 if not n or n <= 1 else delegation_wait_seconds
+                    wait_seconds=(
+                        delegation_wait_seconds
+                        if self.attempt is None
+                        else self.attempt.attempts.apply(
+                            lambda n: 0 if not n or n <= 1 else delegation_wait_seconds
+                        )
                     ),
                 ),
                 opts=pulumi.ResourceOptions(
