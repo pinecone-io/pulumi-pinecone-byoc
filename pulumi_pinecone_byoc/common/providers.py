@@ -897,6 +897,49 @@ class CpgwApiKey(Resource):
         )
 
 
+class DelegationAttemptArgs:
+    def __init__(self, fqdn: pulumi.Input[str]):
+        self.fqdn = fqdn
+
+
+class DelegationAttemptProvider(ResourceProvider):
+    """Counts the ups that have asked for a delegation, so the first one need not wait.
+
+    The wait itself cannot tell a first up from a later one: its create raises, so it
+    is never written to state and the next up starts with no memory of it. This
+    succeeds, so it is.
+    """
+
+    def create(self, props: dict[str, Any]) -> CreateResult:
+        return CreateResult(id_=props["fqdn"], outs={**props, "attempts": 1})
+
+    def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
+        return DiffResult(changes=True)
+
+    def update(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> UpdateResult:
+        return UpdateResult(outs={**_news, "attempts": int(_olds.get("attempts") or 1) + 1})
+
+    def delete(self, _id: str, _props: dict[str, Any]) -> None:
+        return None
+
+
+class DelegationAttempt(Resource):
+    attempts: Output[int]
+
+    def __init__(
+        self,
+        name: str,
+        args: DelegationAttemptArgs,
+        opts: pulumi.ResourceOptions | None = None,
+    ):
+        super().__init__(
+            DelegationAttemptProvider(),
+            name,
+            {"attempts": None, "fqdn": args.fqdn},
+            opts,
+        )
+
+
 class DelegatedZoneArgs:
     def __init__(
         self,
@@ -916,7 +959,6 @@ class DelegatedZoneProvider(ResourceProvider):
 
         records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
         asked = False
-
         while True:
             served_by = resolve_nameservers(fqdn)
             if wanted <= served_by:

@@ -1,10 +1,12 @@
 import pulumi
 import pulumi_aws as aws
 
-from ..common.naming import DNS_CNAMES
+from ..common.naming import DNS_CNAMES, PRIVATE_CERTIFICATE_LABEL
 from ..common.providers import (
     DelegatedZone,
     DelegatedZoneArgs,
+    DelegationAttempt,
+    DelegationAttemptArgs,
     DnsDelegation,
     DnsDelegationArgs,
 )
@@ -19,6 +21,7 @@ class DNS(pulumi.ComponentResource):
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         pinecone_hosted: bool,
+        delegation_wait_seconds: int,
         parent_zone_id: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
@@ -63,22 +66,29 @@ class DNS(pulumi.ComponentResource):
         else:
             self.delegation = None
 
-        self.delegated = (
-            None
-            if pinecone_hosted
-            else DelegatedZone(
+        if pinecone_hosted:
+            self.attempt = None
+            self.delegated = None
+        else:
+            self.attempt = DelegationAttempt(
+                f"{name}-delegation-attempt",
+                DelegationAttemptArgs(fqdn=fqdn),
+                opts=pulumi.ResourceOptions(parent=self),
+            )
+            self.delegated = DelegatedZone(
                 f"{name}-delegated",
                 DelegatedZoneArgs(
                     fqdn=fqdn,
                     nameservers=self.zone.name_servers,
-                    wait_seconds=300,
+                    wait_seconds=self.attempt.attempts.apply(
+                        lambda n: 0 if not n or n <= 1 else delegation_wait_seconds
+                    ),
                 ),
                 opts=pulumi.ResourceOptions(
                     parent=self,
                     depends_on=[self.delegation] if self.delegation is not None else [self.zone],
                 ),
             )
-        )
 
         delegated = [r for r in (self.delegated or self.delegation,) if r is not None]
 
@@ -146,8 +156,14 @@ class DNS(pulumi.ComponentResource):
 
         self.private_certificate = aws.acm.Certificate(
             f"{name}-private-cert",
-            domain_name=self._private_dns_domains[0],
-            subject_alternative_names=self._private_dns_domains[1:],
+            domain_name=(
+                self._private_dns_domains[0]
+                if pinecone_hosted
+                else fqdn.apply(lambda f: f"{PRIVATE_CERTIFICATE_LABEL}.{f}")
+            ),
+            subject_alternative_names=(
+                self._private_dns_domains[1:] if pinecone_hosted else self._private_dns_domains
+            ),
             validation_method="DNS",
             tags={**tags, "Name": f"{name}-private-cert"},
             opts=pulumi.ResourceOptions(
@@ -159,7 +175,7 @@ class DNS(pulumi.ComponentResource):
 
         # number of unique validation records depends on domain count
         private_validation_records = []
-        for i in range(len(private_cnames)):
+        for i in range(len(private_cnames) + (0 if pinecone_hosted else 1)):
             private_validation_record = aws.route53.Record(
                 f"{name}-private-cert-validation-{i}",
                 zone_id=self.zone.id,

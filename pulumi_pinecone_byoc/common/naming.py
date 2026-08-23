@@ -15,6 +15,8 @@ CERTIFICATE_NAME_MAX_LENGTH = 64
 
 PINECONE_HOSTED_DOMAIN = "pinecone.io"
 
+PRIVATE_CERTIFICATE_LABEL = "private"
+
 
 def cell_name(environment: Environment) -> pulumi.Output[str]:
     """Derive cell name from environment: e.g. pinecone-byoc-ef7a"""
@@ -39,9 +41,11 @@ def refuse_a_domain_only_aws_can_be_delegated(domain: str, cloud: str) -> None:
 
 
 def refuse_a_domain_no_certificate_can_cover(domain: str, region: str, global_env: str) -> None:
+    if domain == PINECONE_HOSTED_DOMAIN:
+        return
     prefix = "" if global_env == "prod" else f"{global_env}-"
     longest_cell = f"{prefix}aws-{region}-ab12.byoc"
-    budget = CERTIFICATE_NAME_MAX_LENGTH - len(f"*.svc.private.{longest_cell}.")
+    budget = CERTIFICATE_NAME_MAX_LENGTH - len(f"{PRIVATE_CERTIFICATE_LABEL}.{longest_cell}.")
     if len(domain) > budget:
         raise ValueError(
             f"{domain} is {len(domain)} characters, and at most {budget} fit here: a "

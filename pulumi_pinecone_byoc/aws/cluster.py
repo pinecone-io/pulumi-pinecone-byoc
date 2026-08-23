@@ -72,6 +72,7 @@ class PineconeAWSClusterArgs:
     # dns
     domain: str = PINECONE_HOSTED_DOMAIN
     parent_zone_id: str | None = None
+    delegation_wait_seconds: int = 300
 
     # features
     public_access_enabled: bool = True  # false = private access only via privatelink
@@ -112,9 +113,12 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         config = self._build_config(args)
         self._config = config
 
-        self._vpc = VPC(f"{config.resource_prefix}-vpc", config, opts=child_opts)
-
         if args.network_only:
+            self._vpc = VPC(
+                f"{config.resource_prefix}-vpc",
+                config,
+                opts=child_opts,
+            )
             self.register_outputs(
                 {
                     "region": args.region,
@@ -199,7 +203,16 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cpgw_api_key=self._cpgw_api_key.key,
             parent_zone_id=args.parent_zone_id,
             pinecone_hosted=args.domain == PINECONE_HOSTED_DOMAIN,
+            delegation_wait_seconds=args.delegation_wait_seconds,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._cpgw_api_key]),
+        )
+
+        delegated = list(filter(None, [self._dns.delegated])) if not args.network_only else []
+
+        self._vpc = VPC(
+            f"{config.resource_prefix}-vpc",
+            config,
+            opts=pulumi.ResourceOptions(parent=self, depends_on=delegated),
         )
 
         self._eks = EKS(
@@ -209,7 +222,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             cell_name=self._cell_name,
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self._vpc, *filter(None, [self._dns.delegated])],
+                depends_on=[self._vpc],
             ),
         )
 

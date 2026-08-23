@@ -25,7 +25,7 @@ class Engine(pulumi.runtime.Mocks):
                     "resourceRecordType": "CNAME",
                     "resourceRecordValue": f"_value-{i}.acm-validations.aws",
                 }
-                for i in range(3)
+                for i in range(4)
             ]
         return f"{args.name}-id", outputs
 
@@ -58,6 +58,7 @@ def dns(parent_zone_id=None, domain="pinecone.io"):
         cpgw_api_key="not-a-key",
         parent_zone_id=parent_zone_id,
         pinecone_hosted=domain == "pinecone.io",
+        delegation_wait_seconds=0,
     )
     return engine, component
 
@@ -117,3 +118,62 @@ def test_only_aws_takes_a_domain_pinecone_does_not_host(cloud):
     refuse_a_domain_only_aws_can_be_delegated("pinecone.io", cloud)
     with pytest.raises(ValueError, match="resolves under pinecone.io"):
         refuse_a_domain_only_aws_can_be_delegated("corp.example.com", cloud)
+
+
+def private_cert(engine):
+    (cert,) = [
+        inputs
+        for typ, name, inputs in engine.resources
+        if typ == "aws:acm/certificate:Certificate" and "private-cert" in name
+    ]
+    return cert
+
+
+@pytest.mark.parametrize(
+    ("domain", "first_name"),
+    [
+        ("pinecone.io", "*.svc.private.aws-us-east-2-ab12.byoc.pinecone.io"),
+        ("corp.example.com", "private.aws-us-east-2-ab12.byoc.corp.example.com"),
+    ],
+    ids=[
+        "our_own_domain_keeps_the_certificate_it_has",
+        "a_customer_domain_leads_with_a_short_name",
+    ],
+)
+@pulumi.runtime.test
+def test_what_the_private_certificate_is_named(domain, first_name):
+    engine, component = dns(domain=domain)
+
+    def check(_arns):
+        cert = private_cert(engine)
+        assert cert["domainName"] == first_name
+        assert len(cert["domainName"]) <= 64
+        covered = {cert["domainName"], *cert["subjectAlternativeNames"]}
+        for label in ("*.svc", "metrics", "prometheus"):
+            assert f"{label}.private.aws-us-east-2-ab12.byoc.{domain}" in covered
+
+    return pulumi.Output.all(component.certificate_arn, component.private_certificate_arn).apply(
+        check
+    )
+
+
+@pytest.mark.parametrize(
+    ("domain", "records"),
+    [("pinecone.io", 3), ("corp.example.com", 4)],
+    ids=["three_names_three_records", "a_fourth_name_needs_a_fourth_record"],
+)
+@pulumi.runtime.test
+def test_every_private_name_gets_a_validation_record(domain, records):
+    engine, component = dns(domain=domain)
+
+    def check(_arns):
+        validations = [
+            name
+            for typ, name, _inputs in engine.resources
+            if typ == "aws:route53/record:Record" and "private-cert-validation" in name
+        ]
+        assert len(validations) == records
+
+    return pulumi.Output.all(component.certificate_arn, component.private_certificate_arn).apply(
+        check
+    )
