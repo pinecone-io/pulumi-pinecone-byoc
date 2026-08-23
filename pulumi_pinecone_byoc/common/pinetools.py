@@ -3,7 +3,7 @@
 import pulumi
 import pulumi_kubernetes as k8s
 
-INSTALL_DEADLINE_SECONDS = 1800
+INSTALL_DEADLINE_SECONDS = 2000
 
 WAIT_FOR_REGCRED_SCRIPT = """
 echo "Waiting for regcred secret in pc-control-plane namespace..."

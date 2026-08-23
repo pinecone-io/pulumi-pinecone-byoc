@@ -3,6 +3,7 @@ import pathlib
 import pytest
 from wizard import (
     CERTIFICATE_NAME_MAX_LENGTH,
+    CUSTOMER_DOMAIN_LABELS,
     PINECONE_HOSTED_DOMAIN,
     PRIVATE_CERTIFICATE_LABEL,
     AWSSetupWizard,
@@ -68,9 +69,10 @@ def test_a_domain_that_is_not_a_domain_is_rejected(domain, well_formed):
     assert AWSSetupWizard._domain_is_well_formed(domain) is well_formed
 
 
-def test_aws_asks_for_a_domain(monkeypatch):
+def test_the_answer_becomes_a_zone_under_it(monkeypatch):
     monkeypatch.setenv("PINECONE_DOMAIN", "corp.example.com")
-    assert AWSSetupWizard(non_interactive=True)._get_domain("us-east-2") == "corp.example.com"
+    domain = AWSSetupWizard(non_interactive=True)._get_domain("us-east-2")
+    assert domain == f"{CUSTOMER_DOMAIN_LABELS[0]}.corp.example.com"
 
 
 def test_a_blank_answer_leaves_the_cell_on_a_pinecone_domain(monkeypatch):
@@ -113,7 +115,7 @@ def asking(monkeypatch, answers, region="us-east-2"):
 
 def test_a_typo_is_asked_about_again_rather_than_ending_the_run(monkeypatch):
     _, domain = asking(monkeypatch, ["not-a-domain", "corp.example.com"])
-    assert domain == "corp.example.com"
+    assert domain == f"{CUSTOMER_DOMAIN_LABELS[0]}.corp.example.com"
 
 
 def test_a_re_ask_does_not_renumber_the_steps(monkeypatch):
@@ -156,14 +158,32 @@ def test_a_generated_program_imports_only_the_published_surface():
                 ), f"{module} is not part of the published surface a customer's venv may have"
 
 
-def test_a_two_label_domain_is_refused_without_inventing_one(monkeypatch, capsys):
-    """Replacing the first label of acme.com proposes pc.com, which is nobody's zone here."""
+def test_a_domain_that_only_fits_the_short_label_gets_it(monkeypatch):
+    """The label is the only part we choose, so it is the only part we shorten."""
     wizard = AWSSetupWizard(non_interactive=True)
     budget = wizard._domain_budget("ap-southeast-1")
-    theirs = "c" * (budget + 4) + ".com"
+    longest, shortest = CUSTOMER_DOMAIN_LABELS[0], min(CUSTOMER_DOMAIN_LABELS, key=len)
+    theirs = "a" * (budget - len(shortest) - 1) + ".com"
+    theirs = theirs[len(theirs) - (budget - len(shortest) - 1) :]
+
+    monkeypatch.setenv("PINECONE_DOMAIN", theirs)
+    domain = wizard._get_domain("ap-southeast-1")
+
+    assert len(f"{longest}.{theirs}") > budget, "the case is only interesting when it does not fit"
+    assert domain == f"{shortest}.{theirs}"
+
+
+def test_a_domain_no_label_can_fit_is_refused_without_a_substitute(monkeypatch, capsys):
+    wizard = AWSSetupWizard(non_interactive=True)
+    budget = wizard._domain_budget("ap-southeast-1")
+    theirs = "b" * (budget + 4) + ".com"
 
     monkeypatch.setenv("PINECONE_DOMAIN", theirs)
     with pytest.raises(NonInteractiveInputRequired):
         wizard._get_domain("ap-southeast-1")
 
-    assert "pc.com" not in capsys.readouterr().out
+    printed = capsys.readouterr().out
+    for label in CUSTOMER_DOMAIN_LABELS:
+        assert f"{label}.com" not in printed, (
+            "a suggestion built from their tld names a domain they do not own"
+        )

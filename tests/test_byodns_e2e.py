@@ -83,7 +83,8 @@ def test_e2e_byodns(byodns_project):
     region = os.environ["AWS_REGION"]
 
     fqdn = cell_fqdn(project_dir)
-    assert fqdn.endswith(f".byoc.{domain}"), f"{fqdn} did not land under the domain we asked for"
+    assert fqdn.endswith(f".{domain}"), f"{fqdn} did not land under the domain we asked for"
+    assert ".byoc." not in fqdn, f"{fqdn} carries our own label inside a domain the customer owns"
     assert private_dns_verification_state(fqdn, region) == "verified"
 
     if byodns_project["public_access"]:

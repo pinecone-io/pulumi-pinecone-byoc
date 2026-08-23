@@ -21,11 +21,12 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-1f97e6c"
+PINECONE_VERSION = "main-c240072"
 
 CERTIFICATE_NAME_MAX_LENGTH = 64
 PINECONE_HOSTED_DOMAIN = "pinecone.io"
 PRIVATE_CERTIFICATE_LABEL = "private"
+CUSTOMER_DOMAIN_LABELS = ("pinecone", "pc")
 
 ZONES_OFFERED = 2
 
@@ -1327,8 +1328,8 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print("  [dim]By default the cell resolves under a Pinecone-owned zone.[/]")
         console.print("  [dim]Enter a domain you own to have it resolve under yours instead.[/]")
         console.print(
-            "  [dim]A subdomain kept for us is the usual shape: pinecone.acme.com, "
-            "or pc.acme.com where there is less room[/]"
+            f"  [dim]Cells go under {CUSTOMER_DOMAIN_LABELS[0]}.<what you enter>, a zone you "
+            f"delegate to us - so acme.com becomes {CUSTOMER_DOMAIN_LABELS[0]}.acme.com[/]"
         )
         console.print(
             "  [dim]You will be asked to create one NS record before certificates issue.[/]"
@@ -1349,34 +1350,35 @@ class AWSSetupWizard(BaseSetupWizard):
                 )
                 self._refuse_a_domain_nobody_can_correct()
                 continue
-            if len(response) > budget:
+            fits = [
+                f"{label}.{response}"
+                for label in CUSTOMER_DOMAIN_LABELS
+                if len(f"{label}.{response}") <= budget
+            ]
+            if not fits:
+                shortest = min(CUSTOMER_DOMAIN_LABELS, key=len)
                 console.print(
-                    f"  [red]{response} is {len(response)} characters; {budget} is the most "
-                    f"that fits in {region}[/]"
+                    f"  [red]{shortest}.{response} is {len(shortest) + 1 + len(response)} "
+                    f"characters; {budget} is the most that fits in {region}[/]"
                 )
                 console.print(
                     "  [dim]A certificate's first domain name cannot exceed 64 characters, and "
                     "the cell's own name takes the rest[/]"
                 )
-                # only a label of ours can be swapped; their own zone is not ours to shorten
-                theirs = response.split(".", 1)[1]
-                shorter = f"pc.{theirs}" if response.count(".") > 1 else None
-                if shorter is not None and len(shorter) <= budget:
-                    console.print(f"  [dim]{shorter} would fit, at {len(shorter)}[/]")
-                else:
-                    console.print(
-                        f"  [dim]A domain of up to {budget} characters fits here, or the same "
-                        f"one in a region with a shorter name[/]"
-                    )
+                console.print(
+                    f"  [dim]A domain of up to {budget - len(shortest) - 1} characters fits "
+                    f"here, or the same one in a region with a shorter name[/]"
+                )
                 self._refuse_a_domain_nobody_can_correct()
                 continue
+            domain = fits[0]
             console.print()
-            console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
+            console.print(f"  [dim]Cells will answer under {domain}[/]")
+            console.print(f"  [dim]as <cell>.{domain}, once the control plane names the cell[/]")
             console.print(
-                "  [dim]The deploy will stop and print the record to add, once the control "
-                "plane has named the cell[/]"
+                f"  [dim]The deploy will stop and print the NS record to add in {response}[/]"
             )
-            return response
+            return domain
 
     def _refuse_a_domain_nobody_can_correct(self) -> None:
         if self._non_interactive:
@@ -1386,7 +1388,7 @@ class AWSSetupWizard(BaseSetupWizard):
     def _domain_budget(region: str) -> int:
         global_env = os.environ.get("PINECONE_GLOBAL_ENV") or "prod"
         prefix = "" if global_env == "prod" else f"{global_env}-"
-        longest_cell = f"{prefix}aws-{region}-ab12.byoc"
+        longest_cell = f"{prefix}aws-{region}-ab12"
         return CERTIFICATE_NAME_MAX_LENGTH - len(f"{PRIVATE_CERTIFICATE_LABEL}.{longest_cell}.")
 
     @staticmethod

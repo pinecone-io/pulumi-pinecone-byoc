@@ -10,7 +10,11 @@ from ..common.cred_refresher import RegistryCredentialRefresher
 from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
-from ..common.naming import PINECONE_HOSTED_DOMAIN, refuse_a_domain_no_certificate_can_cover
+from ..common.naming import (
+    PINECONE_HOSTED_DOMAIN,
+    host_label,
+    refuse_a_domain_no_certificate_can_cover,
+)
 from ..common.naming import cell_name as _cell_name
 from ..common.pinetools import Pinetools
 from ..common.providers import (
@@ -198,7 +202,9 @@ class PineconeAWSCluster(pulumi.ComponentResource):
         self._dns = DNS(
             f"{config.resource_prefix}-dns",
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            fqdn=self._subdomain.apply(lambda name: f"{name}.{args.domain}"),
+            fqdn=self._subdomain.apply(
+                lambda name: f"{host_label(name, args.domain)}.{args.domain}"
+            ),
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             parent_zone_id=args.parent_zone_id,
@@ -434,7 +440,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "cloud": "aws",
             "region": args.region,
             "global_env": args.global_env,
-            "subdomain": self._subdomain,
+            "subdomain": self._subdomain.apply(lambda name: host_label(name, args.domain)),
             "domain": args.domain,
             "availability_zones": args.availability_zones,
             "certificate_arn": self._dns.certificate_arn,
