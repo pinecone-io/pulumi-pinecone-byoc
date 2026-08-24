@@ -67,6 +67,15 @@ def subnet_cidr(vpc_cidr, index: int, is_public: bool):
     return ipaddress.ip_network((slot.network_address, prefix))
 
 
+def _network_of(cidr: str) -> tuple[int, int]:
+    """A range as its start and its size, so 10.0.16.0/20 sorts before 10.0.144.0/20."""
+    try:
+        net = ipaddress.ip_network(cidr)
+    except ValueError:
+        return 0, 0
+    return int(net.network_address), net.prefixlen
+
+
 def _is_ours(subnet) -> bool:
     key, value = MANAGED_BY
     return any(tag["Key"] == key and tag["Value"] == value for tag in subnet.get("Tags", []))
@@ -1428,7 +1437,7 @@ class AWSSetupWizard(BaseSetupWizard):
         vpc_id = self._get_existing_vpc(region)
         if vpc_id:
             self.TOTAL_STEPS += 1
-        private_subnet_ids, public_subnet_ids = self._get_subnet_ids(region, vpc_id)
+        private_subnet_ids, public_subnet_ids = self._get_subnet_ids(region, vpc_id, azs)
         if private_subnet_ids:
             self.TOTAL_STEPS -= 1
         elif vpc_id:
@@ -1671,21 +1680,62 @@ class AWSSetupWizard(BaseSetupWizard):
             found[az] = seen
         return found
 
-    def _fetch_subnets(self, region: str, vpc_id: str) -> list[tuple[str, str, str]]:
+    def _fetch_subnets(self, region: str, vpc_id: str) -> list[tuple[str, str, str, str]]:
         import boto3
 
         client = boto3.Session().client("ec2", region_name=region)
+        tables = client.describe_route_tables(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])[
+            "RouteTables"
+        ]
+        by_subnet = {
+            association["SubnetId"]: table
+            for table in tables
+            for association in table.get("Associations", [])
+            if association.get("SubnetId")
+        }
+        main = next(
+            (
+                table
+                for table in tables
+                if any(association.get("Main") for association in table.get("Associations", []))
+            ),
+            None,
+        )
         found = client.describe_subnets(Filters=[{"Name": "vpc-id", "Values": [vpc_id]}])
-        return [
+        listed = [
             (
                 subnet["SubnetId"],
                 subnet["AvailabilityZone"],
                 subnet.get("CidrBlock", ""),
+                self._subnet_role(by_subnet.get(subnet["SubnetId"], main)),
             )
             for subnet in found.get("Subnets", [])
         ]
+        return sorted(listed, key=lambda subnet: (subnet[1], _network_of(subnet[2])))
 
-    def _get_subnet_ids(self, region: str, vpc_id: str | None) -> tuple[list[str], list[str]]:
+    @staticmethod
+    def _subnet_role(table) -> str:
+        """Private or public by where the subnet's default route goes.
+
+        A name says nothing: a subnet is public when its 0.0.0.0/0 leaves by an
+        internet gateway, and the nodes need one whose does not. A subnet
+        associated with no table of its own inherits the main one.
+        """
+        if table is None:
+            return "no route table"
+        for route in table.get("Routes", []):
+            if route.get("DestinationCidrBlock") != "0.0.0.0/0":
+                continue
+            if route.get("State") != "active":
+                continue
+            if str(route.get("GatewayId") or "").startswith("igw-"):
+                return "public"
+            return "private"
+        return "no egress"
+
+    def _get_subnet_ids(
+        self, region: str, vpc_id: str | None, azs: list[str]
+    ) -> tuple[list[str], list[str]]:
         if not vpc_id:
             return [], []
 
@@ -1693,30 +1743,67 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print(f"  {self._step('Existing Subnets')}")
         console.print("  [dim]Subnets to deploy into, if the VPC already has them.[/]")
         console.print("  [dim]Leave blank and the module creates its own from a range[/]")
-        console.print()
 
+        found = []
         if not self._non_interactive:
             with contextlib.suppress(Exception):
-                for subnet_id, az, cidr in self._fetch_subnets(region, vpc_id):
-                    console.print(f"    [dim]{subnet_id}  {az}  {cidr}[/]")
+                found = self._fetch_subnets(region, vpc_id)
 
         private = self._parse_subnet_ids(
-            self._prompt(
+            self._prompt_subnet_ids(
                 "Private subnet ids, one per AZ (blank to create them)",
-                "",
-                key="PINECONE_PRIVATE_SUBNET_IDS",
+                "PINECONE_PRIVATE_SUBNET_IDS",
+                [subnet for subnet in found if subnet[3] != "public"],
+                azs,
             )
         )
         if not private:
             return [], []
         public = self._parse_subnet_ids(
-            self._prompt(
+            self._prompt_subnet_ids(
                 "Public subnet ids for ingress (blank for PrivateLink only)",
-                "",
-                key="PINECONE_PUBLIC_SUBNET_IDS",
+                "PINECONE_PUBLIC_SUBNET_IDS",
+                [subnet for subnet in found if subnet[3] == "public"],
+                azs,
             )
         )
         return private, public
+
+    def _prompt_subnet_ids(
+        self, message: str, key: str, offered: list[tuple[str, str, str, str]], azs: list[str]
+    ) -> str:
+        """Ask for one side of the VPC, showing only the subnets that side can use.
+
+        The nodes cannot sit in a subnet routed at an internet gateway and the
+        ingress load balancer has to, so a subnet listed under one prompt is
+        never an answer to the other.
+        """
+        console.print()
+        for subnet_id, az, cidr, role in offered:
+            console.print(f"    [dim]{subnet_id}  {az}  {cidr}  {role}[/]")
+        filling = self._one_per_zone(offered, azs)
+        if filling:
+            console.print("    [dim]Tab fills one per zone[/]")
+        return self._prompt(message, "", key=key, options=[",".join(filling)] if filling else None)
+
+    @staticmethod
+    def _one_per_zone(offered: list[tuple[str, str, str, str]], azs: list[str]) -> list[str] | None:
+        """One usable subnet per zone being deployed to, or nothing to fill with.
+
+        A zone with none leaves an answer the preflight checks would refuse, and
+        filling the prompt with it would read as an endorsement of it.
+        """
+        picks = []
+        for az in azs:
+            in_zone = [
+                subnet_id
+                for subnet_id, zone, _, role in offered
+                if zone == az and role in ("private", "public")
+            ]
+            if not in_zone:
+                return None
+            picks.append(in_zone[0])
+        return picks
 
     @staticmethod
     def _parse_subnet_ids(value: str) -> list[str]:

@@ -7,7 +7,13 @@ until an hour of deploy ends with the module building a VPC of its own.
 import ipaddress
 
 import pytest
-from wizard import MANAGED_BY, AWSPreflightChecker, AWSSetupWizard, subnet_cidr
+from wizard import (
+    MANAGED_BY,
+    AWSPreflightChecker,
+    AWSSetupWizard,
+    subnet_cidr,
+)
+from wizard import _network_of as wizard_network_of
 
 from pulumi_pinecone_byoc.aws import vpc_subnet
 
@@ -896,3 +902,123 @@ def test_adopted_subnets_covering_the_configured_zones_pass():
     check._check_their_subnets()
 
     assert check.results[-1].passed, "more than one subnet in a zone is still that zone"
+
+
+@pytest.mark.parametrize(
+    ("routes", "role"),
+    [
+        (
+            [{"DestinationCidrBlock": "0.0.0.0/0", "State": "active", "GatewayId": "igw-t"}],
+            "public",
+        ),
+        (
+            [{"DestinationCidrBlock": "0.0.0.0/0", "State": "active", "NatGatewayId": "nat-t"}],
+            "private",
+        ),
+        ([{"DestinationCidrBlock": "10.0.0.0/16", "State": "active"}], "no egress"),
+        (
+            [{"DestinationCidrBlock": "0.0.0.0/0", "State": "blackhole", "NatGatewayId": "nat-t"}],
+            "no egress",
+        ),
+    ],
+)
+def test_the_subnets_offered_are_named_by_where_their_default_route_goes(routes, role):
+    assert AWSSetupWizard._subnet_role({"Routes": routes}) == role
+
+
+def test_a_subnet_with_no_route_table_of_its_own_is_named_as_such():
+    assert AWSSetupWizard._subnet_role(None) == "no route table"
+
+
+SUBNETS_OF_THEIRS = [
+    ("subnet-public-a", "us-east-2a", "10.0.0.0/20", "public"),
+    ("subnet-private-a", "us-east-2a", "10.0.128.0/20", "private"),
+    ("subnet-public-b", "us-east-2b", "10.0.16.0/20", "public"),
+    ("subnet-private-b", "us-east-2b", "10.0.144.0/20", "private"),
+]
+
+
+def asking_for_subnets(found, answers=("", "")):
+    made = object.__new__(AWSSetupWizard)
+    made._current_step = 0
+    made.TOTAL_STEPS = 17
+    made._non_interactive = False
+    made._fetch_subnets = lambda region, vpc_id: list(found)
+    asked: list[dict] = []
+    replies = iter(answers)
+
+    def prompt(message, default, key=None, options=None, **kwargs):
+        asked.append({"message": message, "options": options})
+        print(f"<<prompt {len(asked)}>>")
+        return next(replies)
+
+    made._prompt = prompt
+    return made, asked
+
+
+def shown(out: str) -> list[str]:
+    """What was printed above each prompt, split at the prompt itself."""
+    return out.split("<<prompt 1>>")[0], out.split("<<prompt 1>>")[-1].split("<<prompt 2>>")[0]
+
+
+def test_a_public_subnet_is_not_offered_as_an_answer_to_the_private_prompt(capsys):
+    wizard, asked = asking_for_subnets(
+        SUBNETS_OF_THEIRS, answers=("subnet-private-a,subnet-private-b", "")
+    )
+
+    wizard._get_subnet_ids("us-east-2", "vpc-theirs", ["us-east-2a", "us-east-2b"])
+
+    private, _ = shown(capsys.readouterr().out)
+    assert "subnet-public-a" not in private, "the nodes cannot sit behind their gateway"
+    assert "subnet-private-a" in private
+    assert asked[1]["message"].startswith("Public subnet ids")
+
+
+def test_a_private_subnet_is_not_offered_as_an_answer_to_the_public_prompt(capsys):
+    wizard, asked = asking_for_subnets(
+        SUBNETS_OF_THEIRS, answers=("subnet-private-a,subnet-private-b", "")
+    )
+
+    wizard._get_subnet_ids("us-east-2", "vpc-theirs", ["us-east-2a", "us-east-2b"])
+
+    _, ingress = shown(capsys.readouterr().out)
+    assert "subnet-public-a" in ingress
+    assert "subnet-private-a" not in ingress, "ingress has to be reachable from outside"
+
+
+def test_tab_fills_one_subnet_per_zone_being_deployed_to():
+    wizard, asked = asking_for_subnets(SUBNETS_OF_THEIRS, answers=("", ""))
+
+    wizard._get_subnet_ids("us-east-2", "vpc-theirs", ["us-east-2a", "us-east-2b"])
+
+    assert asked[0]["options"] == ["subnet-private-a,subnet-private-b"]
+
+
+def test_nothing_is_offered_to_fill_with_when_a_zone_has_no_subnet_of_theirs():
+    """Filling with a set the preflight checks would refuse reads as an endorsement."""
+    wizard, asked = asking_for_subnets(
+        [s for s in SUBNETS_OF_THEIRS if s[1] != "us-east-2b"], answers=("", "")
+    )
+
+    wizard._get_subnet_ids("us-east-2", "vpc-theirs", ["us-east-2a", "us-east-2b"])
+
+    assert asked[0]["options"] is None
+
+
+def test_a_subnet_that_cannot_leave_is_shown_but_never_filled_in():
+    listed = [
+        ("subnet-stuck-a", "us-east-2a", "10.0.32.0/20", "no egress"),
+        *SUBNETS_OF_THEIRS,
+    ]
+    wizard, asked = asking_for_subnets(listed, answers=("", ""))
+
+    wizard._get_subnet_ids("us-east-2", "vpc-theirs", ["us-east-2a", "us-east-2b"])
+
+    assert "subnet-stuck-a" not in (asked[0]["options"] or [""])[0]
+
+
+def test_the_ranges_are_listed_in_the_order_they_run():
+    """A string sort puts 10.0.144.0/20 above 10.0.16.0/20; the numbers do not."""
+    cidrs = ["10.0.144.0/20", "10.0.16.0/20", "10.0.0.0/20"]
+
+    assert sorted(cidrs, key=wizard_network_of) == ["10.0.0.0/20", "10.0.16.0/20", "10.0.144.0/20"]
