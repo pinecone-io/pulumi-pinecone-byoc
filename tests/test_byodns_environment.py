@@ -41,12 +41,14 @@ def test_the_domain_the_control_plane_echoes_back_is_accepted(monkeypatch):
     assert warnings == []
 
 
-def test_a_control_plane_that_records_no_domain_only_warns(monkeypatch):
-    warnings = []
-    _, environment = call(monkeypatch, ENVIRONMENT, "corp.example.com", warnings)
+def test_a_control_plane_that_records_no_domain_is_refused(monkeypatch):
+    with pytest.raises(PineconeApiError, match="does not record a domain"):
+        call(monkeypatch, ENVIRONMENT, "corp.example.com", [])
+
+
+def test_our_own_domain_asks_the_control_plane_for_nothing(monkeypatch):
+    _, environment = call(monkeypatch, ENVIRONMENT, None, [])
     assert environment.domain is None
-    assert len(warnings) == 1
-    assert "corp.example.com" in warnings[0]
 
 
 def test_a_control_plane_that_records_another_domain_is_refused(monkeypatch):

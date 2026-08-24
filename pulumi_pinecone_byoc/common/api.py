@@ -189,11 +189,12 @@ def create_environment(
 
     if domain is not None:
         if not isinstance(resp, dict) or "domain" not in resp:
-            pulumi.log.warn(
-                f"this control plane does not record a domain, so it will advertise "
-                f"hosts under pinecone.io while the cell answers on {domain}. The cell "
-                f"itself is reachable; anything asking the control plane where it lives "
-                f"is not."
+            raise PineconeApiError(
+                500,
+                f"this control plane does not record a domain, so it would advertise hosts "
+                f"under pinecone.io while the cell answers on {domain}. Every client asking "
+                f"it where an index lives would be sent to a name nothing serves. Point "
+                f"api-url at a control plane that records one.",
             )
         elif environment.domain != domain:
             raise PineconeApiError(
