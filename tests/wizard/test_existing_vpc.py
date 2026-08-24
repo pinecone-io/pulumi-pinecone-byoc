@@ -956,7 +956,7 @@ def asking_for_subnets(found, answers=("", "")):
     return made, asked
 
 
-def shown(out: str) -> list[str]:
+def shown(out: str) -> tuple[str, str]:
     """What was printed above each prompt, split at the prompt itself."""
     return out.split("<<prompt 1>>")[0], out.split("<<prompt 1>>")[-1].split("<<prompt 2>>")[0]
 
