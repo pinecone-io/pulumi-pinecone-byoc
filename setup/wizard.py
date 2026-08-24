@@ -25,6 +25,18 @@ PINECONE_VERSION = "main-e59b176"
 
 ZONES_OFFERED = 2
 
+# mirrors EGRESS_TARGETS in pulumi_pinecone_byoc/aws/vpc_route.py, in boto3's spelling:
+# what a default route can leave by and still reach the registry. peering cannot, so a
+# subnet routed that way is offered as neither private nor public
+EGRESS_ROUTE_FIELDS = (
+    "NatGatewayId",
+    "TransitGatewayId",
+    "VpcEndpointId",
+    "NetworkInterfaceId",
+    "InstanceId",
+    "CoreNetworkArn",
+)
+
 MIN_VPC_PREFIX = 16
 MAX_VPC_PREFIX = 20
 MAX_AZS = 3
@@ -1728,9 +1740,12 @@ class AWSSetupWizard(BaseSetupWizard):
                 continue
             if route.get("State") != "active":
                 continue
-            if str(route.get("GatewayId") or "").startswith("igw-"):
+            gateway = str(route.get("GatewayId") or "")
+            if gateway.startswith("igw-"):
                 return "public"
-            return "private"
+            if gateway.startswith("vgw-") or any(route.get(f) for f in EGRESS_ROUTE_FIELDS):
+                return "private"
+            return "no egress"
         return "no egress"
 
     def _get_subnet_ids(

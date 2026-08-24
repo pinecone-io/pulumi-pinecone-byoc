@@ -920,6 +920,24 @@ def test_adopted_subnets_covering_the_configured_zones_pass():
             [{"DestinationCidrBlock": "0.0.0.0/0", "State": "blackhole", "NatGatewayId": "nat-t"}],
             "no egress",
         ),
+        (
+            [
+                {
+                    "DestinationCidrBlock": "0.0.0.0/0",
+                    "State": "active",
+                    "VpcPeeringConnectionId": "pcx-t",
+                }
+            ],
+            "no egress",
+        ),
+        (
+            [{"DestinationCidrBlock": "0.0.0.0/0", "State": "active", "GatewayId": "vgw-t"}],
+            "private",
+        ),
+        (
+            [{"DestinationCidrBlock": "0.0.0.0/0", "State": "active", "TransitGatewayId": "tgw-t"}],
+            "private",
+        ),
     ],
 )
 def test_the_subnets_offered_are_named_by_where_their_default_route_goes(routes, role):
