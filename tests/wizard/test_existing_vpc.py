@@ -5,9 +5,11 @@ until an hour of deploy ends with the module building a VPC of its own.
 """
 
 import ipaddress
+from types import SimpleNamespace
 
 import pytest
 from wizard import (
+    EGRESS_ROUTE_FIELDS,
     MANAGED_BY,
     AWSPreflightChecker,
     AWSSetupWizard,
@@ -15,7 +17,7 @@ from wizard import (
 )
 from wizard import _network_of as wizard_network_of
 
-from pulumi_pinecone_byoc.aws import vpc_subnet
+from pulumi_pinecone_byoc.aws import vpc_route, vpc_subnet
 
 
 def checker(**kwargs):
@@ -1040,3 +1042,36 @@ def test_the_ranges_are_listed_in_the_order_they_run():
     cidrs = ["10.0.144.0/20", "10.0.16.0/20", "10.0.0.0/20"]
 
     assert sorted(cidrs, key=wizard_network_of) == ["10.0.0.0/20", "10.0.16.0/20", "10.0.144.0/20"]
+
+
+def test_the_wizard_and_the_module_agree_on_what_egress_is():
+    """The wizard runs before the module is installed, so the list is copied.
+
+    A comment is what holds the two together, and a comment does not fail. The same
+    duplication in the domain budget has a test of its own for the same reason.
+    """
+    in_boto3_spelling = tuple(
+        "".join(word.capitalize() for word in field.split("_"))
+        for field in vpc_route.EGRESS_TARGETS
+    )
+
+    assert in_boto3_spelling == EGRESS_ROUTE_FIELDS
+
+
+def test_a_virtual_private_gateway_is_egress_to_both_of_them():
+    """Neither names it in its list: both read it off the gateway id."""
+    assert vpc_route.egress_target(SimpleNamespace(gateway_id="vgw-theirs")) == "vgw-theirs"
+    assert (
+        AWSSetupWizard._subnet_role(
+            {
+                "Routes": [
+                    {
+                        "DestinationCidrBlock": "0.0.0.0/0",
+                        "State": "active",
+                        "GatewayId": "vgw-theirs",
+                    }
+                ]
+            }
+        )
+        == "private"
+    )
