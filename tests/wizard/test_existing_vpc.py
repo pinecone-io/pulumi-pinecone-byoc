@@ -868,3 +868,31 @@ def test_adopting_without_public_subnets_offers_no_public_access_however_their_g
         vpc_id="vpc-theirs", region="us-east-2", adopted_public_subnets=False
     )
     assert asked["default"] == "n"
+
+
+def test_adopted_subnets_are_checked_against_the_zones_the_cell_is_configured_for():
+    check = checker(
+        azs=["us-east-2a", "us-east-2b"],
+        private_subnet_ids=["subnet-a", "subnet-c"],
+        ec2=_ec2(subnets_by_az={"us-east-2a": ["subnet-a"], "us-east-2c": ["subnet-c"]}),
+    )
+
+    check._check_their_subnets()
+
+    assert not check.results[-1].passed
+    assert "us-east-2c" in check.results[-1].message
+    assert "us-east-2b" in check.results[-1].message
+
+
+def test_adopted_subnets_covering_the_configured_zones_pass():
+    check = checker(
+        azs=["us-east-2a", "us-east-2b"],
+        private_subnet_ids=["subnet-a1", "subnet-a2", "subnet-b"],
+        ec2=_ec2(
+            subnets_by_az={"us-east-2a": ["subnet-a1", "subnet-a2"], "us-east-2b": ["subnet-b"]}
+        ),
+    )
+
+    check._check_their_subnets()
+
+    assert check.results[-1].passed, "more than one subnet in a zone is still that zone"

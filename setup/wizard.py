@@ -799,7 +799,9 @@ class AWSPreflightChecker:
             return
         self._add_result("VPC CIDR", True, f"{ours} is free to associate with {self.vpc_id}")
 
-    def _zones_of_theirs(self, name: str, subnet_ids: list[str]) -> set[str] | None:
+    def _zones_of_theirs(
+        self, name: str, subnet_ids: list[str], covering: list[str] | None = None
+    ) -> set[str] | None:
         try:
             found = self.ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
         except Exception as e:  # noqa: BLE001 - reported as a failed check
@@ -821,11 +823,23 @@ class AWSPreflightChecker:
                 "subnet per zone",
             )
             return None
+        if covering and set(covering) != zones:
+            self._add_result(
+                name,
+                False,
+                f"the subnets given are in {', '.join(sorted(zones))}, and the cell is "
+                f"configured for {', '.join(covering)}",
+                "The nodes land in the zones their subnets are in, while the capacity "
+                "checks and the cell config follow the zones configured. Give one "
+                f"subnet per configured zone, or set the zones to "
+                f"{', '.join(sorted(zones))}",
+            )
+            return None
         self._add_result(name, True, f"{len(found)} subnets across {', '.join(sorted(zones))}")
         return zones
 
     def _check_their_subnets(self):
-        self._zones_of_theirs("Subnets", list(self.private_subnet_ids or []))
+        self._zones_of_theirs("Subnets", list(self.private_subnet_ids or []), covering=self.azs)
 
     def _check_their_ingress_subnets(self):
         if not self.public_access:

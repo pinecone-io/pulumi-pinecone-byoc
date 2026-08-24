@@ -59,7 +59,9 @@ class VPC(pulumi.ComponentResource):
 
         self._verify_in_vpc(vpc_id, private_ids + public_ids)
 
-        self._private_cidrs = [aws.ec2.get_subnet(id=subnet).cidr_block for subnet in private_ids]
+        theirs = [aws.ec2.get_subnet(id=subnet) for subnet in private_ids]
+        self._verify_zones(config, {subnet.availability_zone for subnet in theirs})
+        self._private_cidrs = [subnet.cidr_block for subnet in theirs]
 
         vpc_perms.warn(config, vpc_id, {})
 
@@ -67,6 +69,23 @@ class VPC(pulumi.ComponentResource):
         self.public_subnets: list[aws.ec2.Subnet] = []
         self._create_lb_backend_sg(name, config, vpc_id, pulumi.ResourceOptions(parent=self))
         self._register_outputs(vpc_id, public_ids, private_ids)
+
+    @staticmethod
+    def _verify_zones(config: AWSConfig, zones: set[str]) -> None:
+        """The zones the subnets are in are the zones the cell is built for.
+
+        Nothing reconciles the two later: the nodes go where the subnets are, while
+        the instance-type check, the database layout and the cell config the control
+        plane is given all follow availability_zones.
+        """
+        wanted = set(config.availability_zones)
+        if zones != wanted:
+            raise ValueError(
+                f"The subnets given are in {', '.join(sorted(zones))}, and this cell is "
+                f"built for {', '.join(config.availability_zones)}. Give one subnet per "
+                "availability zone being deployed to, or set availability_zones to the "
+                "zones the subnets are in."
+            )
 
     @staticmethod
     def _verify_in_vpc(vpc_id: str, subnet_ids: list[str]) -> None:

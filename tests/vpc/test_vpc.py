@@ -622,3 +622,23 @@ def test_a_subnet_from_another_vpc_is_refused_by_name():
 
     with pytest.raises(ValueError, match="subnet-stranger"):
         adopting(public_access=False, private=("subnet-theirs-a", "subnet-stranger"))
+
+
+def test_adopting_subnets_from_a_zone_the_cell_is_not_built_for_is_refused():
+    """The nodes go where the subnets are; everything else follows the zones configured."""
+    engine_with(
+        subnets={
+            "subnet-theirs-a": a_subnet("us-east-2a", "10.0.11.0/24"),
+            "subnet-theirs-c": a_subnet("us-east-2c", "10.0.12.0/24"),
+        }
+    )
+
+    with pytest.raises(ValueError, match="us-east-2c"):
+        adopting(public_access=False, private=("subnet-theirs-a", "subnet-theirs-c"))
+
+
+def test_adopting_leaves_no_configured_zone_without_a_subnet():
+    engine_with(subnets=ADOPTED)
+
+    with pytest.raises(ValueError, match="us-east-2b"):
+        adopting(public_access=False, private=("subnet-theirs-a",))
