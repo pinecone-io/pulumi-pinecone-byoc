@@ -165,7 +165,9 @@ def sweep_stale_delegations(zone_id, domain):
         record
         for page in r53.get_paginator("list_resource_record_sets").paginate(HostedZoneId=zone_id)
         for record in page["ResourceRecordSets"]
-        if record["Type"] == "NS" and record["Name"].rstrip(".").endswith(f".byoc.{domain}")
+        if record["Type"] == "NS"
+        and record["Name"].rstrip(".").endswith(f".{domain}")
+        and record["Name"].rstrip(".") != domain
     ]
     for record in stale:
         logging.info("[byodns] removing a delegation an earlier run left: %s", record["Name"])

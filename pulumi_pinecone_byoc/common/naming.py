@@ -40,11 +40,21 @@ def refuse_a_domain_only_aws_can_be_delegated(domain: str, cloud: str) -> None:
         )
 
 
+def host_label(environment: str, domain: str) -> str:
+    """The label a host uses for an environment under `domain`.
+
+    Mirrors pc-cps: the `.byoc` suffix an environment name carries separates BYOC
+    cells from managed ones inside pinecone.io, and means nothing in a zone the
+    customer owns, where every name is a BYOC cell.
+    """
+    return environment if domain == PINECONE_HOSTED_DOMAIN else environment.removesuffix(".byoc")
+
+
 def refuse_a_domain_no_certificate_can_cover(domain: str, region: str, global_env: str) -> None:
     if domain == PINECONE_HOSTED_DOMAIN:
         return
     prefix = "" if global_env == "prod" else f"{global_env}-"
-    longest_cell = f"{prefix}aws-{region}-ab12.byoc"
+    longest_cell = host_label(f"{prefix}aws-{region}-ab12.byoc", domain)
     budget = CERTIFICATE_NAME_MAX_LENGTH - len(f"{PRIVATE_CERTIFICATE_LABEL}.{longest_cell}.")
     if len(domain) > budget:
         raise ValueError(
