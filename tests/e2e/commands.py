@@ -12,6 +12,8 @@ def run(*args, cwd, env=None):
         args,
         cwd=cwd,
         text=True,
+        encoding="utf-8",
+        errors="replace",
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         bufsize=1,
@@ -42,7 +44,15 @@ def pulumi_quiet(*args, cwd):
     A failure still logs what pulumi said - a swallowed exit code with no
     explanation is what made the old teardown impossible to diagnose.
     """
-    result = subprocess.run(["pulumi", *args], cwd=cwd, text=True, capture_output=True, check=False)
+    result = subprocess.run(
+        ["pulumi", *args],
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
     logging.info("$ pulumi %s -> exit %s", " ".join(args), result.returncode)
     if result.returncode != 0:
         logging.info("%s", redact(result.stderr or result.stdout or "(no output)").strip())
@@ -50,7 +60,15 @@ def pulumi_quiet(*args, cwd):
 
 
 def pulumi_json(*args, cwd):
-    result = subprocess.run(["pulumi", *args], cwd=cwd, text=True, capture_output=True, check=False)
+    result = subprocess.run(
+        ["pulumi", *args],
+        cwd=cwd,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        check=False,
+    )
     if result.returncode != 0:
         raise AssertionError(
             f"`pulumi {' '.join(args)}` failed with exit {result.returncode}\n"
