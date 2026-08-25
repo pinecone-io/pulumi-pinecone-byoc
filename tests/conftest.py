@@ -1,3 +1,5 @@
+import ast
+import importlib.util
 import logging
 import os
 import sys
@@ -8,6 +10,41 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "setup"))
 
 from e2e import log_config, settings  # noqa: E402
+
+CLOUD_SDKS = {"aws": "pulumi_aws", "gcp": "pulumi_gcp", "azure": "pulumi_azure_native"}
+UNINSTALLED = {
+    name
+    for cloud, sdk in CLOUD_SDKS.items()
+    for name in (sdk, f"pulumi_pinecone_byoc.{cloud}")
+    if importlib.util.find_spec(sdk) is None
+}
+
+
+def _imported_modules(path):
+    for node in ast.walk(ast.parse(path.read_text())):
+        if isinstance(node, ast.Import):
+            yield from (alias.name for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            yield node.module
+
+
+def _needs_uninstalled_sdk(path):
+    return any(
+        name in UNINSTALLED or name.startswith(tuple(f"{n}." for n in UNINSTALLED))
+        for name in _imported_modules(path)
+    )
+
+
+def pytest_ignore_collect(collection_path, config):
+    if not UNINSTALLED:
+        return None
+    if collection_path.is_dir():
+        conftest = collection_path / "conftest.py"
+        if conftest.is_file() and _needs_uninstalled_sdk(conftest):
+            return True
+    elif collection_path.suffix == ".py" and _needs_uninstalled_sdk(collection_path):
+        return True
+    return None
 
 
 def pytest_addoption(parser):
