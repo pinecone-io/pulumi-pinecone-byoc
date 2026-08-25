@@ -23,7 +23,7 @@ jobs:
       max-parallel: 1
       fail-fast: false
       matrix:
-        shape: [vanilla, private, byovpc-public, byovpc-private]
+        shape: [vanilla, private, byovpc-public, byovpc-private, byodns-public, byodns-private]
     uses: ./.github/workflows/aws.yaml
     with:
       shape: ${{ matrix.shape }}
