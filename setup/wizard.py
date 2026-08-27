@@ -825,7 +825,11 @@ class AWSPreflightChecker:
         self._add_result("VPC CIDR", True, f"{ours} is free to associate with {self.vpc_id}")
 
     def _zones_of_theirs(
-        self, name: str, subnet_ids: list[str], covering: list[str] | None = None
+        self,
+        name: str,
+        subnet_ids: list[str],
+        covering: list[str] | None = None,
+        report_pass: bool = True,
     ) -> set[str] | None:
         try:
             found = self.ec2.describe_subnets(SubnetIds=subnet_ids)["Subnets"]
@@ -860,7 +864,8 @@ class AWSPreflightChecker:
                 f"{', '.join(sorted(zones))}",
             )
             return None
-        self._add_result(name, True, f"{len(found)} subnets across {', '.join(sorted(zones))}")
+        if report_pass:
+            self._add_result(name, True, f"{len(found)} subnets across {', '.join(sorted(zones))}")
         return zones
 
     def _check_their_subnets(self):
@@ -883,7 +888,53 @@ class AWSPreflightChecker:
                 "off and reach the data plane over PrivateLink",
             )
             return
-        self._zones_of_theirs("Ingress Subnets", wanted)
+        zones = self._zones_of_theirs("Ingress Subnets", wanted, report_pass=False)
+        if zones is None:
+            return
+        # a name says nothing, and neither does a zone: the load balancer is refused a
+        # subnet whose default route does not leave by the internet gateway
+        try:
+            landlocked = [
+                subnet
+                for subnet in wanted
+                if not any(self._gateway_of(t) for t in self._tables_for([subnet]))
+            ]
+        except Exception as e:  # noqa: BLE001 - reported as a failed check
+            self._add_result(
+                "Ingress Subnets",
+                False,
+                "Could not read the route tables of the subnets given",
+                str(e),
+            )
+            return
+        if landlocked:
+            self._add_result(
+                "Ingress Subnets",
+                False,
+                f"{', '.join(landlocked)} do not route to an internet gateway",
+                "An internet-facing load balancer sits in a subnet whose default route "
+                "leaves by the VPC's internet gateway, and a private subnet cannot carry "
+                "it. Give the public ones, or turn public access off and reach the data "
+                "plane over PrivateLink",
+            )
+            return
+        self._add_result(
+            "Ingress Subnets",
+            True,
+            f"{len(wanted)} subnets across {', '.join(sorted(zones))}, each routed at an "
+            "internet gateway",
+        )
+
+    @staticmethod
+    def _gateway_of(table) -> str | None:
+        """The internet gateway a table's default route leaves by, or nothing."""
+        for route in table.get("Routes", []):
+            if route.get("DestinationCidrBlock") != "0.0.0.0/0" or route.get("State") != "active":
+                continue
+            gateway = str(route.get("GatewayId") or "")
+            if gateway.startswith("igw-"):
+                return gateway
+        return None
 
     @staticmethod
     def _egress_target(route):

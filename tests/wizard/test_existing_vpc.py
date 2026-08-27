@@ -829,13 +829,57 @@ def test_one_ingress_subnet_is_refused_because_a_load_balancer_needs_two_zones()
     assert "two availability zones" in made.results[-1].details
 
 
-def test_ingress_subnets_in_two_zones_pass():
+PUBLIC_TABLE = {"rtb-pub": {"GatewayId": "igw-theirs", "subnets": ["subnet-pub-a", "subnet-pub-b"]}}
+
+
+def test_ingress_subnets_in_two_zones_routed_at_their_gateway_pass():
     made = checker(
         public_access=True,
         private_subnet_ids=["subnet-a", "subnet-b"],
         public_subnet_ids=["subnet-pub-a", "subnet-pub-b"],
     )
-    made.ec2 = _ec2(subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]})
+    made.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]},
+        tables=PUBLIC_TABLE,
+    )
+
+    made._check_their_ingress_subnets()
+
+    assert made.results[-1].passed
+
+
+def test_an_ingress_subnet_that_does_not_route_to_the_gateway_is_refused_by_name():
+    """Two private subnets given as public pass every check but the one that matters."""
+    made = checker(
+        public_access=True,
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        public_subnet_ids=["subnet-pub-a", "subnet-pub-b"],
+    )
+    made.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]},
+        tables={
+            "rtb-pub": {"GatewayId": "igw-theirs", "subnets": ["subnet-pub-a"]},
+            "rtb-nat": {"NatGatewayId": "nat-b", "subnets": ["subnet-pub-b"]},
+        },
+    )
+
+    made._check_their_ingress_subnets()
+
+    assert not made.results[-1].passed
+    assert "subnet-pub-b" in made.results[-1].message
+    assert "subnet-pub-a" not in made.results[-1].message
+
+
+def test_an_ingress_subnet_inheriting_a_main_table_that_leaves_by_the_gateway_passes():
+    made = checker(
+        public_access=True,
+        private_subnet_ids=["subnet-a", "subnet-b"],
+        public_subnet_ids=["subnet-pub-a", "subnet-pub-b"],
+    )
+    made.ec2 = _ec2(
+        subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]},
+        tables={"rtb-main": {"GatewayId": "igw-theirs", "main": True}},
+    )
 
     made._check_their_ingress_subnets()
 
@@ -851,6 +895,7 @@ def test_an_ingress_subnet_from_another_vpc_is_refused():
     made.ec2 = _ec2(
         subnets_by_az={"us-east-2a": ["subnet-pub-a"], "us-east-2b": ["subnet-pub-b"]},
         vpc_of={"subnet-pub-b": "vpc-someone-elses"},
+        tables=PUBLIC_TABLE,
     )
 
     made._check_their_ingress_subnets()
