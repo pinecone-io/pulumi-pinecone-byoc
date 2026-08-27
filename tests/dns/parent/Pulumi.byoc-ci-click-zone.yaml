@@ -1,0 +1,4 @@
+config:
+  aws:region: us-east-2
+  aws:profile: byoc-ci
+  pinecone-byoc-e2e-parent:domain: c.byodns-pinecone.click

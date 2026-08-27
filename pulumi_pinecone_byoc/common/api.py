@@ -29,6 +29,7 @@ class CreateEnvironmentResponse(BaseModel):
     name: str
     org_id: str
     org_name: str
+    domain: str | None = None
 
 
 class CreateServiceAccountResponse(BaseModel):
@@ -73,6 +74,17 @@ def get_access_token(api_url: str, auth0: Auth0Config) -> str:
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
     return response.json().get("access_token")
+
+
+def resolve_nameservers(fqdn: str) -> set[str]:
+    answer = requests.get(
+        "https://dns.google/resolve", params={"name": fqdn, "type": "NS"}, timeout=15
+    ).json()
+    return {
+        record["data"].rstrip(".").lower()
+        for record in answer.get("Answer", [])
+        if record.get("type") == 2
+    }
 
 
 def management_plane_url(api_url: str) -> str:
@@ -153,6 +165,7 @@ def create_environment(
     api_url: str,
     secret: str,
     is_public_endpoint_enabled: bool = True,
+    domain: str | None = None,
 ) -> CreateEnvironmentResponse:
     body = {
         "cloud": cloud,
@@ -160,6 +173,8 @@ def create_environment(
         "global_env": global_env,
         "is_public_endpoint_enabled": is_public_endpoint_enabled,
     }
+    if domain is not None:
+        body["domain"] = domain
     resp = request(
         "POST",
         f"{cpgw_bootstrap_url(api_url)}/environments",
@@ -171,6 +186,21 @@ def create_environment(
         environment = CreateEnvironmentResponse.model_validate(resp)
     except Exception as e:
         raise PineconeApiError(500, f"invalid response: {e}") from e
+
+    if domain is not None:
+        if not isinstance(resp, dict) or "domain" not in resp:
+            raise PineconeApiError(
+                500,
+                f"this control plane does not record a domain, so it would advertise hosts "
+                f"under pinecone.io while the cell answers on {domain}. Every client asking "
+                f"it where an index lives would be sent to a name nothing serves. Point "
+                f"api-url at a control plane that records one.",
+            )
+        elif environment.domain != domain:
+            raise PineconeApiError(
+                500,
+                f"control plane recorded domain {environment.domain!r}, expected {domain!r}",
+            )
 
     return environment
 

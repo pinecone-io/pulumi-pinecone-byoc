@@ -21,7 +21,11 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-e59b176"
+PINECONE_VERSION = "main-1f97e6c"
+
+CERTIFICATE_NAME_MAX_LENGTH = 64
+PINECONE_HOSTED_DOMAIN = "pinecone.io"
+PRIVATE_CERTIFICATE_LABEL = "private"
 
 ZONES_OFFERED = 2
 
@@ -1424,7 +1428,7 @@ class AWSPreflightChecker:
 
 class AWSSetupWizard(BaseSetupWizard):
     CONTROL_PLANE_KEYS = ("global-env", "api-url", "auth0-domain", "gcp-project")
-    TOTAL_STEPS = 16
+    TOTAL_STEPS = 17
     HEADER_TITLE = "Pinecone BYOC Setup Wizard"
     HEADER_SUBTITLE = "This wizard will set up everything you need to deploy Pinecone BYOC."
     DEFAULT_CIDR = "10.0.0.0/20"
@@ -1433,6 +1437,92 @@ class AWSSetupWizard(BaseSetupWizard):
     PRIVATE_ACCESS_DESC = "Private access requires AWS PrivateLink (more secure)"
     METADATA_NAME = "tags"
     CLOUD_NAME = "AWS"
+
+    def _get_domain(self, region: str) -> str | None:
+        budget = self._domain_budget(region)
+        console.print()
+        console.print(f"  {self._step('DNS Domain')}")
+        console.print(
+            f"  [dim]Leave this blank and the cell answers under {PINECONE_HOSTED_DOMAIN}, a zone "
+            f"Pinecone owns: your index hosts are <index>.svc.<cell>.byoc.{PINECONE_HOSTED_DOMAIN}, "
+            f"and we hold the records for them.[/]"
+        )
+        console.print(
+            "  [dim]Enter a domain you own and the cell answers under yours instead, at "
+            "<index>.svc.<cell>.byoc.<your domain>, with the records in a zone you delegate "
+            "to us.[/]"
+        )
+        console.print(
+            "  [dim]A subdomain kept for us is the usual shape: pinecone.acme.com, "
+            "or pc.acme.com where there is less room[/]"
+        )
+        console.print(
+            "  [dim]You will be asked to create one NS record before certificates issue.[/]"
+        )
+
+        while True:
+            console.print()
+            response = self._prompt(
+                f"Domain (blank for {PINECONE_HOSTED_DOMAIN})",
+                "",
+                key="PINECONE_DOMAIN",
+            ).strip()
+            if not response:
+                return None
+            if not self._domain_is_well_formed(response):
+                console.print(
+                    "  [red]A domain looks like corp.example.com — lowercase, with a dot[/]"
+                )
+                self._refuse_a_domain_nobody_can_correct()
+                continue
+            if len(response) > budget:
+                console.print(
+                    f"  [red]{response} is {len(response)} characters; {budget} is the most "
+                    f"that fits in {region}[/]"
+                )
+                console.print(
+                    "  [dim]A certificate's first domain name cannot exceed 64 characters, and "
+                    "the cell's own name takes the rest[/]"
+                )
+                # only a label of ours can be swapped; their own zone is not ours to shorten
+                theirs = response.split(".", 1)[1]
+                shorter = f"pc.{theirs}" if response.count(".") > 1 else None
+                if shorter is not None and len(shorter) <= budget:
+                    console.print(f"  [dim]{shorter} would fit, at {len(shorter)}[/]")
+                else:
+                    console.print(
+                        f"  [dim]A domain of up to {budget} characters fits here, or the same "
+                        f"one in a region with a shorter name[/]"
+                    )
+                self._refuse_a_domain_nobody_can_correct()
+                continue
+            console.print()
+            console.print(f"  [dim]Cells will answer under byoc.{response}[/]")
+            console.print(
+                "  [dim]The deploy will stop and print the record to add, once the control "
+                "plane has named the cell[/]"
+            )
+            return response
+
+    def _refuse_a_domain_nobody_can_correct(self) -> None:
+        if self._non_interactive:
+            raise NonInteractiveInputRequired("Domain", "PINECONE_DOMAIN")
+
+    @staticmethod
+    def _domain_budget(region: str) -> int:
+        global_env = os.environ.get("PINECONE_GLOBAL_ENV") or "prod"
+        prefix = "" if global_env == "prod" else f"{global_env}-"
+        longest_cell = f"{prefix}aws-{region}-ab12.byoc"
+        return CERTIFICATE_NAME_MAX_LENGTH - len(f"{PRIVATE_CERTIFICATE_LABEL}.{longest_cell}.")
+
+    @staticmethod
+    def _domain_is_well_formed(domain: str) -> bool:
+        return (
+            "." in domain
+            and not domain.startswith(".")
+            and not domain.endswith(".")
+            and all(c.islower() or c.isdigit() or c in "-." for c in domain)
+        )
 
     def run(self, output_dir: str = ".") -> bool:
         api_key = self._validated_api_key(output_dir)
@@ -1464,6 +1554,7 @@ class AWSSetupWizard(BaseSetupWizard):
             region=region,
             adopted_public_subnets=bool(public_subnet_ids) if private_subnet_ids else None,
         )
+        domain = self._get_domain(region)
         tags = self._get_custom_metadata()
 
         if not self._destroy and not self._run_preflight_checks(
@@ -1493,6 +1584,7 @@ class AWSSetupWizard(BaseSetupWizard):
             cidr,
             deletion_protection,
             public_access,
+            domain,
             tags,
             custom_ami_id=custom_ami_id,
             kms_key_arn=kms_key_arn,
@@ -2065,6 +2157,7 @@ class AWSSetupWizard(BaseSetupWizard):
         cidr: str,
         deletion_protection: bool,
         public_access: bool,
+        domain: str | None,
         tags: dict[str, str],
         custom_ami_id: str | None = None,
         kms_key_arn: str | None = None,
@@ -2118,6 +2211,8 @@ cluster = PineconeAWSCluster(
         availability_zones=config.require_object("availability-zones"),
         deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
         public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        domain=config.get("domain") or "pinecone.io",
+        parent_zone_id=config.get("parent-zone-id"),
         custom_ami_id=config.get("custom-ami-id"),
         kms_key_arn=config.get("kms-key-arn"),
         tags=config.get_object("tags"),
@@ -2147,6 +2242,7 @@ if config.get_bool("public-access-enabled") is False:
         stack_name = self._stack_name
         deletion_protection_str = str(deletion_protection).lower()
         public_access_str = str(public_access).lower()
+        domain_config_line = f"  {project_name}:domain: {domain}\n" if domain else ""
         config_content = f"""config:
   aws:region: {region}
   {project_name}:region: {region}
@@ -2154,7 +2250,7 @@ if config.get_bool("public-access-enabled") is False:
   {project_name}:vpc-cidr: {cidr}
   {project_name}:deletion-protection: {deletion_protection_str}
   {project_name}:public-access-enabled: {public_access_str}
-  {project_name}:availability-zones:
+{domain_config_line}  {project_name}:availability-zones:
 """
         for az in azs:
             config_content += f"    - {az}\n"

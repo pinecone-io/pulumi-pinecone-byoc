@@ -1,8 +1,15 @@
 import pulumi
 import pulumi_aws as aws
 
-from ..common.naming import DNS_CNAMES
-from ..common.providers import DnsDelegation, DnsDelegationArgs
+from ..common.naming import DNS_CNAMES, PRIVATE_CERTIFICATE_LABEL
+from ..common.providers import (
+    DelegatedZone,
+    DelegatedZoneArgs,
+    DelegationAttempt,
+    DelegationAttemptArgs,
+    DnsDelegation,
+    DnsDelegationArgs,
+)
 
 
 class DNS(pulumi.ComponentResource):
@@ -10,9 +17,12 @@ class DNS(pulumi.ComponentResource):
         self,
         name: str,
         subdomain: pulumi.Input[str],
-        parent_zone_name: pulumi.Input[str],
+        fqdn: pulumi.Input[str],
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
+        pinecone_hosted: bool,
+        delegation_wait_seconds: int,
+        parent_zone_id: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:DNS", name, None, opts)
@@ -21,10 +31,7 @@ class DNS(pulumi.ComponentResource):
 
         tags = {"pinecone:managed-by": "pulumi"}
 
-        def build_fqdn(sub: str) -> str:
-            return f"{sub}.{parent_zone_name}"
-
-        fqdn = pulumi.Output.from_input(subdomain).apply(build_fqdn)
+        fqdn = pulumi.Output.from_input(fqdn)
 
         self.zone = aws.route53.Zone(
             f"{name}-zone",
@@ -34,16 +41,65 @@ class DNS(pulumi.ComponentResource):
             opts=child_opts,
         )
 
-        self.delegation = DnsDelegation(
-            f"{name}-delegation",
-            DnsDelegationArgs(
-                subdomain=subdomain,
-                nameservers=self.zone.name_servers,
-                api_url=api_url,
-                cpgw_api_key=cpgw_api_key,
-            ),
-            opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
-        )
+        if parent_zone_id is not None:
+            self.delegation = aws.route53.Record(
+                f"{name}-delegation",
+                zone_id=parent_zone_id,
+                name=fqdn,
+                type="NS",
+                records=self.zone.name_servers,
+                ttl=300,
+                allow_overwrite=True,
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        elif pinecone_hosted:
+            self.delegation = DnsDelegation(
+                f"{name}-delegation",
+                DnsDelegationArgs(
+                    subdomain=subdomain,
+                    nameservers=self.zone.name_servers,
+                    api_url=api_url,
+                    cpgw_api_key=cpgw_api_key,
+                ),
+                opts=pulumi.ResourceOptions(parent=self, depends_on=[self.zone]),
+            )
+        else:
+            self.delegation = None
+
+        if pinecone_hosted:
+            self.attempt = None
+            self.delegated = None
+        else:
+            # nobody has been told the records yet only if nothing here wrote them
+            self.attempt = (
+                None
+                if self.delegation is not None
+                else DelegationAttempt(
+                    f"{name}-delegation-attempt",
+                    DelegationAttemptArgs(fqdn=fqdn),
+                    opts=pulumi.ResourceOptions(parent=self),
+                )
+            )
+            self.delegated = DelegatedZone(
+                f"{name}-delegated",
+                DelegatedZoneArgs(
+                    fqdn=fqdn,
+                    nameservers=self.zone.name_servers,
+                    wait_seconds=(
+                        delegation_wait_seconds
+                        if self.attempt is None
+                        else self.attempt.attempts.apply(
+                            lambda n: 0 if not n or n <= 1 else delegation_wait_seconds
+                        )
+                    ),
+                ),
+                opts=pulumi.ResourceOptions(
+                    parent=self,
+                    depends_on=[self.delegation] if self.delegation is not None else [self.zone],
+                ),
+            )
+
+        delegated = [r for r in (self.delegated or self.delegation,) if r is not None]
 
         # create CNAME records pointing to ingress (public ALB)
         # these enable public access to data plane via the internet-facing ALB
@@ -73,7 +129,7 @@ class DNS(pulumi.ComponentResource):
             tags={**tags, "Name": f"{name}-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,  # cert may be in use by ALBs
             ),
         )
@@ -109,20 +165,26 @@ class DNS(pulumi.ComponentResource):
 
         self.private_certificate = aws.acm.Certificate(
             f"{name}-private-cert",
-            domain_name=self._private_dns_domains[0],
-            subject_alternative_names=self._private_dns_domains[1:],
+            domain_name=(
+                self._private_dns_domains[0]
+                if pinecone_hosted
+                else fqdn.apply(lambda f: f"{PRIVATE_CERTIFICATE_LABEL}.{f}")
+            ),
+            subject_alternative_names=(
+                self._private_dns_domains[1:] if pinecone_hosted else self._private_dns_domains
+            ),
             validation_method="DNS",
             tags={**tags, "Name": f"{name}-private-cert"},
             opts=pulumi.ResourceOptions(
                 parent=self,
-                depends_on=[self.delegation],
+                depends_on=delegated,
                 retain_on_delete=True,
             ),
         )
 
         # number of unique validation records depends on domain count
         private_validation_records = []
-        for i in range(len(private_cnames)):
+        for i in range(len(private_cnames) + (0 if pinecone_hosted else 1)):
             private_validation_record = aws.route53.Record(
                 f"{name}-private-cert-validation-{i}",
                 zone_id=self.zone.id,

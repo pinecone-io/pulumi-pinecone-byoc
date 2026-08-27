@@ -31,6 +31,8 @@ jobs:
             byovpc-private,
             byosubnet-public,
             byosubnet-private,
+            byodns-public,
+            byodns-private,
           ]
     uses: ./.github/workflows/aws.yaml
     with:

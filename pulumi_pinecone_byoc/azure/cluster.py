@@ -10,6 +10,7 @@ from ..common.cred_refresher import RegistryCredentialRefresher
 from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
 from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
+from ..common.naming import PINECONE_HOSTED_DOMAIN, refuse_a_domain_only_aws_can_be_delegated
 from ..common.naming import cell_name as _cell_name
 from ..common.pinetools import Pinetools
 from ..common.providers import (
@@ -68,7 +69,7 @@ class PineconeAzureClusterArgs:
     node_pools: list[NodePool] | None = None
 
     # dns
-    parent_dns_zone_name: str = "byoc.pinecone.io"
+    domain: str = PINECONE_HOSTED_DOMAIN
 
     # features
     public_access_enabled: bool = True
@@ -108,6 +109,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         config = self._build_config(args)
         self._config = config
 
+        refuse_a_domain_only_aws_can_be_delegated(args.domain, "azure")
+
         client_config = azure_native.authorization.get_client_config()
         tenant_id = client_config.tenant_id
 
@@ -121,6 +124,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
                 api_url=args.api_url,
                 secret=args.pinecone_api_key,
                 is_public_endpoint_enabled=args.public_access_enabled,
+                domain=args.domain if args.domain != PINECONE_HOSTED_DOMAIN else None,
             ),
             opts=child_opts,
         )
@@ -212,7 +216,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         self._dns = DNS(
             f"{config.resource_prefix}-dns",
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
-            parent_zone_name=args.parent_dns_zone_name,
+            parent_zone_name=f"byoc.{args.domain}",
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             cell_name=self._cell_name,
@@ -244,6 +248,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             subdomain=self._dns.subdomain,
             external_ip_address=self._dns.external_ip.ip_address.apply(lambda ip: ip or ""),
             cell_name=self._cell_name,
+            domain=args.domain,
             public_access_enabled=args.public_access_enabled,
             opts=pulumi.ResourceOptions(
                 parent=self,
@@ -342,6 +347,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "region": config.region,
             "global_env": config.global_env,
             "subdomain": self._subdomain,
+            "domain": args.domain,
             "availability_zones": config.availability_zones,
             "dns_zone_name": self._dns.zone.name,
             "azure_k8s_version": args.kubernetes_version,
@@ -495,7 +501,6 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             vpc_cidr=args.vpc_cidr,
             kubernetes_version=args.kubernetes_version,
             node_pools=node_pools,
-            parent_zone_name=args.parent_dns_zone_name,
             database=FlexibleServerConfig(
                 deletion_protection=args.deletion_protection,
             ),
