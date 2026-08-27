@@ -62,7 +62,8 @@ class VPC(pulumi.ComponentResource):
         theirs = [aws.ec2.get_subnet(id=subnet) for subnet in private_ids]
         self._verify_zones(config, {subnet.availability_zone for subnet in theirs})
         self._private_cidrs = [subnet.cidr_block for subnet in theirs]
-        if public_ids:
+        if config.public_access:
+            # nothing is put in a public subnet otherwise, so nothing is asked of one
             self._verify_ingress_zones(
                 {aws.ec2.get_subnet(id=subnet).availability_zone for subnet in public_ids}
             )

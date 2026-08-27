@@ -626,6 +626,14 @@ def test_one_public_subnet_is_refused_because_a_load_balancer_needs_two_zones():
         adopting(public=("subnet-public-a",))
 
 
+def test_a_private_deploy_asks_nothing_of_a_public_subnet_it_was_given():
+    engine_with(subnets=ADOPTED)
+
+    vpc = adopting(public_access=False, public=("subnet-public-a",))
+
+    assert vpc.public_subnet_ids == ["subnet-public-a"]
+
+
 def test_a_subnet_from_another_vpc_is_refused_by_name():
     engine_with(subnets_in_vpc={"subnet-theirs-a"})
 
