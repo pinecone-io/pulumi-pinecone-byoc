@@ -62,6 +62,10 @@ class VPC(pulumi.ComponentResource):
         theirs = [aws.ec2.get_subnet(id=subnet) for subnet in private_ids]
         self._verify_zones(config, {subnet.availability_zone for subnet in theirs})
         self._private_cidrs = [subnet.cidr_block for subnet in theirs]
+        if public_ids:
+            self._verify_ingress_zones(
+                {aws.ec2.get_subnet(id=subnet).availability_zone for subnet in public_ids}
+            )
 
         vpc_perms.warn(config, vpc_id, {})
 
@@ -85,6 +89,16 @@ class VPC(pulumi.ComponentResource):
                 f"built for {', '.join(config.availability_zones)}. Give one subnet per "
                 "availability zone being deployed to, or set availability_zones to the "
                 "zones the subnets are in."
+            )
+
+    @staticmethod
+    def _verify_ingress_zones(zones: set[str]) -> None:
+        """An internet-facing load balancer is refused fewer than two zones at creation."""
+        if len(zones) < 2:
+            raise ValueError(
+                f"The public subnets given are all in {', '.join(sorted(zones))}, and an "
+                "internet-facing load balancer needs two availability zones. Give one public "
+                "subnet per availability zone."
             )
 
     @staticmethod

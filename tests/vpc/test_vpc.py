@@ -55,6 +55,7 @@ ADOPTED = {
     "subnet-theirs-a": a_subnet("us-east-2a", "10.0.11.0/24"),
     "subnet-theirs-b": a_subnet("us-east-2b", "10.0.12.0/24"),
     "subnet-public-a": a_subnet("us-east-2a", "10.0.13.0/24"),
+    "subnet-public-b": a_subnet("us-east-2b", "10.0.14.0/24"),
 }
 
 
@@ -571,7 +572,7 @@ def test_adopting_their_subnets_creates_no_network_of_ours():
 
     @pulumi.runtime.test
     def run():
-        adopting(public=("subnet-public-a",))
+        adopting(public=("subnet-public-a", "subnet-public-b"))
 
     run()
 
@@ -585,10 +586,10 @@ def test_adopting_their_subnets_creates_no_network_of_ours():
 def test_adopting_exposes_the_subnets_it_was_given():
     engine_with(subnets=ADOPTED)
 
-    vpc = adopting(public=("subnet-public-a",))
+    vpc = adopting(public=("subnet-public-a", "subnet-public-b"))
 
     assert vpc.private_subnet_ids == ["subnet-theirs-a", "subnet-theirs-b"]
-    assert vpc.public_subnet_ids == ["subnet-public-a"]
+    assert vpc.public_subnet_ids == ["subnet-public-a", "subnet-public-b"]
 
 
 @pulumi.runtime.test
@@ -615,6 +616,14 @@ def test_public_access_without_a_public_subnet_is_refused_with_the_alternative()
 
     with pytest.raises(ValueError, match="PrivateLink"):
         adopting(public_access=True)
+
+
+def test_one_public_subnet_is_refused_because_a_load_balancer_needs_two_zones():
+    """Preflight says so before the deploy; the module says so to a deploy that skipped it."""
+    engine_with(subnets=ADOPTED)
+
+    with pytest.raises(ValueError, match="two availability zones"):
+        adopting(public=("subnet-public-a",))
 
 
 def test_a_subnet_from_another_vpc_is_refused_by_name():
