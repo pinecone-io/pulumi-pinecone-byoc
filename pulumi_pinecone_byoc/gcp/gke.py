@@ -398,8 +398,8 @@ users:
         ]
 
         autoscaling = gcp.container.NodePoolAutoscalingArgs(
-            min_node_count=np_config.min_size,
-            max_node_count=np_config.max_size,
+            total_min_node_count=np_config.min_size,
+            total_max_node_count=np_config.max_size,
             location_policy="BALANCED",
         )
 
@@ -409,6 +409,7 @@ users:
             node_pool_name,
             cluster=cluster_id,
             autoscaling=autoscaling,
+            initial_node_count=np_config.initial_count(),
             node_config=gcp.container.NodePoolNodeConfigArgs(
                 machine_type=np_config.machine_type,
                 min_cpu_platform="Intel Ice Lake",
@@ -423,7 +424,9 @@ users:
                 auto_repair=False,
                 auto_upgrade=False,
             ),
-            opts=pulumi.ResourceOptions(parent=self),
+            # ignore initialNodeCount - managed by cluster autoscaler, and
+            # changing it replaces the pool
+            opts=pulumi.ResourceOptions(parent=self, ignore_changes=["initialNodeCount"]),
         )
 
         return node_pool
