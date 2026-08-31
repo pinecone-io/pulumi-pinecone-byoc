@@ -64,6 +64,34 @@ def ingresses_in(kubeconfig, namespace):
     return {i["metadata"]["name"]: i["metadata"].get("annotations", {}) for i in items}
 
 
+HOLDOUT_FLAGS = ("-o", "json", "--request-timeout=10s")
+HOLDOUT_TIMEOUT = 20
+
+
+def namespace_holdouts(kubeconfig, namespace):
+    """Why a namespace is not terminating, as the API server sees it.
+
+    Once a namespace is Terminating, NamespaceContentRemaining and
+    NamespaceFinalizersRemaining name the kinds that are left, custom resources
+    included - which `get all` would not have listed.
+    """
+    got = kubectl(
+        kubeconfig, "get", "namespace", namespace, *HOLDOUT_FLAGS, timeout=HOLDOUT_TIMEOUT
+    )
+    if got.returncode != 0:
+        return []
+    status = json.loads(got.stdout).get("status", {})
+    return [(c.get("type", ""), c.get("message", "")) for c in status.get("conditions", [])]
+
+
+def log_namespace_holdouts(kubeconfig, namespace):
+    conditions = namespace_holdouts(kubeconfig, namespace)
+    for kind, message in conditions:
+        logging.info("[%s] %s: %s", namespace, kind, message)
+    if not conditions:
+        logging.info("[%s] nothing held against it", namespace)
+
+
 def status_from_cluster(kubeconfig, url, image=PROBE_IMAGE, attempts=20, wait=30, expect=200):
     pod = f"pc-e2e-probe-{secrets.token_hex(3)}"
     result = kubectl(

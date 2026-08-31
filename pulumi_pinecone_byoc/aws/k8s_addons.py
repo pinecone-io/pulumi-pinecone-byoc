@@ -7,6 +7,7 @@ from pulumi_kubernetes.helm.v3 import Release, ReleaseArgs
 
 from config.aws import AWSConfig
 
+from ..common.gloo import gloo_namespace
 from .eks import EKS
 
 AWS_LOAD_BALANCER_POLICY = {
@@ -241,7 +242,7 @@ class K8sAddons(pulumi.ComponentResource):
         self._resource_suffix = self._cell_name.apply(lambda cn: cn[-4:])
         child_opts = pulumi.ResourceOptions(parent=self)
 
-        self.gloo_namespace = self._create_gloo_namespace(name, eks.provider, child_opts)
+        self.gloo_namespace = gloo_namespace(name, eks.provider, child_opts)
 
         self.alb_controller_role = self._create_alb_controller_role(
             name,
@@ -334,24 +335,6 @@ class K8sAddons(pulumi.ComponentResource):
                 "azrebalance_role_arn": self.azrebalance_role.arn,
                 "amp_ingest_role_arn": self.amp_ingest_role.arn,
             }
-        )
-
-    def _create_gloo_namespace(
-        self,
-        name: str,
-        k8s_provider: pulumi.ProviderResource,
-        opts: pulumi.ResourceOptions,
-    ) -> k8s.core.v1.Namespace:
-        return k8s.core.v1.Namespace(
-            f"{name}-gloo-system",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="gloo-system",
-                labels={
-                    "kubernetes.io/metadata.name": "gloo-system",
-                    "name": "gloo-system",
-                },
-            ),
-            opts=pulumi.ResourceOptions(parent=opts.parent, provider=k8s_provider),
         )
 
     def _create_irsa_trust_policy(

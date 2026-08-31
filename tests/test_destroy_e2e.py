@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from e2e.aws import cluster_from_outputs, grant_cluster_admin
 from e2e.commands import pulumi_json, run
+from e2e.kube import log_namespace_holdouts, write_kubeconfig
 from e2e.paths import PROJECTS
 from e2e.settings import destroy_targets
 from e2e.stacks import (
@@ -18,6 +19,13 @@ from e2e.wizard import generate_project, non_interactive_env
 pytestmark = pytest.mark.destroy
 
 VPC_PROGRAM_DIR = Path(__file__).resolve().parent / "vpc" / "program"
+OUR_NAMESPACES = (
+    "gloo-system",
+    "pc-control-plane",
+    "pc-cluster-information",
+    "pc-pulumi-outputs",
+    "external-secrets",
+)
 E2E_STANDIN = ("byovpc", "vpc")
 E2E_INSIDE_IT = (("byovpc", "byoc"), ("byovpc-private", "byoc"))
 
@@ -51,7 +59,33 @@ def condemned_project(target, request):
     if request.config.getoption("--grant-cluster-access"):
         _grant_cluster_access(project_dir, target)
 
+    _log_teardown_holdouts(project_dir, target)
+
     return project_dir
+
+
+def _log_teardown_holdouts(project_dir, target):
+    if target.cloud != "aws":
+        return
+    try:
+        outputs = pulumi_json("stack", "output", "--json", "--stack", target.stack, cwd=project_dir)
+    except AssertionError as exit_status:
+        logging.info("no stack outputs to read a cluster from, not inspecting: %s", exit_status)
+        return
+    cluster = cluster_from_outputs(outputs)
+    if cluster is None:
+        return
+    try:
+        kubeconfig = write_kubeconfig(cluster, target.region)
+    except Exception as unreachable:
+        logging.info("could not reach %s to inspect it: %s", cluster, unreachable)
+        return
+    for namespace in OUR_NAMESPACES:
+        try:
+            log_namespace_holdouts(kubeconfig, namespace)
+        except Exception as unreadable:
+            logging.info("stopped inspecting at %s: %s", namespace, unreadable)
+            return
 
 
 def _grant_cluster_access(project_dir, target):
@@ -72,7 +106,11 @@ def _grant_cluster_access(project_dir, target):
 
 
 def test_e2e_destroy(condemned_project, target):
-    destroy_stack(condemned_project, target.stack)
+    try:
+        destroy_stack(condemned_project, target.stack)
+    except AssertionError:
+        _log_teardown_holdouts(condemned_project, target)
+        raise
     assert find_stack(target.stack) is None, (
         f"{target.stack} is still in the organization after destroy"
     )
