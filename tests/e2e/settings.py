@@ -124,6 +124,8 @@ def destroy_targets(config):
         stack_name("private", "byoc"),
         stack_name("byovpc", "byoc"),
         stack_name("byovpc-private", "byoc"),
+        stack_name("byosubnet", "byoc"),
+        stack_name("byosubnet-private", "byoc"),
         stack_name("byodns", "byoc"),
         stack_name("byodns-private", "byoc"),
     ]
