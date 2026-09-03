@@ -8,8 +8,8 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  # the group the PR run uses: same accounts, same quota
-  group: byoc-e2e
+  # runs alongside PR e2e; parallelism is bounded by account quota (EIPs), not by a lock
+  group: byoc-e2e-weekly
   cancel-in-progress: false
 
 permissions:
