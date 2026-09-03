@@ -16,7 +16,24 @@ def test_min_size_raises_it():
     assert NodePoolConfig(name="default", min_size=5).initial_count() == 5
 
 
-def test_every_size_is_a_pool_total():
+def test_gke_divides_the_seed_because_its_seed_is_per_zone():
+    np_config = NodePoolConfig(name="default")
+
+    assert np_config.initial_count_per_zone(2) == 2
+    assert np_config.initial_count_per_zone(3) == 1
+
+
+def test_a_divided_seed_never_exceeds_the_pool_total():
+    np_config = NodePoolConfig(name="default", max_size=4)
+
+    assert np_config.initial_count_per_zone(2) * 2 == 4
+
+
+def test_a_divided_seed_is_never_zero():
+    assert NodePoolConfig(name="default", max_size=1).initial_count_per_zone(2) == 1
+
+
+def test_every_limit_is_a_pool_total():
     np_config = NodePoolConfig(name="default", min_size=2, max_size=8, desired_size=4)
 
     assert (np_config.min_size, np_config.initial_count(), np_config.max_size) == (2, 4, 8)

@@ -32,6 +32,12 @@ class NodePoolConfig(BaseModel):
         """Nodes the pool is born with, a total across its zones."""
         return max(self.min_size, min(self.desired_size, self.max_size))
 
+    def initial_count_per_zone(self, zones: int) -> int:
+        """`initial_count` for a cloud that seeds a pool per zone even where its
+        limits are totals, as GKE does, and so cannot seed more than max_size."""
+        zones = max(zones, 1)
+        return max(1, min(-(-self.initial_count() // zones), self.max_size // zones))
+
 
 class BaseConfig(BaseModel):
     region: str

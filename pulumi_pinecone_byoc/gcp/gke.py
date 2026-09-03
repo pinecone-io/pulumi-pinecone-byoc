@@ -409,7 +409,8 @@ users:
             node_pool_name,
             cluster=cluster_id,
             autoscaling=autoscaling,
-            initial_node_count=np_config.initial_count(),
+            # per zone, unlike the total limits above
+            initial_node_count=np_config.initial_count_per_zone(len(config.availability_zones)),
             node_config=gcp.container.NodePoolNodeConfigArgs(
                 machine_type=np_config.machine_type,
                 min_cpu_platform="Intel Ice Lake",
