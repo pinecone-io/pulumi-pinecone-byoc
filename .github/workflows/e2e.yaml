@@ -6,7 +6,8 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: byoc-e2e
+  # one run per PR; PRs and the weekly run overlap, bounded by account quota (EIPs), not by a lock
+  group: byoc-e2e-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: false
 
 permissions:
