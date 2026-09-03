@@ -99,6 +99,23 @@ def _is_ours(subnet) -> bool:
 
 DEFAULT_CIDR_SENTINEL = "default"
 
+
+def _write_utf8(*streams):
+    """Windows still defaults its streams to a legacy codepage, and cp1252 has no
+    check mark. Every status line the wizard prints carries one, so the first thing
+    a customer sees on Windows is a UnicodeEncodeError - and the error path prints
+    a cross, which has no mapping either."""
+    for stream in streams:
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        with contextlib.suppress(OSError, ValueError):
+            reconfigure(encoding="utf-8", errors="replace")
+
+
+if sys.platform == "win32":
+    _write_utf8(sys.stdout, sys.stderr)
+
 console = Console()
 
 

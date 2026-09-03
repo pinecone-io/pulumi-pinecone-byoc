@@ -7,17 +7,30 @@ on:
         description: which e2e shape to deploy; the caller reads the PR's labels
         type: string
         default: vanilla
+      client:
+        description: >-
+          the machine the operator drives the deploy from. Not a shape: the cluster
+          is the same either way, and what is under test is the wizard and the
+          harness on a customer's own workstation.
+        type: string
+        default: linux
 
 permissions:
   contents: read
   id-token: write
+
+# every run: step here is written for sh, and a windows runner would otherwise
+# hand them to pwsh
+defaults:
+  run:
+    shell: bash
 
 env:
   AWS_REGION: us-east-2
 
 jobs:
   up:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.client == 'windows' && 'windows-latest' || 'ubuntu-latest' }}
     timeout-minutes: 150
     environment: aws-e2e
     steps:
@@ -27,13 +40,17 @@ jobs:
 
       - name: Set stack prefix
         run: |
+          # teardown destroys by prefix, so a leg sharing one with another leg in
+          # the same run would take that leg's stacks down mid-deploy
+          if [ "$CLIENT" = windows ]; then tag=-win; else tag=; fi
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws${tag}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws${tag}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLIENT: ${{ inputs.client }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -81,7 +98,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-logs${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
+          name: e2e-aws-logs${{ inputs.client == 'windows' && '-win' || '' }}${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
           path: |
             .e2e-logs/
             .e2e/**/*.log
@@ -95,7 +112,7 @@ jobs:
   down:
     needs: up
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.client == 'windows' && 'windows-latest' || 'ubuntu-latest' }}
     timeout-minutes: 90
     environment: aws-e2e
     steps:
@@ -105,13 +122,17 @@ jobs:
 
       - name: Set stack prefix
         run: |
+          # teardown destroys by prefix, so a leg sharing one with another leg in
+          # the same run would take that leg's stacks down mid-deploy
+          if [ "$CLIENT" = windows ]; then tag=-win; else tag=; fi
           if [ -n "$PR_NUMBER" ]; then
-            echo "E2E_STACK_PREFIX=ci-aws-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws${tag}-pr${PR_NUMBER}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           else
-            echo "E2E_STACK_PREFIX=ci-aws-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+            echo "E2E_STACK_PREFIX=ci-aws${tag}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
           fi
         env:
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          CLIENT: ${{ inputs.client }}
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -144,7 +165,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: e2e-aws-teardown-logs${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
+          name: e2e-aws-teardown-logs${{ inputs.client == 'windows' && '-win' || '' }}${{ inputs.shape && format('-{0}', inputs.shape) || '' }}
           path: |
             .e2e-logs/
             .e2e/**/*.log
