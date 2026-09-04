@@ -139,3 +139,13 @@ def test_an_init_container_gives_up_its_reason(monkeypatch):
     assert installer._not_ready_pods("kubeconfig") == [
         ("pc-control-plane", "pinetools-install-2", "ImagePullBackOff")
     ]
+
+
+def test_the_install_pods_are_captured_before_the_cluster_full_of_pending_ones():
+    stalled = [("foundationdb", f"fdb-storage-{n}", "Pending") for n in range(25)]
+    installing = (installer.NAMESPACE, "pinetools-install-main-e59b176", "NotReady")
+
+    ordered = installer._capture_order([*stalled, installing], limit=20)
+
+    assert ordered[0] == installing
+    assert len(ordered) == 20

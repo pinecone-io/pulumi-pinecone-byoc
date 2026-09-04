@@ -2,6 +2,7 @@ import contextlib
 import json
 import logging
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from .aws import find_cluster_for_vpc, list_clusters
+from .commands import pulumi_json
 
 NAMESPACE = "pc-control-plane"
 UNSCHEDULABLE = "Unschedulable"
@@ -187,40 +189,78 @@ def capture_unhealthy_pod(kubeconfig, namespace, pod, reason):
         )
 
 
-def capture_failed_deploy(region, limit=20):
-    cluster = _STATUS["cluster"]
-    if cluster is None:
-        logging.info("[postmortem] no cluster was ever found - nothing to snapshot")
-        return
+def capture_install_job(kubeconfig):
+    """Ask the install Job itself what happened to its pods.
+
+    A pod the autoscaler drains is deleted through the eviction API, so by the
+    time anything asks there is no pod left to describe; the Job's events are
+    where that shows up, and they outlive the pod.
+    """
+    for label, args in (
+        ("jobs", ["get", "jobs", "-o", "wide"]),
+        ("pods", ["get", "pods", "-o", "wide"]),
+        ("describe", ["describe", "job"]),
+    ):
+        result = _kubectl(kubeconfig, *args, timeout=90)
+        logging.info(
+            "[postmortem] %s %s (exit %s)\n%s",
+            NAMESPACE,
+            label,
+            result.returncode,
+            result.stdout or result.stderr or "(nothing)",
+        )
+
+
+def capture_events(kubeconfig, tail=300):
+    """The last events in the cluster, which name what killed a pod.
+
+    OOMKilling, Evicted, ScaleDown and FailedScheduling are all only ever
+    events; a pod's own logs stop without saying any of it.
+    """
+    listed = _kubectl(
+        kubeconfig, "get", "events", "-A", "--sort-by=.lastTimestamp", namespace=None, timeout=120
+    )
+    output = listed.stdout or listed.stderr or "(nothing)"
+    logging.info(
+        "[postmortem] last %s events (exit %s)\n%s",
+        tail,
+        listed.returncode,
+        "\n".join(output.splitlines()[-tail:]),
+    )
+
+
+def capture_failed_deploy(project_dir, stack, limit=20):
+    kubeconfig = str(Path(tempfile.mkdtemp()) / "kubeconfig")
     try:
-        kubeconfig = str(Path(tempfile.mkdtemp()) / "kubeconfig")
+        command = pulumi_json("stack", "output", "--json", "--stack", stack, cwd=project_dir)[
+            "update_kubeconfig_command"
+        ]
+        argv = shlex.split(command)
+        if argv[0] == "az":
+            argv += ["--file", kubeconfig]
         subprocess.run(
-            [
-                "aws",
-                "eks",
-                "update-kubeconfig",
-                "--name",
-                cluster,
-                "--region",
-                region,
-                "--kubeconfig",
-                kubeconfig,
-            ],
+            argv,
             capture_output=True,
             text=True,
             check=True,
+            env={**os.environ, "KUBECONFIG": kubeconfig},
         )
     except Exception as exc:  # noqa: BLE001
-        logging.info("[postmortem] could not reach %s: %s: %s", cluster, type(exc).__name__, exc)
+        logging.info("[postmortem] no kubeconfig: %s: %s", type(exc).__name__, exc)
         return
 
-    logging.info("[postmortem] %s: what was not ready when the deploy failed", cluster)
+    logging.info("[postmortem] %s: what was not ready when the deploy failed", stack)
+    for name, capture in (
+        ("node list", lambda: capture_nodes(kubeconfig, every_seconds=0)),
+        ("install job", lambda: capture_install_job(kubeconfig)),
+        ("events", lambda: capture_events(kubeconfig)),
+    ):
+        try:
+            capture()
+        except Exception as exc:  # noqa: BLE001
+            logging.info("[postmortem] no %s: %s: %s", name, type(exc).__name__, exc)
     try:
-        capture_nodes(kubeconfig, every_seconds=0)
-    except Exception as exc:  # noqa: BLE001
-        logging.info("[postmortem] no node list: %s: %s", type(exc).__name__, exc)
-    try:
-        pods = _not_ready_pods(kubeconfig)[:limit]
+        pods = _capture_order(_not_ready_pods(kubeconfig), limit)
     except Exception as exc:  # noqa: BLE001
         logging.info("[postmortem] could not list pods: %s: %s", type(exc).__name__, exc)
         return
@@ -231,6 +271,16 @@ def capture_failed_deploy(region, limit=20):
             logging.info(
                 "[postmortem] %s/%s not captured: %s: %s", namespace, pod, type(exc).__name__, exc
             )
+
+
+def _capture_order(pods, limit):
+    """The install job's own pods first, whatever else the cluster is doing.
+
+    A deploy that stalls leaves dozens of pods not ready in namespaces that sort
+    ahead of pc-control-plane, and the limit would spend itself on them before
+    reaching the one pod that says why the install stopped.
+    """
+    return sorted(pods, key=lambda found: found[0] != NAMESPACE)[:limit]
 
 
 def _not_ready_pods(kubeconfig):

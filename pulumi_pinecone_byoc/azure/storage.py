@@ -17,6 +17,7 @@ class BlobStorage(pulumi.ComponentResource):
         config: AzureConfig,
         cell_name: pulumi.Input[str],
         resource_group_name: pulumi.Input[str],
+        deletion_protection: bool = False,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:BlobStorage", name, None, opts)
@@ -25,6 +26,7 @@ class BlobStorage(pulumi.ComponentResource):
         self._cell_name = pulumi.Output.from_input(cell_name)
         self._resource_group_name = pulumi.Output.from_input(resource_group_name)
         child_opts = pulumi.ResourceOptions(parent=self)
+        data_opts = pulumi.ResourceOptions(parent=self, protect=deletion_protection)
 
         account_name = self._cell_name.apply(lambda cn: storage_account_name("pc", cn))
 
@@ -40,7 +42,7 @@ class BlobStorage(pulumi.ComponentResource):
             ),
             kind="StorageV2",
             tags=self.config.tags(),
-            opts=child_opts,
+            opts=data_opts,
         )
 
         self.access_key = pulumi.Output.all(
@@ -77,7 +79,7 @@ class BlobStorage(pulumi.ComponentResource):
                 account_name=self.storage_account.name,
                 container_name=self._cell_name.apply(lambda cn, ct=container_type: f"pc-{ct}-{cn}"),
                 resource_group_name=resource_group_name,
-                opts=child_opts,
+                opts=data_opts,
             )
             self.containers[container_type] = container
 

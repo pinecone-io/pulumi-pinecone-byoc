@@ -1,11 +1,11 @@
+import contextlib
 import logging
-import os
 import threading
 
 from .commands import pulumi
 from .installer import capture_failed_deploy, supervise_pinetools_logs
 from .paths import PROJECTS
-from .settings import keep_stacks
+from .settings import e2e_region, keep_stacks
 from .stacks import destroy_stack, stack_name
 from .wizard import generate_project, non_interactive_env
 
@@ -31,35 +31,43 @@ def deploy(project_dir, delegate=None):
     pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
 
 
-def deployed_project(request, shape, configure=None, delegate=None, **answers):
+@contextlib.contextmanager
+def _pinetools_logs(cloud):
+    if cloud != "aws":
+        yield
+        return
+    stop = threading.Event()
+    streamer = threading.Thread(target=supervise_pinetools_logs, args=(None, stop), daemon=True)
+    streamer.start()
+    try:
+        yield
+    finally:
+        stop.set()
+        streamer.join(timeout=10)
+
+
+def deployed_project(request, shape, cloud="aws", configure=None, delegate=None, **answers):
     stack = stack_name(shape, "byoc")
+    region = e2e_region(request.config, cloud)
     project_dir = generate_project(
         PROJECTS / stack,
         stack,
-        "aws",
-        non_interactive_env(request.config, os.environ["AWS_REGION"], stack, **answers),
+        cloud,
+        non_interactive_env(request.config, region, stack, cloud=cloud, **answers),
     )
 
     if configure is not None:
         configure(project_dir, stack)
 
-    stop_streaming = threading.Event()
-    streamer = threading.Thread(
-        target=supervise_pinetools_logs,
-        args=(None, stop_streaming),
-        daemon=True,
-    )
-    streamer.start()
-
-    try:
+    with _pinetools_logs(cloud):
         try:
-            deploy(project_dir, delegate)
-        except BaseException:
-            capture_failed_deploy(os.environ["AWS_REGION"])
-            raise
-        yield project_dir
-    finally:
-        try:
+            try:
+                deploy(project_dir, delegate)
+            except BaseException:
+                capture_failed_deploy(project_dir, stack)
+                raise
+            yield project_dir
+        finally:
             if keep_stacks(request):
                 logging.info(
                     "leaving %s stack %s up - destroy it with: cd %s && pulumi destroy --yes",
@@ -69,6 +77,3 @@ def deployed_project(request, shape, configure=None, delegate=None, **answers):
                 )
             else:
                 destroy_stack(project_dir)
-        finally:
-            stop_streaming.set()
-            streamer.join(timeout=10)
