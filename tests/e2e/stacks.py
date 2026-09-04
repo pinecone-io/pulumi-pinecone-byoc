@@ -10,6 +10,12 @@ from .paths import REPO_ROOT
 
 ARN_ACCOUNT = re.compile(r"arn:aws:[a-z0-9-]*:[a-z0-9-]*:(\d{12}):")
 
+# every stack the harness deploys is <prefix>-<shape>-byoc, and the teardown finds
+# it by building that name a second time - so it is one constant, not a literal
+# each caller spells for itself
+STACK_SUFFIX = "byoc"
+DEFAULT_SHAPE = "vanilla"
+
 
 def stack_name(*parts):
     prefix = os.environ.get("E2E_STACK_PREFIX") or os.environ.get("USER") or getpass.getuser()
@@ -28,6 +34,24 @@ def find_stack(name):
         if stack["name"].rsplit("/", 1)[-1] == name:
             return stack["name"]
     return None
+
+
+def stacks_under_prefix():
+    """Every stack this run named, found by asking the backend rather than by guessing.
+
+    A teardown that looks for one name it computes the same way the deploy did
+    cannot tell a stack it failed to find from a stack that was never created,
+    which is how an upgrade run kept a cluster alive for a day behind a green
+    `down` job.
+    """
+    prefix = os.environ.get("E2E_STACK_PREFIX")
+    if not prefix:
+        return []
+    names = (
+        stack["name"].rsplit("/", 1)[-1]
+        for stack in pulumi_json("stack", "ls", "--all", "--json", cwd=REPO_ROOT)
+    )
+    return sorted(name for name in names if name.startswith(f"{prefix}-"))
 
 
 def project_of(qualified):
@@ -59,8 +83,10 @@ def refuse_foreign_account(qualified):
         )
 
 
-def destroy_stack(cwd, stack=None):
-    scoped = (["--stack", stack] if stack else []) + ["--yes"]
-    pulumi_quiet("cancel", *scoped, cwd=cwd)
-    pulumi("destroy", "--yes", "--skip-preview", *(["--stack", stack] if stack else []), cwd=cwd)
-    pulumi_quiet("stack", "rm", *([stack] if stack else []), "--yes", cwd=cwd)
+def destroy_stack(cwd, stack):
+    """Every call names the stack. A pulumi command that does not is aimed by
+    whatever `stack select` last wrote into the workspace, which is invisible
+    state shared by every project in it - and here it aims a destroy."""
+    pulumi_quiet("cancel", "--stack", stack, "--yes", cwd=cwd)
+    pulumi("destroy", "--yes", "--skip-preview", "--stack", stack, cwd=cwd)
+    pulumi_quiet("stack", "rm", stack, "--yes", cwd=cwd)

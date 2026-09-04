@@ -33,6 +33,11 @@ def test_run_refuses_to_continue_past_any_failed_check(cls):
 
 @pytest.mark.parametrize("cls", CREDS, ids=lambda c: c.__name__)
 def test_destroy_does_not_validate_the_api_key(cls, monkeypatch):
+    """A destroy regenerates a project around a stack that is already deployed.
+
+    It has no key to offer - the customer's stays encrypted in the stack file - so
+    validating the placeholder it passes instead would fail the run.
+    """
     wizard_ = cls(non_interactive=True, destroy=True)
     monkeypatch.setattr(wizard_, "_get_api_key", lambda: "pcsk_fake")
     monkeypatch.setattr(

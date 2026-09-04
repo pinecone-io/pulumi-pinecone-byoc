@@ -37,11 +37,11 @@ from e2e.reachability import (
     private_data_plane_host,
 )
 from e2e.settings import e2e_azs, keep_stacks
-from e2e.stacks import destroy_stack, stack_name
+from e2e.stacks import STACK_SUFFIX, destroy_stack, stack_name
 from e2e.wizard import generate_project, non_interactive_env
 from wizard import AWSSetupWizard
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 PROGRAM_DIR = REPO_ROOT / "tests" / "vpc" / "program"
 
@@ -84,7 +84,7 @@ def their_vpc(request):
 @pytest.fixture(scope="module")
 def byoc_in_their_vpc(request, their_vpc):
     shape = getattr(request, "param", "byovpc-public")
-    stack = stack_name(shape.removesuffix("-public"), "byoc")
+    stack = stack_name(shape.removesuffix("-public"), STACK_SUFFIX)
     public_access = (
         "false" if shape.endswith("private") else os.environ.get("PINECONE_PUBLIC_ACCESS", "true")
     )
@@ -125,7 +125,7 @@ def byoc_in_their_vpc(request, their_vpc):
     streamer.start()
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=project_dir)
         yield {
             "project_dir": project_dir,
             # the wizard's own reading of the answer, so "1" and "yes" pick the
@@ -138,13 +138,14 @@ def byoc_in_their_vpc(request, their_vpc):
         try:
             if keep_stacks(request):
                 logging.info(
-                    "leaving BYOC stack %s up - destroy it with: cd %s && "
-                    "caffeinate -i pulumi destroy --yes",
+                    "leaving BYOC stack %s up - destroy it with: "
+                    "caffeinate -i pulumi destroy --yes -C %s --stack %s",
                     stack,
                     project_dir,
+                    stack,
                 )
             else:
-                destroy_stack(project_dir)
+                destroy_stack(project_dir, stack)
         finally:
             stop_streaming.set()
             streamer.join(timeout=10)

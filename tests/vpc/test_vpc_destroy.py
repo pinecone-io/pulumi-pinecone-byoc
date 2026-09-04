@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from e2e.stacks import destroy_stack, find_stack, stack_name
 
-pytestmark = pytest.mark.destroy
+pytestmark = [pytest.mark.cloud, pytest.mark.destroy]
 
 PROGRAM_DIR = Path(__file__).resolve().parent / "program"
 
