@@ -8,6 +8,8 @@ from pulumi_azure_native import authorization, managedidentity
 
 from config.azure import AzureConfig
 
+from ..common.gloo import gloo_namespace
+
 # built-in Azure role definition IDs
 DNS_ZONE_CONTRIBUTOR_ROLE = "befefa01-2a29-4197-83a8-272ff33ce314"
 
@@ -30,20 +32,8 @@ class K8sAddons(pulumi.ComponentResource):
         self._cell_name = pulumi.Output.from_input(cell_name)
         self._rg_name = pulumi.Output.from_input(resource_group_name)
         child_opts = pulumi.ResourceOptions(parent=self)
-        k8s_opts = pulumi.ResourceOptions(parent=self, provider=k8s_provider)
 
-        # gloo-system namespace
-        self.gloo_namespace = k8s.core.v1.Namespace(
-            f"{name}-gloo-system",
-            metadata=k8s.meta.v1.ObjectMetaArgs(
-                name="gloo-system",
-                labels={
-                    "kubernetes.io/metadata.name": "gloo-system",
-                    "name": "gloo-system",
-                },
-            ),
-            opts=k8s_opts,
-        )
+        self.gloo_namespace = gloo_namespace(name, k8s_provider, child_opts)
 
         # external-dns: managed identity + federated credential + k8s service account
         self._dns_identity = managedidentity.UserAssignedIdentity(
