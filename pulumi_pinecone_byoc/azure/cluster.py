@@ -37,7 +37,7 @@ from .pulumi_operator import PulumiOperator
 from .storage import BlobStorage
 from .vnet import VNet
 
-AZURE_INSTALL_DEADLINE_SECONDS = 2400
+AZURE_INSTALL_DEADLINE_SECONDS = 2800
 
 
 @dataclass
