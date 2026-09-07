@@ -1,11 +1,18 @@
 from dataclasses import dataclass, field
 
+from wizard import AZURE_WARM_START_NODES, AZURE_WARM_START_VCPUS
+
 from config.base import NodePoolConfig, NodePoolTaint
 from pulumi_pinecone_byoc.common.node_pool import node_pool_configs
 
 
 def test_a_pool_is_born_at_its_desired_size():
     assert NodePoolConfig(name="default").initial_count() == 3
+
+
+def test_the_wizard_preflights_the_nodes_the_pool_is_actually_born_with():
+    assert NodePoolConfig(name="default").initial_count() == AZURE_WARM_START_NODES
+    assert AZURE_WARM_START_VCPUS == AZURE_WARM_START_NODES * 4
 
 
 def test_max_size_caps_the_birth_size():
