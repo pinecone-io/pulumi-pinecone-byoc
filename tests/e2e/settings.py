@@ -1,7 +1,7 @@
 import os
 from typing import NamedTuple
 
-from .stacks import stack_name
+from .stacks import DEFAULT_SHAPE, STACK_SUFFIX, stack_name
 
 AMBIENT_AWS_CREDENTIALS = (
     "AWS_WEB_IDENTITY_TOKEN_FILE",
@@ -120,14 +120,14 @@ def _cloud_of(stack, override):
 def destroy_targets(config):
     # every cluster an e2e run can leave, so a teardown needs no flags to find them
     stacks = config.getoption("--destroy-stack") or [
-        stack_name("vanilla", "byoc"),
-        stack_name("private", "byoc"),
-        stack_name("byovpc", "byoc"),
-        stack_name("byovpc-private", "byoc"),
-        stack_name("byosubnet", "byoc"),
-        stack_name("byosubnet-private", "byoc"),
-        stack_name("byodns", "byoc"),
-        stack_name("byodns-private", "byoc"),
+        stack_name(DEFAULT_SHAPE, STACK_SUFFIX),
+        stack_name("private", STACK_SUFFIX),
+        stack_name("byovpc", STACK_SUFFIX),
+        stack_name("byovpc-private", STACK_SUFFIX),
+        stack_name("byosubnet", STACK_SUFFIX),
+        stack_name("byosubnet-private", STACK_SUFFIX),
+        stack_name("byodns", STACK_SUFFIX),
+        stack_name("byodns-private", STACK_SUFFIX),
     ]
     cloud_override = config.getoption("--destroy-cloud")
     region = config.getoption("--destroy-region") or aws_region(config)

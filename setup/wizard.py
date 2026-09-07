@@ -5,6 +5,7 @@ import contextlib
 import ipaddress
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -137,6 +138,46 @@ class NonInteractiveInputRequired(Exception):
 # ---------------------------------------------------------------------------
 # Resumable answer state
 # ---------------------------------------------------------------------------
+
+
+def _https_remote(url: str) -> str:
+    # a clone URL can carry a token, and this one is written into a file the customer keeps
+    url = url.strip().removesuffix(".git")
+    if url.startswith("git@"):
+        host, _, path = url[len("git@") :].partition(":")
+        return f"https://{host}/{path}"
+    if url.startswith("ssh://git@"):
+        return "https://" + url[len("ssh://git@") :]
+    scheme, sep, rest = url.partition("://")
+    if not sep:
+        return url
+    if "@" in rest.split("/", 1)[0]:
+        rest = rest.split("@", 1)[1]
+    return f"{scheme}://{rest}"
+
+
+def module_pin(source_dir: str) -> tuple[str, str] | None:
+    def git(*args: str) -> str | None:
+        result = subprocess.run(
+            ["git", "-C", source_dir, *args], capture_output=True, text=True, check=False
+        )
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    commit = git("rev-parse", "HEAD")
+    remote = git("remote", "get-url", "origin")
+    if not commit or not remote:
+        return None
+    url = _https_remote(remote)
+    if not url.startswith("https://") or "@" in url:
+        return None
+    return url, commit
+
+
+def pinned_rev(pyproject_path: str) -> str | None:
+    if not os.path.isfile(pyproject_path):
+        return None
+    match = re.search(r'rev\s*=\s*"([0-9a-f]{7,40})"', open(pyproject_path).read())
+    return match.group(1) if match else None
 
 
 class WizardState:
@@ -407,6 +448,19 @@ class BaseSetupWizard:
                 "\n[tool.uv.sources]\n"
                 f'pulumi-pinecone-byoc = {{ path = "{path}", editable = true }}\n'
             )
+        else:
+            pin = module_pin(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            if pin:
+                url, commit = pin
+                pyproject_content += (
+                    "\n[tool.uv.sources]\n"
+                    f'pulumi-pinecone-byoc = {{ git = "{url}", rev = "{commit}" }}\n'
+                )
+            else:
+                console.print(
+                    "  [yellow]⚠[/] Could not pin the module version: this project will "
+                    "install whatever is newest at sync time"
+                )
         pyproject_path = os.path.join(output_dir, "pyproject.toml")
         with open(pyproject_path, "w") as f:
             f.write(pyproject_content)
@@ -2215,6 +2269,48 @@ class AWSSetupWizard(BaseSetupWizard):
 
         return True
 
+    def _main_py(self) -> str:
+        return '''"""Pinecone BYOC deployment (AWS)."""
+
+import pulumi
+from pulumi_pinecone_byoc.aws import PineconeAWSCluster, PineconeAWSClusterArgs
+
+config = pulumi.Config()
+
+__CONTROL_PLANE__
+cluster = PineconeAWSCluster(
+    name="pinecone-aws-cluster",
+    args=PineconeAWSClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        region=config.require("region"),
+        vpc_cidr=config.get("vpc-cidr"),
+        availability_zones=config.require_object("availability-zones"),
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        domain=config.get("domain") or "pinecone.io",
+        parent_zone_id=config.get("parent-zone-id"),
+        custom_ami_id=config.get("custom-ami-id"),
+        kms_key_arn=config.get("kms-key-arn"),
+        tags=config.get_object("tags"),
+        existing_vpc_id=config.get("existing-vpc-id"),
+        existing_route_table_ids=config.get_object("existing-route-table-ids"),
+        private_subnet_ids=config.get_object("private-subnet-ids"),
+        public_subnet_ids=config.get_object("public-subnet-ids"),
+        **control_plane,
+    ),
+)
+
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"aws eks update-kubeconfig --region {config.require('region')} --name {name}"
+)
+pulumi.export("environment", cluster.environment_name)
+pulumi.export("cell_fqdn", cluster.cell_fqdn)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
+'''
+
     def _generate_project(
         self,
         output_dir: str,
@@ -2261,46 +2357,7 @@ class AWSSetupWizard(BaseSetupWizard):
         console.print("  [green]✓[/] Created Pulumi.yaml")
 
         # create __main__.py
-        main_py = '''"""Pinecone BYOC deployment (AWS)."""
-
-import pulumi
-from pulumi_pinecone_byoc.aws import PineconeAWSCluster, PineconeAWSClusterArgs
-
-config = pulumi.Config()
-
-__CONTROL_PLANE__
-cluster = PineconeAWSCluster(
-    name="pinecone-aws-cluster",
-    args=PineconeAWSClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone-api-key"),
-        pinecone_version=config.require("pinecone-version"),
-        region=config.require("region"),
-        vpc_cidr=config.get("vpc-cidr"),
-        availability_zones=config.require_object("availability-zones"),
-        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
-        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
-        domain=config.get("domain") or "pinecone.io",
-        parent_zone_id=config.get("parent-zone-id"),
-        custom_ami_id=config.get("custom-ami-id"),
-        kms_key_arn=config.get("kms-key-arn"),
-        tags=config.get_object("tags"),
-        existing_vpc_id=config.get("existing-vpc-id"),
-        existing_route_table_ids=config.get_object("existing-route-table-ids"),
-        private_subnet_ids=config.get_object("private-subnet-ids"),
-        public_subnet_ids=config.get_object("public-subnet-ids"),
-        **control_plane,
-    ),
-)
-
-update_kubeconfig_command = cluster.name.apply(
-    lambda name: f"aws eks update-kubeconfig --region {config.require('region')} --name {name}"
-)
-pulumi.export("environment", cluster.environment_name)
-pulumi.export("cell_fqdn", cluster.cell_fqdn)
-pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
-if config.get_bool("public-access-enabled") is False:
-    pulumi.export("vpc_endpoint_service_name", cluster.vpc_endpoint_service_name)
-'''
+        main_py = self._main_py()
 
         self._write_main_py(output_dir, main_py)
 
@@ -2935,6 +2992,41 @@ class GCPSetupWizard(BaseSetupWizard):
 
         return True
 
+    def _main_py(self) -> str:
+        return '''"""Pinecone BYOC deployment on GCP."""
+
+import pulumi
+from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
+
+config = pulumi.Config()
+gcp_config = pulumi.Config("gcp")
+
+__CONTROL_PLANE__
+cluster = PineconeGCPCluster(
+    "pinecone-byoc",
+    PineconeGCPClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        project=gcp_config.require("project"),
+        region=config.require("region"),
+        availability_zones=config.require_object("availability-zones"),
+        vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/16",
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        labels=config.get_object("labels") or {},
+        **control_plane,
+    ),
+)
+
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"gcloud container clusters get-credentials {name} --region {config.require('region')} --project {gcp_config.require('project')}"
+)
+pulumi.export("environment", cluster.environment.env_name)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
+'''
+
     def _generate_project(
         self,
         output_dir: str,
@@ -2973,39 +3065,7 @@ class GCPSetupWizard(BaseSetupWizard):
         console.print("  [green]✓[/] Created Pulumi.yaml")
 
         # create __main__.py
-        main_py = '''"""Pinecone BYOC deployment on GCP."""
-
-import pulumi
-from pulumi_pinecone_byoc.gcp import PineconeGCPCluster, PineconeGCPClusterArgs
-
-config = pulumi.Config()
-gcp_config = pulumi.Config("gcp")
-
-__CONTROL_PLANE__
-cluster = PineconeGCPCluster(
-    "pinecone-byoc",
-    PineconeGCPClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone-api-key"),
-        pinecone_version=config.require("pinecone-version"),
-        project=gcp_config.require("project"),
-        region=config.require("region"),
-        availability_zones=config.require_object("availability-zones"),
-        vpc_cidr=config.get("vpc-cidr") or "10.112.0.0/16",
-        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
-        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
-        labels=config.get_object("labels") or {},
-        **control_plane,
-    ),
-)
-
-update_kubeconfig_command = cluster.name.apply(
-    lambda name: f"gcloud container clusters get-credentials {name} --region {config.require('region')} --project {gcp_config.require('project')}"
-)
-pulumi.export("environment", cluster.environment.env_name)
-pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
-if config.get_bool("public-access-enabled") is False:
-    pulumi.export("psc_service_attachment", cluster.psc_service_attachment)
-'''
+        main_py = self._main_py()
 
         self._write_main_py(output_dir, main_py)
 
@@ -3691,6 +3751,42 @@ class AzureSetupWizard(BaseSetupWizard):
 
         return True
 
+    def _main_py(self) -> str:
+        return '''"""Pinecone BYOC deployment on Azure."""
+
+import pulumi
+from pulumi_pinecone_byoc.azure import PineconeAzureCluster, PineconeAzureClusterArgs
+
+config = pulumi.Config()
+
+__CONTROL_PLANE__
+cluster = PineconeAzureCluster(
+    "pinecone-byoc",
+    PineconeAzureClusterArgs(
+        pinecone_api_key=config.require_secret("pinecone-api-key"),
+        pinecone_version=config.require("pinecone-version"),
+        subscription_id=config.require("subscription-id"),
+        region=config.require("region"),
+        availability_zones=config.require_object("availability-zones"),
+        vpc_cidr=config.get("vpc-cidr") or "10.0.0.0/16",
+        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
+        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
+        tags=config.get_object("tags"),
+        **control_plane,
+    ),
+)
+
+region = config.require("region")
+update_kubeconfig_command = cluster.name.apply(
+    lambda name: f"az aks get-credentials --resource-group {name.removeprefix('cluster-')}-{region}-rg --name {name}"
+)
+pulumi.export("environment", cluster.environment.env_name)
+pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
+if config.get_bool("public-access-enabled") is False:
+    pulumi.export("private_link_service_name", cluster.private_link_service_name)
+    pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
+'''
+
     def _generate_project(
         self,
         output_dir: str,
@@ -3727,40 +3823,7 @@ class AzureSetupWizard(BaseSetupWizard):
             yaml.dump(pulumi_yaml, f, default_flow_style=False)
         console.print("  [green]✓[/] Created Pulumi.yaml")
 
-        main_py = '''"""Pinecone BYOC deployment on Azure."""
-
-import pulumi
-from pulumi_pinecone_byoc.azure import PineconeAzureCluster, PineconeAzureClusterArgs
-
-config = pulumi.Config()
-
-__CONTROL_PLANE__
-cluster = PineconeAzureCluster(
-    "pinecone-byoc",
-    PineconeAzureClusterArgs(
-        pinecone_api_key=config.require_secret("pinecone-api-key"),
-        pinecone_version=config.require("pinecone-version"),
-        subscription_id=config.require("subscription-id"),
-        region=config.require("region"),
-        availability_zones=config.require_object("availability-zones"),
-        vpc_cidr=config.get("vpc-cidr") or "10.0.0.0/16",
-        deletion_protection=config.get_bool("deletion-protection") if config.get_bool("deletion-protection") is not None else True,
-        public_access_enabled=config.get_bool("public-access-enabled") if config.get_bool("public-access-enabled") is not None else True,
-        tags=config.get_object("tags"),
-        **control_plane,
-    ),
-)
-
-region = config.require("region")
-update_kubeconfig_command = cluster.name.apply(
-    lambda name: f"az aks get-credentials --resource-group {name.removeprefix('cluster-')}-{region}-rg --name {name}"
-)
-pulumi.export("environment", cluster.environment.env_name)
-pulumi.export("update_kubeconfig_command", update_kubeconfig_command)
-if config.get_bool("public-access-enabled") is False:
-    pulumi.export("private_link_service_name", cluster.private_link_service_name)
-    pulumi.export("private_link_service_resource_group", cluster.private_link_service_resource_group)
-'''
+        main_py = self._main_py()
 
         self._write_main_py(output_dir, main_py)
 
@@ -3913,6 +3976,123 @@ def select_cloud() -> str:
         sys.exit(1)
 
 
+CLOUD_WIZARDS = {"aws": AWSSetupWizard, "gcp": GCPSetupWizard, "azure": AzureSetupWizard}
+
+
+def _read_yaml(path: str) -> dict:
+    with open(path) as handle:
+        return yaml.safe_load(handle) or {}
+
+
+def _set_stack_version(stack_file: str, key: str, version: str) -> None:
+    with open(stack_file) as handle:
+        lines = handle.readlines()
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if stripped.startswith(f"{key}:"):
+            lines[index] = f"{line[: len(line) - len(line.lstrip())]}{key}: {version}\n"
+            break
+    with open(stack_file, "w") as handle:
+        handle.writelines(lines)
+
+
+def _find_stack(output_dir: str, stack_name: str | None) -> str | None:
+    found = sorted(
+        name[len("Pulumi.") : -len(".yaml")]
+        for name in os.listdir(output_dir)
+        if name.startswith("Pulumi.") and name.endswith(".yaml") and name != "Pulumi.yaml"
+    )
+    if stack_name:
+        if stack_name not in found:
+            console.print(f"  [red]✗[/] {output_dir} has no Pulumi.{stack_name}.yaml")
+            console.print(f"  [dim]Stacks found:[/] {', '.join(found) or 'none'}")
+            return None
+        return stack_name
+    if len(found) == 1:
+        return found[0]
+    if not found:
+        console.print(f"  [red]✗[/] {output_dir} holds no stack configuration to upgrade")
+        return None
+    console.print(f"  [dim]Stacks in this project:[/] {', '.join(found)}")
+    return read_input_with_cycle("  Which stack are you upgrading?", found) or None
+
+
+def upgrade_project(output_dir: str, stack_name: str | None, dev_source: str | None) -> bool:
+    """Rewrite a generated project for this version of the module.
+
+    An upgrade changes the program and the module pin. It does not change the
+    answers - they are already in Pulumi.<stack>.yaml, which is why this never
+    rewrites that file beyond the one version it is here to move. Regenerating
+    the project instead would mean re-running the wizard against a stack that
+    already exists: a preflight asking for room to create it, a key validation
+    with no key to offer, a backend prompt, and a config file rebuilt from a
+    template and then repaired key by key.
+    """
+    console.print()
+    console.print(f"  [{BLUE}]Upgrade[/] · {output_dir}")
+    console.print()
+
+    project_file = os.path.join(output_dir, "Pulumi.yaml")
+    program = os.path.join(output_dir, "__main__.py")
+    if not os.path.isfile(project_file) or not os.path.isfile(program):
+        console.print(f"  [red]✗[/] {output_dir} is not a generated project")
+        console.print("  [dim]Run without --upgrade to create one.[/]")
+        return False
+
+    project = str(_read_yaml(project_file).get("name") or "")
+    stack = _find_stack(output_dir, stack_name)
+    if not project or not stack:
+        return False
+
+    with open(program) as handle:
+        cloud = next(
+            (c for c in ("aws", "gcp", "azure") if f"pulumi_pinecone_byoc.{c}" in handle.read()), ""
+        )
+    if not cloud:
+        console.print(f"  [red]✗[/] cannot tell which cloud {program} deploys")
+        return False
+
+    stack_file = os.path.join(output_dir, f"Pulumi.{stack}.yaml")
+    pyproject = os.path.join(output_dir, "pyproject.toml")
+    config = _read_yaml(stack_file).get("config") or {}
+    console.print(f"  [green]✓[/] {project}/{stack} on {cloud}, {len(config)} config value(s)")
+
+    version_key = f"{project}:pinecone-version"
+    if version_key not in config:
+        console.print(f"  [red]✗[/] Pulumi.{stack}.yaml does not set {version_key}")
+        console.print("  [dim]This does not look like a project the wizard generated.[/]")
+        return False
+
+    rev_before = pinned_rev(pyproject)
+    version_before = str(config[version_key])
+
+    wizard = CLOUD_WIZARDS[cloud](non_interactive=True, stack_name=stack, dev_source=dev_source)
+    wizard._write_main_py(output_dir, wizard._main_py())
+    wizard._write_pyproject(output_dir, cloud, dev_source)
+    _set_stack_version(stack_file, version_key, PINECONE_VERSION)
+
+    if version_before != PINECONE_VERSION:
+        console.print(f"  [yellow]→[/] pinecone: {version_before} becomes {PINECONE_VERSION}")
+    else:
+        console.print(f"  [green]✓[/] Pinecone already at {PINECONE_VERSION}")
+
+    rev_after = pinned_rev(pyproject)
+    if rev_after and rev_after != rev_before:
+        console.print(
+            f"  [yellow]→[/] module: {(rev_before or 'unpinned')[:12]} becomes {rev_after[:12]}"
+        )
+    elif rev_after:
+        console.print(f"  [green]✓[/] Module already at {rev_after[:12]}")
+
+    console.print()
+    console.print("  [bold]Apply it when you are ready:[/]")
+    console.print(f"    uv sync --directory {output_dir}")
+    console.print(f"    pulumi -C {output_dir} preview")
+    console.print(f"    pulumi -C {output_dir} up")
+    console.print()
+    return True
+
+
 def run_setup(
     output_dir: str = ".",
     cloud: str | None = None,
@@ -3929,17 +4109,11 @@ def run_setup(
                 return False
             cloud = select_cloud()
 
-        match cloud:
-            case "aws":
-                wizard_cls = AWSSetupWizard
-            case "gcp":
-                wizard_cls = GCPSetupWizard
-            case "azure":
-                wizard_cls = AzureSetupWizard
-            case _:
-                console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
-                console.print("  [dim]Valid options: aws, gcp, azure[/]")
-                return False
+        wizard_cls = CLOUD_WIZARDS.get(cloud)
+        if wizard_cls is None:
+            console.print(f"  [red]✗[/] Unknown cloud provider: {cloud}")
+            console.print("  [dim]Valid options: aws, gcp, azure[/]")
+            return False
 
         wizard = wizard_cls(
             non_interactive=non_interactive,
@@ -3983,7 +4157,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--stack-name",
-        default="prod",
+        # the upgrade tells "not given" from "given" to decide whether to look the
+        # stack up, and a default here would make every run look like it was named
+        default=None,
         help="Pulumi stack name (default: prod).",
     )
     parser.add_argument(
@@ -3996,6 +4172,13 @@ if __name__ == "__main__":
         action="store_true",
         help="Regenerate a project in order to tear it down. Skips the preflight checks, "
         "which ask whether there is room to create what this stack already occupies.",
+    )
+    parser.add_argument(
+        "--upgrade",
+        action="store_true",
+        help="Rewrite an existing project in --output-dir for this version of the module: "
+        "reads everything from the stack it already has, keeps its credentials, and prints "
+        "the commands to apply the change instead of deploying.",
     )
     parser.add_argument(
         "--dev",
@@ -4016,11 +4199,15 @@ if __name__ == "__main__":
         console.print("  [dim]Pass the checkout path explicitly: --dev /path/to/repo[/]")
         sys.exit(1)
 
+    if args.upgrade:
+        upgraded = upgrade_project(args.output_dir, args.stack_name, dev_source)
+        sys.exit(0 if upgraded else 1)
+
     success = run_setup(
         args.output_dir,
         args.cloud,
         non_interactive=args.non_interactive,
-        stack_name=args.stack_name,
+        stack_name=args.stack_name or "prod",
         skip_install=args.skip_install,
         dev_source=dev_source,
         destroy=args.destroy,

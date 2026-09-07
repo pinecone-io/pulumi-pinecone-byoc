@@ -1,9 +1,26 @@
+# A pull request installs this commit from scratch. Upgrading the baseline release
+# to it is the only thing that says an existing deployment survives the change, but
+# it is two deploys and most changes cannot break one - so it is the
+# `test:e2e:upgrade` label, and the weekly run does it on main regardless of who
+# remembers to ask.
 name: E2E
 
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled]
-  workflow_dispatch: {}
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      tier:
+        description: e2e installs this commit; upgrade installs the baseline release then upgrades
+        type: choice
+        options: [e2e, upgrade]
+        default: e2e
+      baseline:
+        description: "git ref to upgrade from (default: origin/main on a PR, the latest release tag otherwise)"
+        type: string
+        default: ""
 
 concurrency:
   # one run per PR; PRs and the weekly run overlap, bounded by account quota (EIPs), not by a lock
@@ -13,6 +30,7 @@ concurrency:
 permissions:
   contents: read
   id-token: write
+  actions: read
 
 jobs:
   changes:
@@ -20,10 +38,75 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       aws: ${{ steps.filter.outputs.aws }}
+      matrix: ${{ steps.matrix.outputs.matrix }}
+      baseline: ${{ steps.baseline.outputs.ref }}
       gcp: ${{ steps.filter.outputs.gcp }}
       azure: ${{ steps.filter.outputs.azure }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the AWS runs
+        id: matrix
+        env:
+          TIER: ${{ inputs.tier }}
+          UPGRADE: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:upgrade') }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          # label to shape: byovpc named the public one before there was a private one.
+          # test:e2e:upgrade is not in here - it asks for a tier, not a shape
+          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private","byosubnet":"byosubnet-public","byosubnet-private":"byosubnet-private","byodns":"byodns-public","byodns-private":"byodns-private"}'
+          case "$GITHUB_EVENT_NAME" in
+            workflow_dispatch)
+              matrix=$(jq -cn --arg tier "$TIER" '{include: [{shape: "vanilla", tier: $tier}]}') ;;
+            schedule)
+              # the weekly run asks both questions of main, whatever anyone labelled
+              matrix='{"include":[{"shape":"vanilla","tier":"upgrade"},{"shape":"vanilla","tier":"e2e"}]}' ;;
+            *)
+              # a shape label asks for that shape installed from scratch, and
+              # test:e2e:upgrade adds the two-deploy leg. Unlabelled is vanilla,
+              # installed from scratch
+              legs=$(jq -c --argjson labels "$LABELS" \
+                '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | {shape: .value, tier: "e2e"}]' \
+                <<<"$known")
+              if [ "$legs" = "[]" ] && [ "$UPGRADE" != true ]; then
+                legs='[{"shape":"vanilla","tier":"e2e"}]'
+              fi
+              # first, because fail-fast stops the matrix and this is the leg the
+              # label asked for - a shape failing must not cancel it
+              if [ "$UPGRADE" = true ]; then
+                legs=$(jq -c '[{"shape":"vanilla","tier":"upgrade"}] + .' <<<"$legs")
+              fi
+              matrix=$(jq -c '{include: .}' <<<"$legs") ;;
+          esac
+          echo "matrix=$(jq -c . <<<"$matrix")" >> "$GITHUB_OUTPUT"
+          jq . <<<"$matrix"
+
+      - name: Resolve the upgrade baseline
+        id: baseline
+        env:
+          REQUESTED: ${{ inputs.baseline }}
+        run: |
+          ref="$REQUESTED"
+          if [ -z "$ref" ]; then
+            if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+              # a pull request asks what *this change* does, and the last release is
+              # months of other people's commits away - main isolates the delta
+              ref="origin/main"
+            else
+              # the weekly run asks what a customer will experience, and a customer
+              # installs the published release
+              ref=$(git tag -l 'v*' --sort=-v:refname | head -n1)
+            fi
+          fi
+          if [ -z "$ref" ]; then
+            echo "nothing to upgrade from; pass a baseline ref explicitly" >&2
+            exit 1
+          fi
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "upgrading from $ref"
+
       - uses: dorny/paths-filter@v3
         id: filter
         with:
@@ -53,29 +136,10 @@ jobs:
               - 'config/__init__.py'
               - '.github/workflows/azure.yaml'
 
-  # a PR may ask for more than one shape; unasked, it gets vanilla
-  shapes:
-    if: ${{ github.event.action != 'labeled' || startsWith(github.event.label.name, 'test:e2e:') }}
-    runs-on: ubuntu-latest
-    outputs:
-      aws: ${{ steps.pick.outputs.shapes }}
-    steps:
-      - id: pick
-        env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
-        run: |
-          # label to shape: byovpc named the public one before there was a private one
-          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private","byosubnet":"byosubnet-public","byosubnet-private":"byosubnet-private","byodns":"byodns-public","byodns-private":"byodns-private"}'
-          picked=$(jq -c --argjson labels "$LABELS" \
-            '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | .value]' \
-            <<<"$known")
-          if [ "$picked" = "[]" ]; then picked='["vanilla"]'; fi
-          echo "shapes=$picked" >> "$GITHUB_OUTPUT"
-          echo "running: $picked"
-
   # where the deploy is driven from, not which cluster to build - so it is its own
-  # job rather than a member of the shape matrix. The aws leg waits on it because
-  # the two share one cluster's worth of quota
+  # job rather than a member of the shape matrix. It installs this commit outright:
+  # what is under test is the wizard on a customer's workstation, not an upgrade.
+  # The aws leg waits on it because the two share one cluster's worth of quota
   windows-client:
     needs: changes
     if: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:windows-client') }}
@@ -83,21 +147,25 @@ jobs:
     with:
       shape: vanilla
       client: windows
+      tier: e2e
     secrets: inherit
 
   aws:
-    needs: [changes, shapes, windows-client]
-    if: ${{ !cancelled() && (needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch') }}
+    needs: [changes, windows-client]
+    if: ${{ !cancelled() && (needs.changes.outputs.aws == 'true' || github.event_name != 'pull_request') }}
     strategy:
-      # one cluster's worth of quota, and shapes on a PR fail together - so stop at
-      # the first. A leg is the whole called workflow, so its teardown still runs.
+      # one AWS account and one Pinecone org, and the vanilla shape identifies its
+      # cluster as the one that appeared since it started -- so never in parallel;
+      # legs on a PR fail together, so stop at the first. A leg is the whole called
+      # workflow, so its teardown still runs.
       max-parallel: 1
       fail-fast: true
-      matrix:
-        shape: ${{ fromJSON(needs.shapes.outputs.aws) }}
+      matrix: ${{ fromJSON(needs.changes.outputs.matrix) }}
     uses: ./.github/workflows/aws.yaml
     with:
       shape: ${{ matrix.shape }}
+      tier: ${{ matrix.tier }}
+      baseline: ${{ needs.changes.outputs.baseline }}
     secrets: inherit
 
   gcp:
