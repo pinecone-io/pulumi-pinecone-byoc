@@ -51,7 +51,7 @@ jobs:
         env:
           ZONE_ID: ${{ secrets.AWS_BYOC_ZONE_ID }}
         run: |
-          uv run python tests/e2e/delegations.py \
+          uv run python cronjobs/dns_sweep.py \
             --zone-id "$ZONE_ID" \
             --limit "${{ inputs.limit || '5' }}" \
             ${{ inputs.dry_run && '--dry-run' || '' }}

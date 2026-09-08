@@ -35,8 +35,12 @@ UNSURE = "unsure"
 REFUSALS = {dns.rcode.REFUSED, dns.rcode.NXDOMAIN}
 
 
-def ask(zone, nameserver, timeout=5.0):
-    """One nameserver's word on one zone: does it answer for it?"""
+def ask(zone, nameserver, timeout=5.0, attempts=3):
+    """One nameserver's word on one zone: does it answer for it?
+
+    UDP drops packets; a nameserver that is fine says nothing to one query in
+    a hundred. Each address gets several tries before it counts as unreachable.
+    """
     query = dns.message.make_query(zone, dns.rdatatype.SOA)
     query.flags &= ~dns.flags.RD
     try:
@@ -44,15 +48,16 @@ def ask(zone, nameserver, timeout=5.0):
     except Exception:
         return UNSURE
     for address in addresses:
-        try:
-            answer = dns.query.udp(query, address, timeout=timeout)
-        except Exception:
-            continue
-        if answer.rcode() == dns.rcode.NOERROR and answer.flags & dns.flags.AA:
-            return ALIVE
-        if answer.rcode() in REFUSALS:
-            return DANGLING
-        return UNSURE
+        for _ in range(attempts):
+            try:
+                answer = dns.query.udp(query, address, timeout=timeout)
+            except Exception:
+                continue
+            if answer.rcode() == dns.rcode.NOERROR and answer.flags & dns.flags.AA:
+                return ALIVE
+            if answer.rcode() in REFUSALS:
+                return DANGLING
+            return UNSURE
     return UNSURE
 
 

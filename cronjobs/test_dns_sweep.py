@@ -1,4 +1,9 @@
-from e2e import delegations as sweep
+import dns.flags
+import dns.message
+import dns.rcode
+import dns.rdatatype
+
+from cronjobs import dns_sweep as sweep
 
 APEX = "byoc.pinecone.io."
 
@@ -103,3 +108,34 @@ def test_step_summary_does_not_claim_removals_the_limit_blocked(tmp_path, monkey
     sweep.sweep(r53, "Z", limit=2, dry_run=False, ask=ask)
     assert "3 checked, 3 left in place, over the limit" in out.read_text()
     assert r53.deleted == []
+
+
+def authoritative(query):
+    answer = dns.message.make_response(query)
+    answer.flags |= dns.flags.AA
+    return answer
+
+
+def test_a_dropped_packet_is_retried_before_a_nameserver_counts_as_unreachable(monkeypatch):
+    monkeypatch.setattr(sweep.dns.resolver, "resolve", lambda name, rdtype: ["192.0.2.1"])
+    sent = []
+
+    def flaky_udp(query, address, timeout):
+        sent.append(address)
+        if len(sent) < 3:
+            raise TimeoutError
+        return authoritative(query)
+
+    monkeypatch.setattr(sweep.dns.query, "udp", flaky_udp)
+    assert sweep.ask("x.byoc.pinecone.io", "ns.example") == sweep.ALIVE
+    assert len(sent) == 3
+
+
+def test_a_nameserver_that_never_answers_is_unsure(monkeypatch):
+    monkeypatch.setattr(sweep.dns.resolver, "resolve", lambda name, rdtype: ["192.0.2.1"])
+
+    def dead_udp(query, address, timeout):
+        raise TimeoutError
+
+    monkeypatch.setattr(sweep.dns.query, "udp", dead_udp)
+    assert sweep.ask("x.byoc.pinecone.io", "ns.example", attempts=2) == sweep.UNSURE
