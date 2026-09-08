@@ -91,5 +91,15 @@ def test_step_summary_is_written_when_github_asks(tmp_path, monkeypatch):
     r53 = Route53(record("gone", "ns-1.gone"))
     sweep.sweep(r53, "Z", limit=5, dry_run=True, ask=answers(**{"ns-1.gone": sweep.DANGLING}))
     text = out.read_text()
-    assert "1 checked, would remove 1" in text
+    assert "1 checked, 1 would remove" in text
     assert "| dangling | `gone.byoc.pinecone.io.` |" in text
+
+
+def test_step_summary_does_not_claim_removals_the_limit_blocked(tmp_path, monkeypatch):
+    out = tmp_path / "summary.md"
+    monkeypatch.setenv("GITHUB_STEP_SUMMARY", str(out))
+    r53 = Route53(*(record(f"gone{i}", f"ns.gone{i}") for i in range(3)))
+    ask = answers(**{f"ns.gone{i}": sweep.DANGLING for i in range(3)})
+    sweep.sweep(r53, "Z", limit=2, dry_run=False, ask=ask)
+    assert "3 checked, 3 left in place, over the limit" in out.read_text()
+    assert r53.deleted == []

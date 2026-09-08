@@ -109,8 +109,6 @@ def sweep(r53, zone_id, limit, dry_run, ask: Callable = ask):
     dangling = [record for record in records if verdicts[record["Name"]] == DANGLING]
     unsure = [name for name, word in verdicts.items() if word == UNSURE]
 
-    summary(verdicts, dangling, dry_run)
-
     if len(dangling) > limit:
         logging.error(
             "%d delegations look dangling and this run may remove %d; removing none. "
@@ -118,23 +116,26 @@ def sweep(r53, zone_id, limit, dry_run, ask: Callable = ask):
             len(dangling),
             limit,
         )
+        summary(verdicts, dangling, "left in place, over the limit")
         return 1
-    if dangling and not dry_run:
+    if dry_run:
+        summary(verdicts, dangling, "would remove")
+    else:
         remove(r53, zone_id, dangling)
         logging.info("removed %d", len(dangling))
+        summary(verdicts, dangling, "removed")
     if unsure:
         logging.error("could not decide for %s", ", ".join(sorted(unsure)))
         return 1
     return 0
 
 
-def summary(verdicts, dangling, dry_run):
+def summary(verdicts, dangling, outcome):
     path = os.environ.get("GITHUB_STEP_SUMMARY")
     if not path:
         return
-    action = "would remove" if dry_run else "removed"
     lines = [
-        f"### byoc.pinecone.io delegations: {len(verdicts)} checked, {action} {len(dangling)}",
+        f"### byoc.pinecone.io delegations: {len(verdicts)} checked, {len(dangling)} {outcome}",
         "",
         "| verdict | delegation |",
         "|---|---|",
