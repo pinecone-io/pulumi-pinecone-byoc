@@ -1,0 +1,57 @@
+name: DNS delegation sweep
+
+# A cell's NS record is removed on destroy; a destroy that was unstuck by hand
+# leaves it behind, pointing at nameservers someone else can claim. This removes
+# every delegation no nameserver answers for, once a day.
+#
+# AWS_BYOC_ZONE_ROLE_ARN is a role in the account holding the parent zone,
+# trusting this repository's GitHub OIDC, with route53:GetHostedZone,
+# ListResourceRecordSets and ChangeResourceRecordSets on that zone.
+# AWS_BYOC_ZONE_ID is the zone.
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Report, remove nothing"
+        type: boolean
+        default: false
+      limit:
+        description: "Refuse to remove more than this many in one run"
+        type: string
+        default: "5"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_BYOC_ZONE_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - uses: astral-sh/setup-uv@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Sweep dangling delegations
+        env:
+          ZONE_ID: ${{ secrets.AWS_BYOC_ZONE_ID }}
+        run: |
+          uv run python tests/e2e/delegations.py \
+            --zone-id "$ZONE_ID" \
+            --limit "${{ inputs.limit || '5' }}" \
+            ${{ inputs.dry_run && '--dry-run' || '' }}
