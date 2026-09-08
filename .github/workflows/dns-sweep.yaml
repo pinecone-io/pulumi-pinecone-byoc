@@ -9,6 +9,8 @@ name: DNS delegation sweep
 # ListResourceRecordSets and ChangeResourceRecordSets on that zone.
 # AWS_BYOC_ZONE_ID is the zone.
 on:
+  pull_request:  # TEMPORARY: to see the job run once before merge; always a dry run
+    paths: [.github/workflows/dns-sweep.yaml]
   schedule:
     - cron: "0 6 * * *"
   workflow_dispatch:
@@ -54,4 +56,4 @@ jobs:
           uv run python tests/e2e/delegations.py \
             --zone-id "$ZONE_ID" \
             --limit "${{ inputs.limit || '5' }}" \
-            ${{ inputs.dry_run && '--dry-run' || '' }}
+            ${{ (inputs.dry_run || github.event_name == 'pull_request') && '--dry-run' || '' }}
