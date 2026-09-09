@@ -29,6 +29,13 @@ PRIVATE_CERTIFICATE_LABEL = "private"
 
 ZONES_OFFERED = 2
 
+# mirrors NodePoolConfig in config/base.py: the azure default pool is born at
+# desired_size nodes of vm_size, and a Standard_D4s_v5 is 4 vCPUs. a subscription that
+# cannot buy the warm start fails in AKS, after preflight has already passed it
+AZURE_WARM_START_NODES = 3
+AZURE_DEFAULT_VM_VCPUS = 4
+AZURE_WARM_START_VCPUS = AZURE_WARM_START_NODES * AZURE_DEFAULT_VM_VCPUS
+
 # mirrors EGRESS_TARGETS in pulumi_pinecone_byoc/aws/vpc_route.py, in boto3's spelling:
 # what a default route can leave by and still reach the registry. peering cannot, so a
 # subnet routed that way is offered as neither private nor public
@@ -3238,13 +3245,13 @@ class AzurePreflightChecker:
                     current = int(usage.get("currentValue", 0))
                     limit = int(usage.get("limit", 0))
                     available = limit - current
-                    # need at least 8 vCPUs for default node pool
                     self._add_result(
                         "vCPU Quota",
-                        available >= 8,
+                        available >= AZURE_WARM_START_VCPUS,
                         f"{available} available [dim](using {current}/{limit})[/]",
-                        "Request quota increase for 'Total Regional vCPUs'"
-                        if available < 8
+                        f"Request quota increase for 'Total Regional vCPUs': the default "
+                        f"node pool starts at {AZURE_WARM_START_VCPUS}"
+                        if available < AZURE_WARM_START_VCPUS
                         else None,
                     )
                     return

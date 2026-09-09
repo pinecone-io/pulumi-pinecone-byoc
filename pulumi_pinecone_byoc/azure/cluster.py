@@ -12,6 +12,7 @@ from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import PINECONE_HOSTED_DOMAIN, refuse_a_domain_only_aws_can_be_delegated
 from ..common.naming import cell_name as _cell_name
+from ..common.node_pool import node_pool_configs
 from ..common.pinetools import Pinetools
 from ..common.providers import (
     AmpAccess,
@@ -45,7 +46,8 @@ class NodePool:
     name: str
     vm_size: str = "Standard_D4s_v5"
     min_size: int = 1
-    max_size: int = 10
+    max_size: int = 12
+    desired_size: int = 3
     disk_size_gb: int = 100
     labels: dict = field(default_factory=dict)
     taints: list = field(default_factory=list)
@@ -453,32 +455,8 @@ class PineconeAzureCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeAzureClusterArgs):
         from config.azure import AzureConfig
-        from config.base import NodePoolConfig
 
-        node_pools = []
-        if args.node_pools:
-            for np in args.node_pools:
-                node_pools.append(
-                    NodePoolConfig(
-                        name=np.name,
-                        vm_size=np.vm_size,
-                        min_size=np.min_size,
-                        max_size=np.max_size,
-                        disk_size_gb=np.disk_size_gb,
-                        labels=np.labels,
-                        taints=np.taints,
-                    )
-                )
-        else:
-            node_pools = [
-                NodePoolConfig(
-                    name="default",
-                    vm_size="Standard_D4s_v5",
-                    min_size=1,
-                    max_size=10,
-                    disk_size_gb=100,
-                ),
-            ]
+        node_pools = node_pool_configs(args.node_pools)
 
         return AzureConfig(
             region=args.region,
