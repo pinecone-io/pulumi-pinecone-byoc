@@ -1,5 +1,6 @@
 """PineconeAzureCluster - main component for BYOC deployments on Azure."""
 
+import os
 from dataclasses import dataclass, field
 
 import pulumi
@@ -38,6 +39,46 @@ from .storage import BlobStorage
 from .vnet import VNet
 
 AZURE_INSTALL_DEADLINE_SECONDS = 2800
+
+
+# What the azure-native provider takes besides the subscription: who to authenticate
+# as, and which of Azure's clouds to talk to. A default provider reads these from
+# stack config; an explicit one is told, or it silently deploys as whoever is logged
+# in, against the commercial cloud.
+PROVIDER_SECRETS = ("clientSecret", "clientCertificatePassword", "oidcToken", "oidcRequestToken")
+PROVIDER_FLAGS = ("useMsi", "useOidc", "disablePulumiPartnerId")
+PROVIDER_LISTS = ("auxiliaryTenantIds",)
+PROVIDER_SETTINGS = (
+    "clientCertificatePath",
+    "clientId",
+    "environment",
+    "location",
+    "metadataHost",
+    "msiEndpoint",
+    "oidcRequestUrl",
+    "partnerId",
+    "tenantId",
+)
+# subscriptionId is the one thing config does not get to say. Pinning it is the point.
+PROVIDER_PINNED = ("subscriptionId",)
+
+
+def _snake(key: str) -> str:
+    return "".join(f"_{letter.lower()}" if letter.isupper() else letter for letter in key)
+
+
+def _provider_settings() -> dict:
+    """The azure-native stack config, to hand to a provider that cannot read it itself."""
+    config = pulumi.Config("azure-native")
+    settings: dict = {
+        **{key: config.get(key) for key in PROVIDER_SETTINGS},
+        **{key: config.get_secret(key) for key in PROVIDER_SECRETS},
+        **{key: config.get_bool(key) for key in PROVIDER_FLAGS},
+        **{key: config.get_object(key) for key in PROVIDER_LISTS},
+    }
+    # unset, the SDK sends environment='public' rather than leaving the cloud open
+    settings["environment"] = settings["environment"] or os.environ.get("ARM_ENVIRONMENT")
+    return {_snake(key): value for key, value in settings.items() if value is not None}
 
 
 def _provider_the_caller_brought(
@@ -120,6 +161,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         provider = _provider_the_caller_brought(opts) or azure_native.Provider(
             f"{name}-azure",
             subscription_id=args.subscription_id,
+            **_provider_settings(),
             opts=pulumi.ResourceOptions(parent=opts.parent if opts else None),
         )
         opts = pulumi.ResourceOptions.merge(pulumi.ResourceOptions(providers=[provider]), opts)

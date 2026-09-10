@@ -126,6 +126,19 @@ def test_the_provider_is_pinned_to_the_configured_subscription(engine):
     assert engine.providers() == {"pinecone-byoc-azure": OURS}
 
 
+def test_what_the_stack_configured_reaches_the_provider_it_creates(engine):
+    """A provider made here reads no config of its own, so it is handed the stack's."""
+    pulumi.runtime.set_all_config({"azure-native:tenantId": "a-tenant"})
+    try:
+        a_cell()
+    finally:
+        pulumi.runtime.set_all_config({})
+
+    inputs = next(i for typ, name, _, i in engine.resources if typ == AZURE_PROVIDER)
+    assert inputs["tenantId"] == "a-tenant"
+    assert inputs["subscriptionId"] == OURS
+
+
 def test_every_azure_resource_in_the_cell_is_created_against_that_provider(engine):
     a_cell()
 
