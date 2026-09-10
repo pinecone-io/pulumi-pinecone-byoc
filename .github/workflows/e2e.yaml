@@ -5,10 +5,10 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
 
-concurrency:
-  # one run per PR; PRs and the weekly run overlap, bounded by account quota (EIPs), not by a lock
-  group: byoc-e2e-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: false
+# a group per stack prefix, which is what two legs can collide on: a down destroys
+# every shape under E2E_STACK_PREFIX, so legs of one commit have to serialize, while
+# a newer commit - a different prefix, nothing shared - never waits behind them.
+# Cancelling an up would leave a cluster, so nothing here cancels in progress.
 
 permissions:
   contents: read
@@ -79,6 +79,9 @@ jobs:
   windows-client:
     needs: changes
     if: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:windows-client') }}
+    concurrency:
+      group: byoc-e2e-aws-win-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
     uses: ./.github/workflows/aws.yaml
     with:
       shape: vanilla
@@ -88,6 +91,9 @@ jobs:
   aws:
     needs: [changes, shapes, windows-client]
     if: ${{ !cancelled() && (needs.changes.outputs.aws == 'true' || github.event_name == 'workflow_dispatch') }}
+    concurrency:
+      group: byoc-e2e-aws-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
     strategy:
       # one cluster's worth of quota, and shapes on a PR fail together - so stop at
       # the first. A leg is the whole called workflow, so its teardown still runs.
@@ -102,13 +108,20 @@ jobs:
 
   gcp:
     needs: [changes, aws]
-    if: ${{ !cancelled() && (needs.changes.outputs.gcp == 'true' || github.event_name == 'workflow_dispatch') }}
+    # a cancelled aws leg means a newer push took the slot; nothing behind it matters
+    if: ${{ !cancelled() && needs.aws.result != 'cancelled' && (needs.changes.outputs.gcp == 'true' || github.event_name == 'workflow_dispatch') }}
+    concurrency:
+      group: byoc-e2e-gcp-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
     uses: ./.github/workflows/gcp.yaml
     secrets: inherit
 
   azure:
-    needs: [changes, gcp]
-    if: ${{ !cancelled() && (needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch') }}
+    needs: [changes, aws, gcp]
+    if: ${{ !cancelled() && needs.aws.result != 'cancelled' && needs.gcp.result != 'cancelled' && (needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch') }}
+    concurrency:
+      group: byoc-e2e-azure-${{ github.event.pull_request.number || github.ref }}-${{ github.sha }}
+      cancel-in-progress: false
     uses: ./.github/workflows/azure.yaml
     secrets: inherit
 
