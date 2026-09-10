@@ -1,0 +1,33 @@
+name: Noop Cloud
+
+# THROWAWAY. Stands in for aws/gcp/azure while the e2e job graph's concurrency is
+# under test: an up and a down of the same shape, costing sleep instead of a cluster.
+
+on:
+  workflow_call:
+    inputs:
+      shape:
+        type: string
+        default: vanilla
+      client:
+        type: string
+        default: linux
+
+jobs:
+  up:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: |
+          echo "up: shape=${{ inputs.shape }} client=${{ inputs.client }} sha=${GITHUB_SHA::7}"
+          sleep 120
+
+  down:
+    needs: up
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - run: |
+          echo "down: shape=${{ inputs.shape }} client=${{ inputs.client }} sha=${GITHUB_SHA::7}"
+          sleep 45
