@@ -7,7 +7,7 @@ import time
 
 import pulumi
 import pulumi_kubernetes as k8s
-from pulumi_azure_native import authorization, containerservice, managedidentity
+from pulumi_azure_native import Provider, authorization, containerservice, managedidentity
 
 from config.azure import AzureConfig
 from config.base import NodePoolConfig
@@ -28,6 +28,7 @@ class AKS(pulumi.ComponentResource):
         resource_group_name: pulumi.Input[str],
         subnet_id: pulumi.Input[str],
         cell_name: pulumi.Input[str],
+        provider: Provider | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:AKS", name, None, opts)
@@ -165,9 +166,12 @@ class AKS(pulumi.ComponentResource):
             self._agent_pools.append(agent_pool)
 
         # kubeconfig from cluster credentials
+        # Invokes do not inherit the component's provider the way resources do,
+        # so this one is pinned explicitly or it reads the ambient subscription.
         creds = containerservice.list_managed_cluster_user_credentials_output(
             resource_group_name=resource_group_name,
             resource_name=managed_cluster.name,
+            opts=pulumi.InvokeOptions(provider=provider),
         )
 
         self._kubeconfig = creds.kubeconfigs[0].value.apply(

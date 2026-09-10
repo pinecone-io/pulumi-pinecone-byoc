@@ -40,6 +40,18 @@ from .vnet import VNet
 AZURE_INSTALL_DEADLINE_SECONDS = 2800
 
 
+def _provider_the_caller_brought(
+    opts: pulumi.ResourceOptions | None,
+) -> azure_native.Provider | None:
+    """Their provider names their subscription, and the invokes have to ask the same one."""
+    providers = getattr(opts, "providers", None) or []
+    candidates = providers.values() if isinstance(providers, dict) else providers
+    for candidate in candidates:
+        if getattr(candidate, "package", None) == "azure-native":
+            return candidate
+    return None
+
+
 @dataclass
 class NodePool:
     name: str
@@ -101,18 +113,30 @@ class PineconeAzureCluster(pulumi.ComponentResource):
         args: PineconeAzureClusterArgs,
         opts: pulumi.ResourceOptions | None = None,
     ):
+        if not args.subscription_id:
+            raise ValueError("subscription_id is required for Azure deployments")
+
+        # The subscription in the environment is not necessarily the one configured here.
+        provider = _provider_the_caller_brought(opts) or azure_native.Provider(
+            f"{name}-azure",
+            subscription_id=args.subscription_id,
+            opts=pulumi.ResourceOptions(parent=opts.parent if opts else None),
+        )
+        opts = pulumi.ResourceOptions.merge(pulumi.ResourceOptions(providers=[provider]), opts)
+
         super().__init__("pinecone:byoc:PineconeAzureCluster", name, None, opts)
 
         self.args = args
-        if not args.subscription_id:
-            raise ValueError("subscription_id is required for Azure deployments")
+        self._azure_provider = provider
         child_opts = pulumi.ResourceOptions(parent=self)
         config = self._build_config(args)
         self._config = config
 
         refuse_a_domain_only_aws_can_be_delegated(args.domain, "azure")
 
-        client_config = azure_native.authorization.get_client_config()
+        client_config = azure_native.authorization.get_client_config(
+            opts=pulumi.InvokeOptions(provider=provider)
+        )
         tenant_id = client_config.tenant_id
 
         # phase 1: authentication
@@ -190,6 +214,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             resource_group_name=self._vnet.resource_group_name,
             subnet_id=self._vnet.aks_subnet_id,
             cell_name=self._cell_name,
+            provider=provider,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._vnet]),
         )
 
@@ -199,6 +224,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             cell_name=self._cell_name,
             resource_group_name=self._vnet.resource_group_name,
             deletion_protection=args.deletion_protection,
+            provider=provider,
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self._aks]),
         )
 
@@ -491,6 +517,11 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             node_pools=node_pools,
             custom_tags=args.tags or {},
         )
+
+    @property
+    def provider(self) -> azure_native.Provider:
+        """The provider every Azure resource here is created against."""
+        return self._azure_provider
 
     @property
     def environment(self) -> Environment:
