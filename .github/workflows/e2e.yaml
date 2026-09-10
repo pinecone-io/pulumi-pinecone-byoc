@@ -44,6 +44,7 @@ jobs:
               - 'config/gcp.py'
               - 'config/base.py'
               - 'config/__init__.py'
+              - 'setup/wizard.py'
               - '.github/workflows/gcp.yaml'
             azure:
               - 'pulumi_pinecone_byoc/azure/**'
@@ -51,6 +52,7 @@ jobs:
               - 'config/azure.py'
               - 'config/base.py'
               - 'config/__init__.py'
+              - 'setup/wizard.py'
               - '.github/workflows/azure.yaml'
 
   # a PR may ask for more than one shape; unasked, it gets vanilla

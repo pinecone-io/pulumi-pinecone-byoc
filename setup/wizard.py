@@ -2774,11 +2774,10 @@ class GCPSetupWizard(BaseSetupWizard):
         if not api_key:
             return False
 
-        project_id = self._validate_gcp_creds()
-        if not project_id:
+        if not self._validate_gcp_creds():
             return False
 
-        project_id = self._get_project_id(project_id)
+        project_id = self._get_project_id()
         region = self._get_region()
         zones = self._get_zones(project_id, region)
         cidr = self._get_cidr()
@@ -2808,48 +2807,28 @@ class GCPSetupWizard(BaseSetupWizard):
             control_plane=self._control_plane_overrides(),
         )
 
-    def _validate_gcp_creds(self) -> str | None:
+    def _validate_gcp_creds(self) -> bool:
         console.print()
         console.print(f"  {self._step('GCP Credentials')}")
         console.print()
 
-        project_id = None
         with Status("  [dim]Validating GCP credentials...[/]", console=console, spinner="dots"):
-            try:
-                try:
-                    from google.auth import default
-
-                    credentials, project_id = default()
-                    if credentials and project_id:
-                        console.print(
-                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
-                        )
-                except ImportError:
-                    pass
-
-                if not project_id:
-                    result = subprocess.run(
-                        ["gcloud", "config", "get-value", "project"],
-                        capture_output=True,
-                        text=True,
-                    )
-                    if result.returncode == 0 and result.stdout.strip():
-                        project_id = result.stdout.strip()
-                        console.print(
-                            f"  [green]✓[/] GCP credentials valid [dim](Project: {project_id})[/]"
-                        )
-                    else:
-                        raise Exception("Could not determine GCP project")
-
-            except Exception as e:
-                console.print(f"  [red]✗[/] GCP credentials invalid: {e}")
-                console.print()
-                console.print("  [dim]Make sure you have valid GCP credentials configured.[/]")
-                console.print("  [dim]You can set them via:[/]")
-                console.print("    [dim]· gcloud auth application-default login[/]")
-                console.print("    [dim]· GOOGLE_APPLICATION_CREDENTIALS environment variable[/]")
-                console.print("    [dim]· gcloud config set project PROJECT_ID[/]")
-                return None
+            if not shutil.which("gcloud"):
+                console.print("  [red]✗[/] gcloud not found")
+                console.print("  [dim]Install it:[/] https://cloud.google.com/sdk/docs/install")
+                return False
+            if not self._refresh_succeeds("gcloud", "auth", "print-access-token"):
+                console.print("  [red]✗[/] gcloud has no working credentials")
+                console.print("  [dim]Log in with:[/] gcloud auth login")
+                return False
+            if not self._refresh_succeeds(
+                "gcloud", "auth", "application-default", "print-access-token"
+            ):
+                console.print("  [red]✗[/] No working application default credentials")
+                console.print("  [dim]Set them with:[/] gcloud auth application-default login")
+                console.print("  [dim]or point GOOGLE_APPLICATION_CREDENTIALS at a key file[/]")
+                return False
+            console.print("  [green]✓[/] GCP credentials valid")
 
         # check for gke-gcloud-auth-plugin (required for kubectl/Pulumi to auth to GKE)
         try:
@@ -2863,16 +2842,91 @@ class GCPSetupWizard(BaseSetupWizard):
         except FileNotFoundError:
             console.print("  [red]✗[/] gke-gcloud-auth-plugin not found")
             console.print("  [dim]Install it:[/] gcloud components install gke-gcloud-auth-plugin")
-            return None
+            return False
         console.print("  [green]✓[/] gke-gcloud-auth-plugin installed")
 
-        return project_id
+        return True
 
-    def _get_project_id(self, detected_project: str) -> str:
+    @staticmethod
+    def _refresh_succeeds(*command: str) -> bool:
+        """Whether credentials still work. A refresh is the only proof of that GCP offers
+        without asking for a permission, and what it returns is a token, so it is written
+        to the kernel's void and never read into this process."""
+        try:
+            refreshed = subprocess.run(
+                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+        except FileNotFoundError:
+            return False
+        return refreshed.returncode == 0
+
+    PROJECT_ENV_VARS = ("CLOUDSDK_CORE_PROJECT", "GOOGLE_CLOUD_PROJECT")
+
+    def _detected_project(self) -> str:
+        """Whatever names a project here, in the order gcloud and the Google libraries
+        read them. Any of them can hold the number rather than the ID, and one this
+        account cannot resolve is not a reason to ignore the next."""
+        named = [os.environ.get(name, "").strip() for name in self.PROJECT_ENV_VARS]
+        configured = self._gcloud_value("config", "get-value", "project")
+        for project in [*named, "" if configured == "(unset)" else configured]:
+            resolved = self._project_id_for(project) if project else ""
+            if resolved:
+                return resolved
+        return ""
+
+    @staticmethod
+    def _gcloud_value(*args: str) -> str:
+        """What gcloud answers, or nothing when it cannot be asked."""
+        try:
+            answered = subprocess.run(["gcloud", *args], capture_output=True, text=True)
+        except FileNotFoundError:
+            return ""
+        return answered.stdout.strip() if answered.returncode == 0 else ""
+
+    @staticmethod
+    def _project_id_for(project: str) -> str:
+        """Every gcloud --project= refuses the number ADC and the metadata server hand out."""
+        if not project.isdigit():
+            return project
+        return GCPSetupWizard._gcloud_value(
+            "projects", "describe", project, "--format=value(projectId)"
+        )
+
+    def _get_project_id(self) -> str:
         console.print()
         console.print(f"  {self._step('GCP Project ID')}")
         console.print()
-        return self._prompt("Enter GCP project ID", detected_project, key="GCP_PROJECT")
+
+        detected = self._detected_project()
+        while True:
+            answer = self._prompt(
+                "Enter GCP project ID", detected or None, key="GCP_PROJECT"
+            ).strip()
+            if answer and not answer.isdigit():
+                return answer
+            if answer:
+                project_id = self._project_id_for(answer)
+                if project_id:
+                    console.print(f"  [dim]Project {answer} is {project_id}[/]")
+                    self._remember(project_id)
+                    return project_id
+                console.print(f"  [red]{answer} is a project number, and it did not resolve[/]")
+                console.print("  [dim]Enter the project ID, as in my-project-123[/]")
+            else:
+                console.print("  [red]A project ID is required[/]")
+            self._forget()
+            if self._non_interactive:
+                raise NonInteractiveInputRequired("GCP Project ID", "GCP_PROJECT")
+
+    def _remember(self, project_id: str) -> None:
+        """The ID, not the number that was typed to reach it."""
+        if self._state is not None:
+            self._state.set("GCP_PROJECT", project_id)
+
+    def _forget(self) -> None:
+        """An answer this step refused is not one a resumed run should offer back."""
+        if self._state is not None:
+            self._state.unset("GCP_PROJECT")
 
     def _get_region(self) -> str:
         console.print()

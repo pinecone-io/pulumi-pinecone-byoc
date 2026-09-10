@@ -18,6 +18,7 @@ class BlobStorage(pulumi.ComponentResource):
         cell_name: pulumi.Input[str],
         resource_group_name: pulumi.Input[str],
         deletion_protection: bool = False,
+        provider: azure_native.Provider | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:BlobStorage", name, None, opts)
@@ -52,6 +53,7 @@ class BlobStorage(pulumi.ComponentResource):
                 azure_native.storage.list_storage_account_keys(
                     account_name=args[0],
                     resource_group_name=args[1],
+                    opts=pulumi.InvokeOptions(provider=provider),
                 )
                 .keys[0]
                 .value
