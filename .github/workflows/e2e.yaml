@@ -5,9 +5,10 @@ on:
     types: [opened, synchronize, reopened, labeled]
   workflow_dispatch: {}
 
-# a group per cloud and shape, not per run: a fix for a failed aws leg would
-# otherwise queue behind the previous run's gcp and azure - and a group queues one
-# job, so a run's next shape would evict it. Cancelling an up would leave a cluster.
+# a group per leg, not per run: a fix for a failed aws leg would otherwise queue
+# behind the previous run's gcp and azure - and a group queues one job, so a run
+# reaching the same group twice would evict what the newer run has waiting.
+# Cancelling an up would leave a cluster, so nothing here cancels in progress.
 
 permissions:
   contents: read
@@ -79,7 +80,7 @@ jobs:
     needs: changes
     if: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:windows-client') }}
     concurrency:
-      group: byoc-e2e-aws-vanilla-${{ github.event.pull_request.number || github.ref }}
+      group: byoc-e2e-aws-windows-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
     uses: ./.github/workflows/aws.yaml
     with:
