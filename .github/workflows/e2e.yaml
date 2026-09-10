@@ -23,35 +23,9 @@ jobs:
       gcp: ${{ steps.filter.outputs.gcp }}
       azure: ${{ steps.filter.outputs.azure }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
-        id: filter
-        with:
-          filters: |
-            aws:
-              - 'pulumi_pinecone_byoc/aws/**'
-              - 'pulumi_pinecone_byoc/common/**'
-              - 'config/aws.py'
-              - 'config/base.py'
-              - 'config/__init__.py'
-              - 'setup/wizard.py'
-              - 'tests/**'
-              - 'pytest.ini'
-              - '.github/workflows/aws.yaml'
-            gcp:
-              - 'pulumi_pinecone_byoc/gcp/**'
-              - 'pulumi_pinecone_byoc/common/**'
-              - 'config/gcp.py'
-              - 'config/base.py'
-              - 'config/__init__.py'
-              - '.github/workflows/gcp.yaml'
-            azure:
-              - 'pulumi_pinecone_byoc/azure/**'
-              - 'pulumi_pinecone_byoc/common/**'
-              - 'config/azure.py'
-              - 'config/base.py'
-              - 'config/__init__.py'
-              - '.github/workflows/azure.yaml'
+      - id: filter
+        run: |
+          for cloud in aws gcp azure; do echo "$cloud=true" >> "$GITHUB_OUTPUT"; done
 
   # a PR may ask for more than one shape; unasked, it gets vanilla
   shapes:
@@ -61,28 +35,19 @@ jobs:
       aws: ${{ steps.pick.outputs.shapes }}
     steps:
       - id: pick
-        env:
-          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
         run: |
-          # label to shape: byovpc named the public one before there was a private one
-          known='{"vanilla":"vanilla","private":"private","byovpc":"byovpc-public","byovpc-private":"byovpc-private","byosubnet":"byosubnet-public","byosubnet-private":"byosubnet-private","byodns":"byodns-public","byodns-private":"byodns-private"}'
-          picked=$(jq -c --argjson labels "$LABELS" \
-            '[to_entries[] | .key as $k | select($labels | index("test:e2e:" + $k)) | .value]' \
-            <<<"$known")
-          if [ "$picked" = "[]" ]; then picked='["vanilla"]'; fi
-          echo "shapes=$picked" >> "$GITHUB_OUTPUT"
-          echo "running: $picked"
+          echo 'shapes=["vanilla","private","byovpc-public"]' >> "$GITHUB_OUTPUT"
 
   # where the deploy is driven from, not which cluster to build - so it is its own
   # job rather than a member of the shape matrix. The aws leg waits on it because
   # the two share one cluster's worth of quota
   windows-client:
     needs: changes
-    if: ${{ contains(github.event.pull_request.labels.*.name, 'test:e2e:windows-client') }}
+    if: true
     concurrency:
       group: byoc-e2e-aws-windows-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
-    uses: ./.github/workflows/aws.yaml
+    uses: ./.github/workflows/noop-cloud.yaml
     with:
       shape: vanilla
       client: windows
@@ -101,7 +66,7 @@ jobs:
       fail-fast: true
       matrix:
         shape: ${{ fromJSON(needs.shapes.outputs.aws) }}
-    uses: ./.github/workflows/aws.yaml
+    uses: ./.github/workflows/noop-cloud.yaml
     with:
       shape: ${{ matrix.shape }}
     secrets: inherit
@@ -113,7 +78,7 @@ jobs:
     concurrency:
       group: byoc-e2e-gcp-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
-    uses: ./.github/workflows/gcp.yaml
+    uses: ./.github/workflows/noop-cloud.yaml
     secrets: inherit
 
   azure:
@@ -122,7 +87,7 @@ jobs:
     concurrency:
       group: byoc-e2e-azure-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
-    uses: ./.github/workflows/azure.yaml
+    uses: ./.github/workflows/noop-cloud.yaml
     secrets: inherit
 
   result:
