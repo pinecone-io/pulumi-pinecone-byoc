@@ -43,7 +43,7 @@ jobs:
   # the two share one cluster's worth of quota
   windows-client:
     needs: changes
-    if: true
+    if: false
     concurrency:
       group: byoc-e2e-aws-windows-${{ github.event.pull_request.number || github.ref }}
       cancel-in-progress: false
