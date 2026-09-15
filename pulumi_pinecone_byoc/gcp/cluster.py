@@ -10,6 +10,7 @@ from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import PINECONE_HOSTED_DOMAIN, refuse_a_domain_only_aws_can_be_delegated
 from ..common.naming import cell_name as _cell_name
+from ..common.node_pool import node_pool_configs
 from ..common.pinetools import Pinetools
 from ..common.providers import (
     AmpAccess,
@@ -43,7 +44,8 @@ class NodePool:
     name: str
     machine_type: str = "n2-standard-4"
     min_size: int = 1
-    max_size: int = 10
+    max_size: int = 12
+    desired_size: int = 3
     disk_size_gb: int = 100
     labels: dict = field(default_factory=dict)
     taints: list = field(default_factory=list)
@@ -389,33 +391,9 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeGCPClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
-        from config.base import NodePoolConfig
         from config.gcp import GCPConfig
 
-        node_pools = []
-        if args.node_pools:
-            for np in args.node_pools:
-                node_pools.append(
-                    NodePoolConfig(
-                        name=np.name,
-                        machine_type=np.machine_type,
-                        min_size=np.min_size,
-                        max_size=np.max_size,
-                        disk_size_gb=np.disk_size_gb,
-                        labels=np.labels,
-                        taints=np.taints,
-                    )
-                )
-        else:
-            node_pools = [
-                NodePoolConfig(
-                    name="default",
-                    machine_type="n2-standard-4",
-                    min_size=1,
-                    max_size=10,
-                    disk_size_gb=100,
-                ),
-            ]
+        node_pools = node_pool_configs(args.node_pools)
 
         config = GCPConfig(
             project=args.project,

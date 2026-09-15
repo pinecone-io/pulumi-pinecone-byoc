@@ -207,6 +207,7 @@ class AKS(pulumi.ComponentResource):
         vm_size = np_config.vm_size if np_config else "Standard_D4s_v5"
         min_count = np_config.min_size if np_config else 1
         max_count = np_config.max_size if np_config else 10
+        count = np_config.initial_count() if np_config else 3
         disk_size_gb = np_config.disk_size_gb if np_config else 100
 
         labels = {"nodepool_name": np_config.name} if np_config else {}
@@ -226,7 +227,7 @@ class AKS(pulumi.ComponentResource):
             type=containerservice.AgentPoolType.VIRTUAL_MACHINE_SCALE_SETS,
             enable_auto_scaling=True,
             min_count=min_count,
-            count=min_count,
+            count=count,
             max_count=max_count,
             os_disk_size_gb=disk_size_gb,
             vnet_subnet_id=subnet_id,
@@ -265,7 +266,7 @@ class AKS(pulumi.ComponentResource):
             mode=containerservice.AgentPoolMode.USER,
             enable_auto_scaling=True,
             min_count=np_config.min_size,
-            count=np_config.min_size,
+            count=np_config.initial_count(),
             max_count=np_config.max_size,
             os_disk_size_gb=np_config.disk_size_gb,
             vnet_subnet_id=subnet_id,
@@ -273,7 +274,8 @@ class AKS(pulumi.ComponentResource):
             node_labels=labels,
             node_taints=taints,
             tags=config.tags(),
-            opts=pulumi.ResourceOptions(parent=self),
+            # ignore count changes - managed by cluster autoscaler
+            opts=pulumi.ResourceOptions(parent=self, ignore_changes=["count"]),
         )
 
     @staticmethod

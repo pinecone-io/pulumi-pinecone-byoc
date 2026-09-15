@@ -12,6 +12,7 @@ from ..common.k8s_configmaps import K8sConfigMaps
 from ..common.k8s_secrets import K8sSecrets
 from ..common.naming import PINECONE_HOSTED_DOMAIN, refuse_a_domain_no_certificate_can_cover
 from ..common.naming import cell_name as _cell_name
+from ..common.node_pool import node_pool_configs
 from ..common.pinetools import Pinetools
 from ..common.providers import (
     AmpAccess,
@@ -43,7 +44,7 @@ class NodePool:
     name: str
     instance_type: str = "r6in.large"
     min_size: int = 1
-    max_size: int = 10
+    max_size: int = 12
     desired_size: int = 3
     disk_size_gb: int = 100
     labels: dict = field(default_factory=dict)
@@ -552,37 +553,8 @@ class PineconeAWSCluster(pulumi.ComponentResource):
     def _build_config(self, args: PineconeAWSClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
         from config.aws import AWSConfig
-        from config.base import NodePoolConfig, NodePoolTaint
 
-        node_pools = []
-        if args.node_pools:
-            for np in args.node_pools:
-                node_pools.append(
-                    NodePoolConfig(
-                        name=np.name,
-                        instance_type=np.instance_type,
-                        min_size=np.min_size,
-                        max_size=np.max_size,
-                        desired_size=np.desired_size,
-                        disk_size_gb=np.disk_size_gb,
-                        labels=np.labels,
-                        taints=[
-                            NodePoolTaint(key=t.key, value=t.value, effect=t.effect)
-                            for t in np.taints
-                        ],
-                    )
-                )
-        else:
-            node_pools = [
-                NodePoolConfig(
-                    name="default",
-                    instance_type="r6in.large",
-                    min_size=1,
-                    max_size=10,
-                    desired_size=3,
-                    disk_size_gb=100,
-                ),
-            ]
+        node_pools = node_pool_configs(args.node_pools)
 
         return AWSConfig(
             region=args.region,
