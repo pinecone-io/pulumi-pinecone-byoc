@@ -59,5 +59,9 @@ class BaseConfig(BaseModel):
     node_pools: list[NodePoolConfig] = Field(default_factory=list)
 
     @property
+    def default_node_arch(self) -> str:
+        return default_node_arch(self.node_pools, self.cloud)
+
+    @property
     def resource_prefix(self) -> str:
         return "pc"

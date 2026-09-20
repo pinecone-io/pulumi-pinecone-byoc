@@ -286,7 +286,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "gcp_k8s_version": args.kubernetes_version,
             "gcp_project": config.project,
             "image_registry": GCP_REGISTRY.base_url,
-            "default_node_arch": default_node_arch(config.node_pools, "gcp"),
+            "default_node_arch": config.default_node_arch,
             "sli_checkers_project_id": self._api_key.project_id,
             "customer_tags": args.labels or {},
             "public_access_enabled": args.public_access_enabled,
@@ -390,7 +390,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeGCPClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
-        from config.base import NodePoolConfig, default_node_arch
+        from config.base import NodePoolConfig
         from config.gcp import GCPConfig
 
         node_pools = []

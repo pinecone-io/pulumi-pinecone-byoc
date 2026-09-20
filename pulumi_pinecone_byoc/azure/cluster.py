@@ -417,7 +417,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
             "azure_pulumi_operator_client_id": self._pulumi_operator.identity_client_id,
             "data_storage_account_name": self._storage.account_name,
             "image_registry": AZURE_REGISTRY.base_url,
-            "default_node_arch": default_node_arch(config.node_pools, "azure"),
+            "default_node_arch": config.default_node_arch,
             "sli_checkers_project_id": self._api_key.project_id,
             "gcp_project": args.gcp_project,
             "cpgw_admin_api_key_id": self._cpgw_api_key.key_id,
@@ -522,7 +522,7 @@ class PineconeAzureCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeAzureClusterArgs):
         from config.azure import AzureConfig
-        from config.base import NodePoolConfig, default_node_arch
+        from config.base import NodePoolConfig
 
         node_pools = []
         if args.node_pools:
