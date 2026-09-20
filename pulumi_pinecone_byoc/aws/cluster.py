@@ -30,7 +30,7 @@ from ..common.providers import (
 from ..common.registry import AWS_REGISTRY
 from ..common.uninstaller import ClusterUninstaller
 from .dns import DNS
-from .eks import EKS, default_node_arch
+from .eks import EKS
 from .k8s_addons import K8sAddons
 from .nlb import NLB
 from .pulumi_operator import PulumiOperator
@@ -41,7 +41,7 @@ from .vpc import VPC
 @dataclass
 class NodePool:
     name: str
-    instance_type: str = "r8g.large"
+    instance_type: str = "m8g.xlarge"
     min_size: int = 1
     max_size: int = 10
     desired_size: int = 3
@@ -461,7 +461,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
             "base64_encoded_user_data": self._eks.base64_encoded_user_data,
             "custom_ami_id": args.custom_ami_id,
-            "default_node_arch": default_node_arch(config.node_pools),
+            "default_node_arch": default_node_arch(config.node_pools, "aws"),
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -577,7 +577,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             node_pools = [
                 NodePoolConfig(
                     name="default",
-                    instance_type="r8g.large",
+                    instance_type="m8g.xlarge",
                     min_size=1,
                     max_size=10,
                     desired_size=3,

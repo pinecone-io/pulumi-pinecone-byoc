@@ -41,7 +41,7 @@ GCP_INSTALL_DEADLINE_SECONDS = 2400
 @dataclass
 class NodePool:
     name: str
-    machine_type: str = "n2-standard-4"
+    machine_type: str = "c4a-standard-4"
     min_size: int = 1
     max_size: int = 10
     disk_size_gb: int = 100
@@ -286,6 +286,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "gcp_k8s_version": args.kubernetes_version,
             "gcp_project": config.project,
             "image_registry": GCP_REGISTRY.base_url,
+            "default_node_arch": default_node_arch(config.node_pools, "gcp"),
             "sli_checkers_project_id": self._api_key.project_id,
             "customer_tags": args.labels or {},
             "public_access_enabled": args.public_access_enabled,
@@ -389,7 +390,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
 
     def _build_config(self, args: PineconeGCPClusterArgs):
         # lazy import to avoid circular dependency: config imports are deferred
-        from config.base import NodePoolConfig
+        from config.base import NodePoolConfig, default_node_arch
         from config.gcp import GCPConfig
 
         node_pools = []
@@ -410,7 +411,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             node_pools = [
                 NodePoolConfig(
                     name="default",
-                    machine_type="n2-standard-4",
+                    machine_type="c4a-standard-4",
                     min_size=1,
                     max_size=10,
                     disk_size_gb=100,
