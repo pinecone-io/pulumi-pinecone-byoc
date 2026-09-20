@@ -6,6 +6,7 @@ Creates a managed EKS cluster with configurable node groups.
 
 import base64
 import json
+import re
 
 import pulumi
 import pulumi_aws as aws
@@ -15,6 +16,28 @@ import pulumi_kubernetes as k8s
 from config.aws import AWSConfig
 
 from .vpc import VPC
+
+GRAVITON_FAMILY = re.compile(r"^[a-z]+\d+g[a-z]*\.")
+
+
+def node_arch(instance_type: str) -> str:
+    """`arm64` for Graviton families (the `g` in e.g. `r8g.large`), `amd64` otherwise."""
+    return "arm64" if GRAVITON_FAMILY.match(instance_type) else "amd64"
+
+
+def ami_type_for(instance_type: str) -> str:
+    return (
+        "AL2023_ARM_64_STANDARD"
+        if node_arch(instance_type) == "arm64"
+        else "AL2023_x86_64_STANDARD"
+    )
+
+
+def default_node_arch(node_pools) -> str:
+    """Architecture of the `default` pool, which hosts every binpacked workload."""
+    default = next((np for np in node_pools if np.name == "default"), node_pools[0])
+    return node_arch(default.instance_type)
+
 
 # https://docs.aws.amazon.com/eks/latest/userguide/clusters.html
 AWS_EKS_CLUSTER_NAME_LIMIT = 100
@@ -274,7 +297,9 @@ spec:
             ),
             node_role_arn=node_role.arn,
             subnet_ids=vpc.private_subnet_ids,
-            ami_type="AL2023_x86_64_STANDARD" if self.config.custom_ami_id is None else "CUSTOM",
+            ami_type="CUSTOM"
+            if self.config.custom_ami_id is not None
+            else ami_type_for(np_config.instance_type),
             instance_types=[np_config.instance_type],
             # disk_size is configured in launch template
             scaling_config=aws.eks.NodeGroupScalingConfigArgs(
