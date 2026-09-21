@@ -112,6 +112,9 @@ class ClusterUninstallerProvider(ResourceProvider):
                                 image=pinetools_image,
                                 command=["/bin/sh", "-c"],
                                 args=["pinetools cluster uninstall --force"],
+                                env=[
+                                    client.V1EnvVar(name="PINETOOLS_RECYCLE_RUN", value="1"),
+                                ],
                                 resources=client.V1ResourceRequirements(
                                     requests={
                                         "ephemeral-storage": "1Gi",
