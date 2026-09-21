@@ -34,6 +34,7 @@ class K8sSecrets(pulumi.ComponentResource):
         system_db: Any | None = None,
         azure_storage_access_key: pulumi.Input[str] | None = None,
         storage_integration_credentials: dict[str, pulumi.Input[str]] | None = None,
+        fdb_backup_blob_credentials: pulumi.Input[str] | None = None,
         opts: pulumi.ResourceOptions | None = None,
     ):
         super().__init__("pinecone:byoc:K8sSecrets", name, None, opts)
@@ -125,6 +126,18 @@ class K8sSecrets(pulumi.ComponentResource):
                     namespace="external-secrets",
                 ),
                 data={k: b64(v) for k, v in storage_integration_credentials.items()},
+                type="Opaque",
+                opts=ns_opts,
+            )
+
+        if fdb_backup_blob_credentials is not None:
+            k8s.core.v1.Secret(
+                f"{name}-fdb-backup-blob-credentials",
+                metadata=k8s.meta.v1.ObjectMetaArgs(
+                    name="fdb-backup-blob-credentials",
+                    namespace="external-secrets",
+                ),
+                data={"credentials-json": b64(fdb_backup_blob_credentials)},
                 type="Opaque",
                 opts=ns_opts,
             )
