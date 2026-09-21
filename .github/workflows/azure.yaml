@@ -107,6 +107,19 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: pulumi up --yes --stack "$STACK_NAME"
 
+      - name: Diagnose the cell
+        if: failure()
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          PINECONE_REGION: eastus2
+        run: |
+          cell=$(pulumi stack output cluster_name --stack "$STACK_NAME" 2>/dev/null) || { echo "no cluster_name output; the cluster was never created"; exit 0; }
+          rg="${cell}-${PINECONE_REGION}-rg"
+          aks=$(az aks list -g "$rg" --query '[0].name' -o tsv)
+          az aks get-credentials -g "$rg" -n "$aks" --file "$RUNNER_TEMP/kubeconfig" --overwrite-existing
+          KUBECONFIG="$RUNNER_TEMP/kubeconfig" "$GITHUB_WORKSPACE/.github/scripts/e2e-diagnose.sh"
+
   down:
     needs: up
     if: always() && needs.up.result != 'skipped'

@@ -107,6 +107,18 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: pulumi up --yes --stack "$STACK_NAME"
 
+      - name: Diagnose the cell
+        if: failure()
+        working-directory: ./e2e-project
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          GCP_PROJECT: staging-pinecone-byoc
+        run: |
+          cell=$(pulumi stack output cluster_name --stack "$STACK_NAME" 2>/dev/null) || { echo "no cluster_name output; the cluster was never created"; exit 0; }
+          region=$(pulumi stack output region --stack "$STACK_NAME")
+          gcloud container clusters get-credentials "$cell" --region "$region" --project "$GCP_PROJECT"
+          "$GITHUB_WORKSPACE/.github/scripts/e2e-diagnose.sh"
+
   down:
     needs: up
     if: always() && needs.up.result != 'skipped'
