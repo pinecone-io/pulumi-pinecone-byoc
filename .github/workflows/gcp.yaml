@@ -114,8 +114,10 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GCP_PROJECT: staging-pinecone-byoc
         run: |
-          cell=$(pulumi stack output cluster_name --stack "$STACK_NAME" 2>/dev/null) || { echo "no cluster_name output; the cluster was never created"; exit 0; }
-          region=$(pulumi stack output region --stack "$STACK_NAME")
+          # a failed update saves state but no outputs, so read the cluster from state
+          read -r cell region < <(pulumi stack export --stack "$STACK_NAME" \
+            | jq -r '.deployment.resources[] | select(.type == "gcp:container/cluster:Cluster") | "\(.outputs.name // .inputs.name) \(.outputs.location // .inputs.location)"' | head -1)
+          [ -n "${cell:-}" ] || { echo "no GKE cluster in the stack state; it was never created"; exit 0; }
           gcloud container clusters get-credentials "$cell" --region "$region" --project "$GCP_PROJECT"
           "$GITHUB_WORKSPACE/.github/scripts/e2e-diagnose.sh"
 
