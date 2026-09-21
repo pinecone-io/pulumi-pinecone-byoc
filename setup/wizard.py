@@ -8,6 +8,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -2848,17 +2849,30 @@ class GCPSetupWizard(BaseSetupWizard):
         return True
 
     @staticmethod
-    def _refresh_succeeds(*command: str) -> bool:
+    def _refresh_succeeds(*command: str, attempts: int = 3) -> bool:
         """Whether credentials still work. A refresh is the only proof of that GCP offers
         without asking for a permission, and what it returns is a token, so it is written
-        to the kernel's void and never read into this process."""
-        try:
-            refreshed = subprocess.run(
-                command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-            )
-        except FileNotFoundError:
-            return False
-        return refreshed.returncode == 0
+        to the kernel's void and never read into this process.
+
+        A refresh is a network round-trip to Google's token endpoints, so a transient
+        failure gets a few tries before it counts as broken credentials."""
+        stderr = ""
+        for attempt in range(1, attempts + 1):
+            try:
+                refreshed = subprocess.run(
+                    command, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True
+                )
+            except FileNotFoundError:
+                return False
+            if refreshed.returncode == 0:
+                return True
+            stderr = (refreshed.stderr or "").strip().splitlines()[-1:] or [""]
+            stderr = stderr[0]
+            if attempt < attempts:
+                time.sleep(2 * attempt)
+        if stderr:
+            console.print(f"  [dim]{' '.join(command)}: {stderr[:200]}[/]")
+        return False
 
     PROJECT_ENV_VARS = ("CLOUDSDK_CORE_PROJECT", "GOOGLE_CLOUD_PROJECT")
 
