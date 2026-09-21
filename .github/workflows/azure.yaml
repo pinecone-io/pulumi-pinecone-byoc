@@ -119,11 +119,11 @@ jobs:
 
       - name: Diagnose the cell
         if: failure()
-        working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           PINECONE_REGION: eastus2
         run: |
+          cd e2e-project 2>/dev/null || { echo "no e2e-project; the wizard never ran"; exit 0; }
           # a failed update saves state but no outputs, so read the cluster from state
           read -r aks rg < <(pulumi stack export --stack "$STACK_NAME" \
             | jq -r '.deployment.resources[] | select(.type == "azure-native:containerservice:ManagedCluster") | "\(.outputs.name // .inputs.resourceName) \(.outputs.resourceGroupName // .inputs.resourceGroupName)"' | head -1)

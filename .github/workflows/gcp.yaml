@@ -109,11 +109,11 @@ jobs:
 
       - name: Diagnose the cell
         if: failure()
-        working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GCP_PROJECT: staging-pinecone-byoc
         run: |
+          cd e2e-project 2>/dev/null || { echo "no e2e-project; the wizard never ran"; exit 0; }
           # a failed update saves state but no outputs, so read the cluster from state
           read -r cell region < <(pulumi stack export --stack "$STACK_NAME" \
             | jq -r '.deployment.resources[] | select(.type == "gcp:container/cluster:Cluster") | "\(.outputs.name // .inputs.name) \(.outputs.location // .inputs.location)"' | head -1)
