@@ -38,7 +38,7 @@ from .pulumi_operator import PulumiOperator
 from .storage import BlobStorage
 from .vnet import VNet
 
-AZURE_INSTALL_DEADLINE_SECONDS = 2800
+AZURE_INSTALL_DEADLINE_SECONDS = 3600
 
 
 # What the azure-native provider takes besides the subscription: who to authenticate

@@ -113,7 +113,7 @@ class Pinetools(pulumi.ComponentResource):
             ],
             resources=k8s.core.v1.ResourceRequirementsArgs(
                 requests={"ephemeral-storage": "1Gi", "memory": "512Mi", "cpu": "100m"},
-                limits={"ephemeral-storage": "5Gi", "memory": "2Gi"},
+                limits={"ephemeral-storage": "5Gi", "memory": "4Gi"},
             ),
         )
 
