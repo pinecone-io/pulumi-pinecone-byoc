@@ -19,6 +19,7 @@ class GCPConfig(BaseConfig):
             "pc-control-plane/control-planes-sa",
             "pc-data-importer/data-importer-pitboss-sa",
             "pc-data-importer/data-importer-sa",
+            "pc-decorator/decorator-sa",
             "pc-docs-api/docs-api-sa",
             "pc-heartbeat/heartbeat-sa",
             "pc-index-builder-slab/index-builders-sa",
