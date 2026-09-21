@@ -103,13 +103,13 @@ jobs:
     secrets: inherit
 
   gcp:
-    needs: [changes, aws]
+    needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.gcp == 'true' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/gcp.yaml
     secrets: inherit
 
   azure:
-    needs: [changes, gcp]
+    needs: changes
     if: ${{ !cancelled() && (needs.changes.outputs.azure == 'true' || github.event_name == 'workflow_dispatch') }}
     uses: ./.github/workflows/azure.yaml
     secrets: inherit
