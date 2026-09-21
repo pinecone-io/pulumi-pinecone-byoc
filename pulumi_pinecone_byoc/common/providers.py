@@ -29,6 +29,7 @@ from .api import (
     create_dns_delegation,
     create_environment,
     create_service_account,
+    delete_all_indexes,
     delete_amp_access,
     delete_api_key,
     delete_cpgw_api_key,
@@ -417,6 +418,14 @@ class ApiKeyProvider(ResourceProvider):
             client_secret=_props["auth0_client_secret"],
         )
         try:
+            if _props.get("value"):
+                asyncio.run(
+                    asyncio.to_thread(
+                        delete_all_indexes,
+                        api_url=_props["api_url"],
+                        api_key=_props["value"],
+                    )
+                )
             asyncio.run(
                 asyncio.to_thread(
                     delete_api_key,
