@@ -7,6 +7,16 @@ k() { kubectl "$@" 2>&1; }
 
 echo "::group::nodes"
 k get nodes -L kubernetes.io/arch,node.kubernetes.io/instance-type,topology.kubernetes.io/zone
+echo "--- taints"
+k get nodes -o json | jq -r '.items[] | "\(.metadata.name): \((.spec.taints // []) | map("\(.key)=\(.value // "")\(.effect)") | join(" "))"'
+echo "::endgroup::"
+
+echo "::group::cluster-autoscaler status"
+k -n kube-system get configmap cluster-autoscaler-status -o jsonpath='{.data.status}' | head -60
+echo "::endgroup::"
+
+echo "::group::warning events (last 40)"
+k get events -A --field-selector type=Warning --sort-by=.lastTimestamp | tail -40
 echo "::endgroup::"
 
 echo "::group::pods not Running/Succeeded"

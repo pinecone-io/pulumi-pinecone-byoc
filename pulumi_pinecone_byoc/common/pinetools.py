@@ -94,6 +94,13 @@ class Pinetools(pulumi.ComponentResource):
                 operator="Exists",
                 effect="NoSchedule",
             ),
+            # GKE taints arm node pools kubernetes.io/arch=arm64:NoSchedule
+            k8s.core.v1.TolerationArgs(
+                key="kubernetes.io/arch",
+                operator="Equal",
+                value="arm64",
+                effect="NoSchedule",
+            ),
         ]
 
         pinetools_container = k8s.core.v1.ContainerArgs(

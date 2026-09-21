@@ -105,6 +105,12 @@ class ClusterUninstallerProvider(ResourceProvider):
                                 operator="Exists",
                                 effect="NoSchedule",
                             ),
+                            client.V1Toleration(
+                                key="kubernetes.io/arch",
+                                operator="Equal",
+                                value="arm64",
+                                effect="NoSchedule",
+                            ),
                         ],
                         containers=[
                             client.V1Container(
