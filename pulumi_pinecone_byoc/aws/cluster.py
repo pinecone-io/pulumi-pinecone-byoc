@@ -501,6 +501,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
+                    self._api_key,
                     self._pinetools.ns,
                     self._pinetools.sa,
                     self._pinetools.crb,
