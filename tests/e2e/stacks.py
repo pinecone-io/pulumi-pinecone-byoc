@@ -1,7 +1,9 @@
 import getpass
 import json
+import logging
 import os
 import re
+import time
 
 import boto3
 
@@ -59,8 +61,34 @@ def refuse_foreign_account(qualified):
         )
 
 
+NODEGROUP_STILL_DELETING = "ResourceInUseException"
+DESTROY_ATTEMPTS = 8
+DESTROY_RETRY_SECONDS = 90
+
+
 def destroy_stack(cwd, stack=None):
     scoped = (["--stack", stack] if stack else []) + ["--yes"]
     pulumi_quiet("cancel", *scoped, cwd=cwd)
-    pulumi("destroy", "--yes", "--skip-preview", *(["--stack", stack] if stack else []), cwd=cwd)
+    for attempt in range(1, DESTROY_ATTEMPTS + 1):
+        try:
+            pulumi(
+                "destroy",
+                "--yes",
+                "--skip-preview",
+                *(["--stack", stack] if stack else []),
+                cwd=cwd,
+            )
+            break
+        except AssertionError as failure:
+            # the uninstall Job deletes the operator's executor nodegroups asynchronously;
+            # EKS refuses to delete the cluster (409) until they are gone.
+            if NODEGROUP_STILL_DELETING not in str(failure) or attempt == DESTROY_ATTEMPTS:
+                raise
+            logging.info(
+                "[destroy] EKS still has nodegroups attached, retrying in %ss (%s/%s)",
+                DESTROY_RETRY_SECONDS,
+                attempt,
+                DESTROY_ATTEMPTS,
+            )
+            time.sleep(DESTROY_RETRY_SECONDS)
     pulumi_quiet("stack", "rm", *([stack] if stack else []), "--yes", cwd=cwd)
