@@ -37,7 +37,7 @@ from .nlb import InternalLoadBalancer
 from .pulumi_operator import PulumiOperator
 from .vpc import VPC
 
-GCP_INSTALL_DEADLINE_SECONDS = 2400
+GCP_INSTALL_DEADLINE_SECONDS = 3600
 
 
 @dataclass
