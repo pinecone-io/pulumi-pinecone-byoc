@@ -2,13 +2,14 @@ import logging
 from pathlib import Path
 
 import pytest
-from e2e.aws import cluster_from_outputs, grant_cluster_admin
+from e2e.aws import cluster_from_outputs, grant_cluster_admin, reap_operator_nodegroups
 from e2e.commands import pulumi_json, run
 from e2e.kube import log_namespace_holdouts, write_kubeconfig
 from e2e.paths import PROJECTS
 from e2e.settings import destroy_targets
 from e2e.stacks import (
     destroy_stack,
+    eks_cluster_in_state,
     find_stack,
     project_of,
     refuse_foreign_account,
@@ -110,7 +111,23 @@ def _grant_cluster_access(project_dir, target):
     logging.info("[eks] granted %s cluster-admin on %s", principal, cluster)
 
 
+def _reap_orphaned_nodegroups(project_dir, target):
+    if target.cloud != "aws":
+        return
+    try:
+        cluster = eks_cluster_in_state(project_dir, target.stack)
+    except AssertionError as exit_status:
+        logging.info("no state to read a cluster from, not reaping nodegroups: %s", exit_status)
+        return
+    if cluster is None:
+        return
+    reaped = reap_operator_nodegroups(cluster, target.region)
+    if reaped:
+        logging.info("[eks] reaped %s orphaned nodegroups on %s", len(reaped), cluster)
+
+
 def test_e2e_destroy(condemned_project, target):
+    _reap_orphaned_nodegroups(condemned_project, target)
     try:
         destroy_stack(condemned_project, target.stack)
     except AssertionError:

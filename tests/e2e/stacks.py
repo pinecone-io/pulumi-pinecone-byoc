@@ -66,6 +66,24 @@ DESTROY_ATTEMPTS = 8
 DESTROY_RETRY_SECONDS = 90
 
 
+EKS_CLUSTER_TYPE = "aws:eks/cluster:Cluster"
+
+
+def eks_cluster_in_state(cwd, stack):
+    """The EKS cluster name recorded in the stack's state.
+
+    Outputs are what a stack exports after a *successful* update; a stack whose
+    `pulumi up` failed has none, but its state still names every resource it made.
+    """
+    export = pulumi_json("stack", "export", "--stack", stack, cwd=cwd)
+    for resource in export.get("deployment", {}).get("resources", []):
+        if resource.get("type") == EKS_CLUSTER_TYPE:
+            return (resource.get("outputs") or {}).get("name") or (
+                resource.get("inputs") or {}
+            ).get("name")
+    return None
+
+
 def destroy_stack(cwd, stack=None):
     scoped = (["--stack", stack] if stack else []) + ["--yes"]
     pulumi_quiet("cancel", *scoped, cwd=cwd)
