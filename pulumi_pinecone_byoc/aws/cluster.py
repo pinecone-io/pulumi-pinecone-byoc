@@ -41,7 +41,7 @@ from .vpc import VPC
 @dataclass
 class NodePool:
     name: str
-    instance_type: str = "r6in.large"
+    instance_type: str = "m8g.xlarge"
     min_size: int = 1
     max_size: int = 10
     desired_size: int = 3
@@ -461,6 +461,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             "aws_amp_ingest_role_arn": self._k8s_addons.amp_ingest_role.arn,
             "base64_encoded_user_data": self._eks.base64_encoded_user_data,
             "custom_ami_id": args.custom_ami_id,
+            "default_node_arch": config.default_node_arch,
         }
 
         self._k8s_configmaps = K8sConfigMaps(
@@ -500,6 +501,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
+                    self._api_key,
                     self._pinetools.ns,
                     self._pinetools.sa,
                     self._pinetools.crb,
@@ -576,7 +578,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             node_pools = [
                 NodePoolConfig(
                     name="default",
-                    instance_type="r6in.large",
+                    instance_type="m8g.xlarge",
                     min_size=1,
                     max_size=10,
                     desired_size=3,

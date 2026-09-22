@@ -407,14 +407,18 @@ class NLB(pulumi.ComponentResource):
             )
             time.sleep(60)
 
-            max_attempts = 30
-            for attempt in range(max_attempts):
-                # trigger verification on first attempt and every 3rd attempt
-                if attempt % 3 == 0:
+            # AWS verifies the TXT record asynchronously and has taken well over
+            # 20 minutes on a fresh zone; a `failed` state only means the record
+            # was not visible yet, so it is retried rather than treated as final.
+            deadline = time.monotonic() + 45 * 60
+            attempt = 0
+            while time.monotonic() < deadline:
+                if attempt % 6 == 0:
                     with contextlib.suppress(Exception):
                         ec2.start_vpc_endpoint_service_private_dns_verification(
                             ServiceId=service_id
                         )
+                attempt += 1
                 resp = ec2.describe_vpc_endpoint_service_configurations(ServiceIds=[service_id])
                 configs = resp.get("ServiceConfigurations", [])
                 if configs:
@@ -423,13 +427,10 @@ class NLB(pulumi.ComponentResource):
                     if state == "verified":
                         pulumi.log.info(f"{private_dns_name} verified for {service_id}")
                         return service_name
-                    elif state == "failed":
-                        raise Exception(f"{private_dns_name} verification failed for {service_id}")
                     pulumi.log.info(
-                        f"Waiting for {private_dns_name} ({state})... "
-                        f"attempt {attempt + 1}/{max_attempts}"
+                        f"Waiting for {private_dns_name} ({state})... attempt {attempt}"
                     )
-                time.sleep(10)
+                time.sleep(20)
             raise Exception(f"Timeout waiting for {private_dns_name} to verify ({service_id})")
 
         # service_name that only resolves after domain verification completes

@@ -3,7 +3,7 @@
 import pulumi
 import pulumi_kubernetes as k8s
 
-INSTALL_DEADLINE_SECONDS = 1800
+INSTALL_DEADLINE_SECONDS = 3600
 
 WAIT_FOR_REGCRED_SCRIPT = """
 echo "Waiting for regcred secret in pc-control-plane namespace..."
@@ -94,6 +94,13 @@ class Pinetools(pulumi.ComponentResource):
                 operator="Exists",
                 effect="NoSchedule",
             ),
+            # GKE taints arm node pools kubernetes.io/arch=arm64:NoSchedule
+            k8s.core.v1.TolerationArgs(
+                key="kubernetes.io/arch",
+                operator="Equal",
+                value="arm64",
+                effect="NoSchedule",
+            ),
         ]
 
         pinetools_container = k8s.core.v1.ContainerArgs(
@@ -113,7 +120,7 @@ class Pinetools(pulumi.ComponentResource):
             ],
             resources=k8s.core.v1.ResourceRequirementsArgs(
                 requests={"ephemeral-storage": "1Gi", "memory": "512Mi", "cpu": "100m"},
-                limits={"ephemeral-storage": "5Gi", "memory": "2Gi"},
+                limits={"ephemeral-storage": "5Gi", "memory": "4Gi"},
             ),
         )
 

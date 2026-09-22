@@ -21,7 +21,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-5feecb0"
+PINECONE_VERSION = "main-f08293b"
 
 CERTIFICATE_NAME_MAX_LENGTH = 64
 PINECONE_HOSTED_DOMAIN = "pinecone.io"
@@ -1380,7 +1380,7 @@ class AWSPreflightChecker:
             "m6idn.large",
             "i7ie.large",
             "m6idn.xlarge",
-            "r6in.large",
+            "m8g.xlarge",
             "r6i.large",
         ]
         all_available = True
@@ -2617,7 +2617,7 @@ class GCPPreflightChecker:
             self._add_result("GKE Clusters", False, f"Failed to check: {e}")
 
     def _check_machine_types(self):
-        machine_types = ["n2-standard-4", "n2-standard-2", "n2-highmem-2"]
+        machine_types = ["c4a-standard-4", "n2-standard-2", "n2-highmem-2"]
         unavailable = []
 
         try:
@@ -3329,7 +3329,7 @@ class AzurePreflightChecker:
 
     def _check_vm_skus(self):
         vm_skus = [
-            "Standard_D4s_v5",
+            "Standard_D4ps_v6",
             "Standard_L2aos_v4",
             "Standard_L2s_v4",
             "Standard_L4s_v4",
@@ -3405,7 +3405,7 @@ class AzurePreflightChecker:
 
             data = json.loads(result.stdout)
             required_skus = [
-                "Standard_D4s_v5",
+                "Standard_D4ps_v6",
                 "Standard_L2aos_v4",
                 "Standard_L2s_v4",
                 "Standard_L4s_v4",
@@ -3684,7 +3684,7 @@ class AzureSetupWizard(BaseSetupWizard):
             if result.returncode == 0:
                 data = json.loads(result.stdout)
                 required_skus = [
-                    "Standard_D4s_v5",
+                    "Standard_D4ps_v6",
                     "Standard_L2aos_v4",
                     "Standard_L2s_v4",
                     "Standard_L4s_v4",

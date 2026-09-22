@@ -6,7 +6,7 @@ import pulumi
 import pulumi_gcp as gcp
 import pulumi_kubernetes as k8s
 
-from config.base import NodePoolConfig
+from config.base import NodePoolConfig, node_arch
 from config.gcp import GCPConfig
 
 _GCP_SA_MAX_LEN = 30
@@ -411,7 +411,9 @@ users:
             autoscaling=autoscaling,
             node_config=gcp.container.NodePoolNodeConfigArgs(
                 machine_type=np_config.machine_type,
-                min_cpu_platform="Intel Ice Lake",
+                min_cpu_platform="Intel Ice Lake"
+                if node_arch(np_config.machine_type) == "amd64"
+                else None,
                 labels=labels,
                 resource_labels=config.labels(),
                 taints=taints or None,

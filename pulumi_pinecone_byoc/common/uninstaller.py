@@ -105,6 +105,12 @@ class ClusterUninstallerProvider(ResourceProvider):
                                 operator="Exists",
                                 effect="NoSchedule",
                             ),
+                            client.V1Toleration(
+                                key="kubernetes.io/arch",
+                                operator="Equal",
+                                value="arm64",
+                                effect="NoSchedule",
+                            ),
                         ],
                         containers=[
                             client.V1Container(
@@ -112,6 +118,9 @@ class ClusterUninstallerProvider(ResourceProvider):
                                 image=pinetools_image,
                                 command=["/bin/sh", "-c"],
                                 args=["pinetools cluster uninstall --force"],
+                                env=[
+                                    client.V1EnvVar(name="PINETOOLS_RECYCLE_RUN", value="1"),
+                                ],
                                 resources=client.V1ResourceRequirements(
                                     requests={
                                         "ephemeral-storage": "1Gi",

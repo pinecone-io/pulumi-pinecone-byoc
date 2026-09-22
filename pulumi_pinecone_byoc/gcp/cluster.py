@@ -1,8 +1,10 @@
 """PineconeGCPCluster - main component for BYOC deployments on GCP."""
 
+import json
 from dataclasses import dataclass, field
 
 import pulumi
+import pulumi_gcp as gcp
 
 from ..common.cred_refresher import RegistryCredentialRefresher
 from ..common.global_control_plane import CONTROL_PLANE_DEFAULTS, apply_defaults
@@ -35,13 +37,13 @@ from .nlb import InternalLoadBalancer
 from .pulumi_operator import PulumiOperator
 from .vpc import VPC
 
-GCP_INSTALL_DEADLINE_SECONDS = 2400
+GCP_INSTALL_DEADLINE_SECONDS = 3600
 
 
 @dataclass
 class NodePool:
     name: str
-    machine_type: str = "n2-standard-4"
+    machine_type: str = "c4a-standard-4"
     min_size: int = 1
     max_size: int = 10
     disk_size_gb: int = 100
@@ -231,6 +233,20 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             ),
         )
 
+        # fdbbackup speaks S3, so it signs GCS requests with an HMAC pair rather than the SA
+        fdb_backup_hmac = gcp.storage.HmacKey(
+            f"{config.resource_prefix}-fdb-backup-hmac",
+            service_account_email=self._gke.service_accounts.writer_sa.email,
+            opts=pulumi.ResourceOptions(parent=self, depends_on=[self._gke]),
+        )
+        fdb_backup_blob_credentials = pulumi.Output.all(
+            fdb_backup_hmac.access_id, fdb_backup_hmac.secret
+        ).apply(
+            lambda pair: json.dumps(
+                {"accounts": {"@storage.googleapis.com": {"api_key": pair[0], "secret": pair[1]}}}
+            )
+        )
+
         self._k8s_secrets = K8sSecrets(
             f"{config.resource_prefix}-k8s-secrets",
             k8s_provider=self._gke.k8s_provider,
@@ -242,6 +258,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
                 if self._gke.service_accounts.storage_integration_key_json is not None
                 else None
             ),
+            fdb_backup_blob_credentials=fdb_backup_blob_credentials,
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
@@ -286,6 +303,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             "gcp_k8s_version": args.kubernetes_version,
             "gcp_project": config.project,
             "image_registry": GCP_REGISTRY.base_url,
+            "default_node_arch": config.default_node_arch,
             "sli_checkers_project_id": self._api_key.project_id,
             "customer_tags": args.labels or {},
             "public_access_enabled": args.public_access_enabled,
@@ -347,6 +365,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             opts=pulumi.ResourceOptions(
                 parent=self,
                 depends_on=[
+                    self._api_key,
                     self._pinetools.ns,
                     self._pinetools.sa,
                     self._pinetools.crb,
@@ -410,7 +429,7 @@ class PineconeGCPCluster(pulumi.ComponentResource):
             node_pools = [
                 NodePoolConfig(
                     name="default",
-                    machine_type="n2-standard-4",
+                    machine_type="c4a-standard-4",
                     min_size=1,
                     max_size=10,
                     disk_size_gb=100,

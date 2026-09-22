@@ -208,6 +208,14 @@ class RegistryCredentialRefresher(pulumi.ComponentResource):
                             spec=k8s.core.v1.PodSpecArgs(
                                 service_account_name=f"{registry}-credential-refresher",
                                 restart_policy="OnFailure",
+                                tolerations=[
+                                    k8s.core.v1.TolerationArgs(
+                                        key="kubernetes.io/arch",
+                                        operator="Equal",
+                                        value="arm64",
+                                        effect="NoSchedule",
+                                    ),
+                                ],
                                 containers=[
                                     k8s.core.v1.ContainerArgs(
                                         name=f"{registry}-credential-refresher",

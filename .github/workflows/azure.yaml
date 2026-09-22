@@ -10,7 +10,7 @@ permissions:
 jobs:
   up:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 90
     environment: azure-e2e
     env:
       ARM_USE_OIDC: "true"
@@ -192,12 +192,18 @@ jobs:
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: |
+          if ! pulumi stack ls --json | jq -e --arg s "$STACK_NAME" 'any(.[]; .name == $s)' >/dev/null; then
+            echo "no stack $STACK_NAME: the up leg never created one, nothing to destroy"
+            echo "PULUMI_STACK_ABSENT=1" >> "$GITHUB_ENV"
+            exit 0
+          fi
           pulumi destroy --yes --stack "$STACK_NAME" && exit 0
           echo "destroy failed, retrying once in 60s"
           sleep 60
           pulumi destroy --yes --stack "$STACK_NAME"
 
       - name: Pulumi stack rm
+        if: env.PULUMI_STACK_ABSENT != '1'
         working-directory: ./e2e-project
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
