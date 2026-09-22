@@ -1,6 +1,5 @@
 import logging
 import re
-import time
 
 import boto3
 import botocore.exceptions
@@ -230,43 +229,3 @@ def delegate(zone_id, fqdn, nameservers, action="UPSERT"):
             ]
         },
     )
-
-
-OPERATOR_NODEGROUP_PREFIX = "np-"
-
-
-def reap_operator_nodegroups(cluster, region, timeout=1800):
-    """Delete the nodegroups pinetools and the shared-operator added to the cluster.
-
-    They are not in the Pulumi state, so `pulumi destroy` cannot remove them and
-    EKS refuses to delete a cluster that still has nodegroups attached. The
-    uninstall Job normally reaps them, but it never runs when `pulumi up` failed
-    before registering the uninstaller.
-    """
-    eks = boto3.client("eks", region_name=region)
-    try:
-        names = [
-            name
-            for page in eks.get_paginator("list_nodegroups").paginate(clusterName=cluster)
-            for name in page["nodegroups"]
-            if name.startswith(OPERATOR_NODEGROUP_PREFIX)
-        ]
-    except eks.exceptions.ResourceNotFoundException:
-        return []
-    for name in names:
-        status = eks.describe_nodegroup(clusterName=cluster, nodegroupName=name)["nodegroup"][
-            "status"
-        ]
-        if status != "DELETING":
-            logging.info("[eks] deleting orphaned nodegroup %s (%s)", name, status)
-            eks.delete_nodegroup(clusterName=cluster, nodegroupName=name)
-    deadline = time.monotonic() + timeout
-    while names and time.monotonic() < deadline:
-        left = set()
-        for page in eks.get_paginator("list_nodegroups").paginate(clusterName=cluster):
-            left.update(n for n in page["nodegroups"] if n.startswith(OPERATOR_NODEGROUP_PREFIX))
-        if not left:
-            break
-        logging.info("[eks] %s orphaned nodegroups still deleting on %s", len(left), cluster)
-        time.sleep(30)
-    return names

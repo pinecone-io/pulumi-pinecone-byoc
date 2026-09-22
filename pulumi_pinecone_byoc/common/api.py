@@ -296,49 +296,6 @@ def create_api_key(
     return api_key
 
 
-def control_plane_headers(api_key: str) -> dict:
-    return {"Api-Key": api_key, "X-Pinecone-Api-Version": "2025-04"}
-
-
-def list_indexes(api_url: str, api_key: str) -> list[dict]:
-    listed = request(
-        "GET", f"{api_url.rstrip('/')}/indexes", headers=control_plane_headers(api_key)
-    )
-    return list(listed.get("indexes") or []) if isinstance(listed, dict) else []
-
-
-def delete_all_indexes(api_url: str, api_key: str, timeout_seconds: int = 900) -> None:
-    """Delete every index the key can see and wait until the project lists none.
-
-    A project cannot be deleted while it holds indexes; the cell's uninstall normally
-    empties it, but a destroy after a failed install has no uninstall to lean on.
-    """
-    base = api_url.rstrip("/")
-    for index in list_indexes(api_url, api_key):
-        name = index["name"]
-        if index.get("deletion_protection") == "enabled":
-            request(
-                "PATCH",
-                f"{base}/indexes/{name}",
-                headers=control_plane_headers(api_key),
-                body={"deletion_protection": "disabled"},
-            )
-        try:
-            request("DELETE", f"{base}/indexes/{name}", headers=control_plane_headers(api_key))
-            pulumi.log.info(f"deleting index {name} before removing its project")
-        except PineconeApiError as e:
-            if e.code != 404:
-                raise
-    deadline = time.monotonic() + timeout_seconds
-    left = list_indexes(api_url, api_key)
-    while left and time.monotonic() < deadline:
-        time.sleep(15)
-        left = list_indexes(api_url, api_key)
-    if left:
-        names = [i["name"] for i in left]
-        raise PineconeApiError(412, f"indexes still exist after {timeout_seconds}s: {names}")
-
-
 def delete_api_key(
     project_id: str,
     api_url: str,

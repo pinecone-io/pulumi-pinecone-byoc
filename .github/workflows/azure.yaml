@@ -107,30 +107,6 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
         run: pulumi up --yes --stack "$STACK_NAME"
 
-      # the OIDC assertion from the first login is good for five minutes; a
-      # failed install is an hour old by the time this runs
-      - name: Azure login again for diagnostics
-        if: failure()
-        uses: azure/login@v2
-        with:
-          client-id: ${{ secrets.AZURE_CLIENT_ID }}
-          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
-          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
-
-      - name: Diagnose the cell
-        if: failure()
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          PINECONE_REGION: eastus2
-        run: |
-          cd e2e-project 2>/dev/null || { echo "no e2e-project; the wizard never ran"; exit 0; }
-          # a failed update saves state but no outputs, so read the cluster from state
-          read -r aks rg < <(pulumi stack export --stack "$STACK_NAME" \
-            | jq -r '.deployment.resources[] | select(.type == "azure-native:containerservice:ManagedCluster") | "\(.outputs.name // .inputs.resourceName) \(.outputs.resourceGroupName // .inputs.resourceGroupName)"' | head -1)
-          [ -n "${aks:-}" ] || { echo "no AKS cluster in the stack state; it was never created"; exit 0; }
-          az aks get-credentials -g "$rg" -n "$aks" --file "$RUNNER_TEMP/kubeconfig" --overwrite-existing
-          KUBECONFIG="$RUNNER_TEMP/kubeconfig" "$GITHUB_WORKSPACE/.github/scripts/e2e-diagnose.sh"
-
   down:
     needs: up
     if: always() && needs.up.result != 'skipped'
