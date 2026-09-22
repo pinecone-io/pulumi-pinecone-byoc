@@ -22,7 +22,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "benny-n-fdb-backup-pullsecret-ca3aedf"
+PINECONE_VERSION = "benny-n-fdb-backup-pullsecret-79852e6"
 
 CERTIFICATE_NAME_MAX_LENGTH = 64
 PINECONE_HOSTED_DOMAIN = "pinecone.io"
