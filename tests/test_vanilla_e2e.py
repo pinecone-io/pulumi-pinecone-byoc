@@ -2,7 +2,7 @@ import pytest
 from e2e.deploy import deployed_project
 from e2e.reachability import assert_answers, cell_fqdn, data_plane_host
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 
 @pytest.fixture
