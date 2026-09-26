@@ -3,7 +3,8 @@ import re
 
 import boto3
 import botocore.exceptions
-import requests
+
+from pulumi_pinecone_byoc.common.api import resolve_nameservers
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -114,21 +115,14 @@ def parent_zone(domain):
 
 
 def assert_delegated(domain, nameservers):
-    answer = requests.get(
-        "https://dns.google/resolve", params={"name": domain, "type": "NS"}, timeout=15
-    ).json()
-    served_by = {
-        record["data"].rstrip(".").lower()
-        for record in answer.get("Answer", [])
-        if record.get("type") == 2  # NS
-    }
+    served_by = resolve_nameservers(domain)
     expected = {server.rstrip(".").lower() for server in nameservers}
     if expected <= served_by:
         return
 
     records = "\n".join(f"      {domain}.  NS  {server}." for server in sorted(expected))
     raise AssertionError(
-        f"{domain} is not delegated: a public resolver says "
+        f"{domain} is not delegated: the DNS resolver says "
         f"{sorted(served_by) or 'nothing'} serves it, not {sorted(expected)}.\n"
         f"    Add this in the zone that serves {domain.split('.', 1)[1]}:\n{records}"
     )
