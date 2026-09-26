@@ -36,6 +36,7 @@ from .api import (
     delete_dns_delegation,
     delete_environment,
     delete_service_account,
+    fails_to_resolve,
     resolve_nameservers,
 )
 
@@ -957,29 +958,42 @@ class DelegatedZoneProvider(ResourceProvider):
         fqdn, wanted = props["fqdn"], {n.rstrip(".").lower() for n in props["nameservers"]}
         deadline = time.time() + int(props.get("wait_seconds") or 0)
 
+        parent = fqdn.split(".", 1)[1]
+        labels = fqdn.split(".")
+        above = [".".join(labels[i:]) for i in range(1, len(labels) - 1)]
         records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
         asked = False
         while True:
             served_by = resolve_nameservers(fqdn)
-            if wanted <= served_by:
+            broken = (
+                next((n for n in above if fails_to_resolve(n)), None)
+                if wanted <= served_by
+                else None
+            )
+            if wanted <= served_by and broken is None:
                 return CreateResult(id_=fqdn, outs={**props, "nameservers_seen": sorted(served_by)})
             if time.time() >= deadline:
                 break
-            if not asked:
+            if not asked and broken is None:
                 pulumi.log.info(
-                    f"nothing points at {fqdn} yet. Add these where "
-                    f"{fqdn.split('.', 1)[1]} is served:\n\n{records}\n"
+                    f"nothing points at {fqdn} yet. Add these where {parent} is served:\n\n{records}\n"
                 )
                 asked = True
             pulumi.log.info(f"{fqdn} is not delegated yet, checking again in 30s")
             time.sleep(30)
 
+        if broken is not None:
+            raise Exception(
+                f"{broken} returns SERVFAIL, so certificates cannot be issued. "
+                f"Move the NS records from {broken} to {fqdn}:\n\n{records}\n\n"
+                f"A resolver that cached the old records keeps failing until their TTL runs out."
+            )
         raise Exception(
             f"{fqdn} does not resolve. Nothing points at this cell's zone, so its "
             f"certificates cannot be issued and the deploy would fail an hour from now.\n\n"
-            f"Add these where {fqdn.split('.', 1)[1]} is served, then run pulumi up again:\n\n"
+            f"Add these where {parent} is served, then run pulumi up again:\n\n"
             f"{records}\n\n"
-            f"A public resolver currently says {sorted(served_by) or 'nothing'} serves it."
+            f"Your DNS resolver currently says {sorted(served_by) or 'nothing'} serves it."
         )
 
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:

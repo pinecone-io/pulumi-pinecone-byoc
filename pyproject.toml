@@ -7,6 +7,7 @@ license = "Apache-2.0"
 requires-python = ">=3.12"
 keywords = ["pulumi", "pinecone", "byoc", "kubernetes", "aws", "gcp", "azure", "infrastructure"]
 dependencies = [
+    "dnspython>=2.7.0,<3.0.0",
     "pulumi>=3.216.0,<4.0.0",
     "pulumi-kubernetes>=4.25.0,<5.0.0",
     "pulumi-random>=4.19.0,<5.0.0",
@@ -41,7 +42,6 @@ dev = [
     "rich>=14.0.0",
     "pyyaml>=6.0.0",
     "pytest>=8.0.0",
-    "dnspython>=2.7.0",
 ]
 
 [project.urls]

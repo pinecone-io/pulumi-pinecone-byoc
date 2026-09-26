@@ -3,6 +3,7 @@ import json
 import time
 from dataclasses import dataclass
 
+import dns.resolver
 import pulumi
 import requests
 from pydantic import BaseModel
@@ -76,15 +77,22 @@ def get_access_token(api_url: str, auth0: Auth0Config) -> str:
     return response.json().get("access_token")
 
 
+def fails_to_resolve(fqdn: str) -> bool:
+    try:
+        dns.resolver.resolve(fqdn, "CAA", raise_on_no_answer=False)
+    except dns.resolver.NXDOMAIN:
+        return False
+    except (dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout):
+        return True
+    return False
+
+
 def resolve_nameservers(fqdn: str) -> set[str]:
-    answer = requests.get(
-        "https://dns.google/resolve", params={"name": fqdn, "type": "NS"}, timeout=15
-    ).json()
-    return {
-        record["data"].rstrip(".").lower()
-        for record in answer.get("Answer", [])
-        if record.get("type") == 2
-    }
+    try:
+        answer = dns.resolver.resolve(fqdn, "NS", raise_on_no_answer=False)
+    except (dns.resolver.NXDOMAIN, dns.resolver.NoNameservers, dns.resolver.LifetimeTimeout):
+        return set()
+    return {record.to_text().rstrip(".").lower() for record in answer}
 
 
 def management_plane_url(api_url: str) -> str:
