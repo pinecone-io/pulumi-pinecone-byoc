@@ -305,6 +305,7 @@ class K8sAddons(pulumi.ComponentResource):
             cluster_name=eks.cluster_name,
             addon_name="aws-ebs-csi-driver",
             service_account_role_arn=self.ebs_csi_role.arn,
+            configuration_values=json.dumps({"controller": {"extraVolumeTags": config.tags()}}),
             tags=config.tags(),
             opts=pulumi.ResourceOptions(parent=self, depends_on=[self.ebs_csi_role]),
         )
