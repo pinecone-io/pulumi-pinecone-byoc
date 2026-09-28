@@ -1601,10 +1601,14 @@ class AWSSetupWizard(BaseSetupWizard):
             return False
 
         region = self._get_region()
+        eip_headroom = self._eip_headroom(region)
         azs = self._get_azs(region)
+        self._warn_of_eip_shortfall(region, azs, eip_headroom)
         custom_ami_id = self._get_custom_ami_id()
         kms_key_arn = self._get_kms_key_arn()
         vpc_id = self._get_existing_vpc(region)
+        if not vpc_id and not self._eips_allow_a_new_vpc(region, azs, eip_headroom):
+            return False
         if vpc_id:
             self.TOTAL_STEPS += 1
         private_subnet_ids, public_subnet_ids = self._get_subnet_ids(region, vpc_id, azs)
@@ -1749,6 +1753,60 @@ class AWSSetupWizard(BaseSetupWizard):
             for association in vpcs[0].get("CidrBlockAssociationSet", [])
             if association.get("CidrBlockState", {}).get("State") == "associated"
         ]
+
+    def _fetch_eip_headroom(self, region: str) -> int:
+        import boto3
+
+        quotas = boto3.Session().client("service-quotas", region_name=region)
+        try:
+            quota = quotas.get_service_quota(ServiceCode="ec2", QuotaCode="L-0263D0A3")
+        except Exception:
+            quota = quotas.get_aws_default_service_quota(ServiceCode="ec2", QuotaCode="L-0263D0A3")
+        client = boto3.Session().client("ec2", region_name=region)
+        return int(quota["Quota"]["Value"]) - len(client.describe_addresses()["Addresses"])
+
+    def _eip_headroom(self, region: str) -> int | None:
+        if self._non_interactive or self._destroy:
+            return None
+        with (
+            Status("  [dim]Checking Elastic IP quota...[/]", console=console, spinner="dots"),
+            contextlib.suppress(Exception),
+        ):
+            return self._fetch_eip_headroom(region)
+        return None
+
+    @staticmethod
+    def _eips_short(azs: list[str], headroom: int | None) -> int:
+        # a new VPC puts a NAT gateway, and so an Elastic IP, in every AZ
+        return 0 if headroom is None else max(0, len(azs) - headroom)
+
+    def _warn_of_eip_shortfall(self, region: str, azs: list[str], headroom: int | None) -> None:
+        if not self._eips_short(azs, headroom):
+            return
+        console.print()
+        console.print(
+            f"  [yellow]⚠[/] {region} has {max(headroom or 0, 0)} Elastic IPs free; "
+            f"creating a VPC across {len(azs)} AZs needs {len(azs)}"
+        )
+        console.print(
+            "    [dim]Request an 'EC2-VPC Elastic IPs' (L-0263D0A3) increase in AWS Service "
+            "Quotas, or deploy into an existing VPC[/]"
+        )
+
+    def _eips_allow_a_new_vpc(self, region: str, azs: list[str], headroom: int | None) -> bool:
+        short = self._eips_short(azs, headroom)
+        if not short:
+            return True
+        console.print()
+        console.print(
+            f"  [red]✗[/] Creating a VPC across {len(azs)} AZs needs {len(azs)} Elastic IPs; "
+            f"{region} has {max(headroom or 0, 0)} free"
+        )
+        console.print(
+            f"    [dim]Request {short} more 'EC2-VPC Elastic IPs' (L-0263D0A3) in AWS Service "
+            "Quotas and run the wizard again, or enter an existing VPC[/]"
+        )
+        return False
 
     def _get_existing_vpc(self, region: str) -> str | None:
         console.print()
