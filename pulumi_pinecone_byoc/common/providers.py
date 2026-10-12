@@ -36,8 +36,8 @@ from .api import (
     delete_dns_delegation,
     delete_environment,
     delete_service_account,
-    resolve_nameservers,
 )
+from .dns_delegation import DelegationCheck
 
 # =============================================================================
 # Environment Resource
@@ -944,10 +944,12 @@ class DelegatedZoneArgs:
     def __init__(
         self,
         fqdn: pulumi.Input[str],
+        domain: pulumi.Input[str],
         nameservers: pulumi.Input[Sequence[str]],
         wait_seconds: pulumi.Input[int] = 0,
     ):
         self.fqdn = fqdn
+        self.domain = domain
         self.nameservers = nameservers
         self.wait_seconds = wait_seconds
 
@@ -957,29 +959,56 @@ class DelegatedZoneProvider(ResourceProvider):
         fqdn, wanted = props["fqdn"], {n.rstrip(".").lower() for n in props["nameservers"]}
         deadline = time.time() + int(props.get("wait_seconds") or 0)
 
+        check = DelegationCheck(fqdn, DelegationCheck.public_resolver())
         records = "\n".join(f"    {fqdn}.  NS  {n}." for n in sorted(wanted))
-        asked = False
+        told = None
         while True:
-            served_by = resolve_nameservers(fqdn)
-            if wanted <= served_by:
+            zone = check.zone_of(props["domain"])
+            served_by, above = check.nameservers(zone)
+            if served_by is not None and wanted <= served_by:
                 return CreateResult(id_=fqdn, outs={**props, "nameservers_seen": sorted(served_by)})
+            rel = fqdn.rstrip(".").lower().removesuffix(f".{zone}")
+            if served_by is None:
+                message = (
+                    f"No nameserver of `{zone}` gave a usable answer from here (unreachable, "
+                    f"refusing or broken); the delegation of `{fqdn}` cannot be verified."
+                )
+            else:
+                message = (
+                    f"In the `{zone}` zone, create an NS record named `{rel}` "
+                    f"with these values:\n\n{records}\n\n"
+                )
+                if above is not None:
+                    owner, nameservers = above
+                    message += (
+                        f"`{zone}` delegates `{owner}` to {sorted(nameservers)}; records below "
+                        f"it are hidden. "
+                    )
+                    if nameservers & wanted:
+                        message += (
+                            f"Remove that NS record from `{zone}`; it was meant for this cell."
+                        )
+                    else:
+                        message += (
+                            f"A separate `{owner}` zone is not supported: the cell's NS record "
+                            f"must be in the `{zone}` zone."
+                        )
+                else:
+                    message += (
+                        f"`{zone}`'s nameservers currently say "
+                        f"{sorted(served_by) or 'nothing'} serves it."
+                    )
             if time.time() >= deadline:
                 break
-            if not asked:
-                pulumi.log.info(
-                    f"nothing points at {fqdn} yet. Add these where "
-                    f"{fqdn.split('.', 1)[1]} is served:\n\n{records}\n"
-                )
-                asked = True
-            pulumi.log.info(f"{fqdn} is not delegated yet, checking again in 30s")
+            if message != told:
+                pulumi.log.info(message)
+                told = message
             time.sleep(30)
 
         raise Exception(
-            f"{fqdn} does not resolve. Nothing points at this cell's zone, so its "
-            f"certificates cannot be issued and the deploy would fail an hour from now.\n\n"
-            f"Add these where {fqdn.split('.', 1)[1]} is served, then run pulumi up again:\n\n"
-            f"{records}\n\n"
-            f"A public resolver currently says {sorted(served_by) or 'nothing'} serves it."
+            f"{fqdn} is not delegated to this cell's zone, so its certificates cannot be "
+            f"issued and the deploy would fail an hour from now.\n\n{message}\n\n"
+            f"Then run pulumi up again."
         )
 
     def diff(self, _id: str, _olds: dict[str, Any], _news: dict[str, Any]) -> DiffResult:
@@ -1004,6 +1033,7 @@ class DelegatedZone(Resource):
             {
                 "nameservers_seen": None,
                 "fqdn": args.fqdn,
+                "domain": args.domain,
                 "nameservers": args.nameservers,
                 "wait_seconds": args.wait_seconds,
             },

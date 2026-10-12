@@ -201,6 +201,7 @@ class PineconeAWSCluster(pulumi.ComponentResource):
             f"{config.resource_prefix}-dns",
             subdomain=self._subdomain.apply(lambda name: name.removesuffix(".byoc")),
             fqdn=self._subdomain.apply(lambda name: f"{name}.{args.domain}"),
+            domain=args.domain,
             api_url=args.api_url,
             cpgw_api_key=self._cpgw_api_key.key,
             parent_zone_id=args.parent_zone_id,

@@ -3,7 +3,8 @@ import re
 
 import boto3
 import botocore.exceptions
-import requests
+
+from pulumi_pinecone_byoc.common.dns_delegation import DelegationCheck
 
 ELB_TAG = "kubernetes.io/role/elb"
 INTERNAL_ELB_TAG = "kubernetes.io/role/internal-elb"
@@ -114,23 +115,19 @@ def parent_zone(domain):
 
 
 def assert_delegated(domain, nameservers):
-    answer = requests.get(
-        "https://dns.google/resolve", params={"name": domain, "type": "NS"}, timeout=15
-    ).json()
-    served_by = {
-        record["data"].rstrip(".").lower()
-        for record in answer.get("Answer", [])
-        if record.get("type") == 2  # NS
-    }
     expected = {server.rstrip(".").lower() for server in nameservers}
+    check = DelegationCheck(domain, DelegationCheck.public_resolver())
+    zone = check.zone_of(domain.split(".", 1)[1])
+    served_by = check.nameservers(zone)[0] or set()
     if expected <= served_by:
         return
 
     records = "\n".join(f"      {domain}.  NS  {server}." for server in sorted(expected))
     raise AssertionError(
-        f"{domain} is not delegated: a public resolver says "
+        f"{domain} is not delegated: {zone}'s nameservers say "
         f"{sorted(served_by) or 'nothing'} serves it, not {sorted(expected)}.\n"
-        f"    Add this in the zone that serves {domain.split('.', 1)[1]}:\n{records}"
+        f"    In the {zone} zone, create an NS record named "
+        f"{domain.removesuffix('.' + zone)} with these values:\n{records}"
     )
 
 

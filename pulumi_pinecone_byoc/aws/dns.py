@@ -18,6 +18,7 @@ class DNS(pulumi.ComponentResource):
         name: str,
         subdomain: pulumi.Input[str],
         fqdn: pulumi.Input[str],
+        domain: str,
         api_url: pulumi.Input[str],
         cpgw_api_key: pulumi.Input[str],
         pinecone_hosted: bool,
@@ -84,6 +85,7 @@ class DNS(pulumi.ComponentResource):
                 f"{name}-delegated",
                 DelegatedZoneArgs(
                     fqdn=fqdn,
+                    domain=domain,
                     nameservers=self.zone.name_servers,
                     wait_seconds=(
                         delegation_wait_seconds
