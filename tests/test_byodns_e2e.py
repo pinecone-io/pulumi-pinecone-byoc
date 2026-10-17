@@ -25,7 +25,7 @@ from e2e.reachability import (
 )
 from e2e.settings import e2e_parent_domain
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 
 @pytest.fixture(scope="module")

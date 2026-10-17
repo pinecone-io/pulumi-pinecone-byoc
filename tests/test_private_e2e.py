@@ -13,7 +13,7 @@ from e2e.reachability import (
     private_data_plane_host,
 )
 
-pytestmark = pytest.mark.e2e
+pytestmark = [pytest.mark.cloud, pytest.mark.e2e]
 
 GLOO = "gloo-system"
 PUBLIC_INGRESSES = ("gloo-lb", "gloo-lb-http1")

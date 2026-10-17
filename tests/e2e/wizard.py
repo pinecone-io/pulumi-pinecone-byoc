@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 from .commands import run
 from .paths import REPO_ROOT
@@ -27,11 +28,13 @@ def parse_wizard_env(wizard_env):
     )
 
 
-def generate_project(project_dir, stack, cloud, env, skip_install=False, destroy=False):
+def generate_project(
+    project_dir, stack, cloud, env, skip_install=False, destroy=False, source=REPO_ROOT, dev=True
+):
     project_dir.mkdir(parents=True, exist_ok=True)
     args = [
         sys.executable,
-        "setup/wizard.py",
+        str(Path(source) / "setup" / "wizard.py"),
         "--cloud",
         cloud,
         "--non-interactive",
@@ -44,6 +47,7 @@ def generate_project(project_dir, stack, cloud, env, skip_install=False, destroy
         args.append("--skip-install")
     if destroy:
         args.append("--destroy")
-    args += ["--dev", str(REPO_ROOT)]
-    run(*args, cwd=REPO_ROOT, env={"PULUMI_BACKEND": "cloud", **env})
+    if dev:
+        args += ["--dev", str(source)]
+    run(*args, cwd=source, env={"PULUMI_BACKEND": "cloud", **env})
     return project_dir

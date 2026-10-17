@@ -6,17 +6,17 @@ from .commands import pulumi
 from .installer import capture_failed_deploy, supervise_pinetools_logs
 from .paths import PROJECTS
 from .settings import keep_stacks
-from .stacks import destroy_stack, stack_name
+from .stacks import STACK_SUFFIX, destroy_stack, stack_name
 from .wizard import generate_project, non_interactive_env
 
 
-def deploy(project_dir, delegate=None):
+def deploy(project_dir, stack, delegate=None):
     if delegate is None:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=project_dir)
         return
 
     try:
-        pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+        pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=project_dir)
     except Exception as stopped:
         logging.info("[byodns] the first deploy stopped, as a customer's would: %s", stopped)
         try:
@@ -28,11 +28,11 @@ def deploy(project_dir, delegate=None):
             "the deploy did not stop for a delegation, so nothing here exercised one - "
             "an earlier run may have left an NS record for this cell in the parent zone"
         )
-    pulumi("up", "--yes", "--skip-preview", cwd=project_dir)
+    pulumi("up", "--yes", "--skip-preview", "--stack", stack, cwd=project_dir)
 
 
 def deployed_project(request, shape, configure=None, delegate=None, **answers):
-    stack = stack_name(shape, "byoc")
+    stack = stack_name(shape, STACK_SUFFIX)
     project_dir = generate_project(
         PROJECTS / stack,
         stack,
@@ -53,7 +53,7 @@ def deployed_project(request, shape, configure=None, delegate=None, **answers):
 
     try:
         try:
-            deploy(project_dir, delegate)
+            deploy(project_dir, stack, delegate)
         except BaseException:
             capture_failed_deploy(os.environ["AWS_REGION"])
             raise
@@ -62,13 +62,15 @@ def deployed_project(request, shape, configure=None, delegate=None, **answers):
         try:
             if keep_stacks(request):
                 logging.info(
-                    "leaving %s stack %s up - destroy it with: cd %s && pulumi destroy --yes",
+                    "leaving %s stack %s up - destroy it with: "
+                    "pulumi destroy --yes -C %s --stack %s",
                     shape,
                     stack,
                     project_dir,
+                    stack,
                 )
             else:
-                destroy_stack(project_dir)
+                destroy_stack(project_dir, stack)
         finally:
             stop_streaming.set()
             streamer.join(timeout=10)
