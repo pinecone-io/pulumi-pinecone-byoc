@@ -1,0 +1,7 @@
+pinecone_api_key = "pcsk_..."
+pinecone_version = "0.0.0"
+
+subscription_id = "00000000-0000-0000-0000-000000000000"
+region          = "eastus2"
+availability_zones = ["2", "3"]
+public_access_enabled = false
