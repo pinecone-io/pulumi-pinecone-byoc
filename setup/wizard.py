@@ -21,7 +21,7 @@ from rich.status import Status
 # pinecone blue
 BLUE = "#002BFF"
 
-PINECONE_VERSION = "main-c00b848"
+PINECONE_VERSION = "main-158bea2"
 
 CERTIFICATE_NAME_MAX_LENGTH = 64
 PINECONE_HOSTED_DOMAIN = "pinecone.io"
