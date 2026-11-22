@@ -15,6 +15,12 @@ from pulumi.dynamic import (
     UpdateResult,
 )
 
+UNINSTALL_POD_ANNOTATIONS = {"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"}
+
+
+def job_has_failed(status: Any) -> bool:
+    return any(c.type == "Failed" and c.status == "True" for c in status.conditions or [])
+
 
 class ClusterUninstallerProvider(ResourceProvider):
     def create(self, props: dict[str, Any]) -> CreateResult:
@@ -92,13 +98,26 @@ class ClusterUninstallerProvider(ResourceProvider):
                 namespace=namespace,
             ),
             spec=client.V1JobSpec(
-                backoff_limit=1,
+                backoff_limit=2,
+                pod_failure_policy=client.V1PodFailurePolicy(
+                    rules=[
+                        client.V1PodFailurePolicyRule(
+                            action="Ignore",
+                            on_pod_conditions=[
+                                client.V1PodFailurePolicyOnPodConditionsPattern(
+                                    type="DisruptionTarget", status="True"
+                                )
+                            ],
+                        )
+                    ]
+                ),
                 active_deadline_seconds=1800,
                 ttl_seconds_after_finished=300,
                 template=client.V1PodTemplateSpec(
+                    metadata=client.V1ObjectMeta(annotations=UNINSTALL_POD_ANNOTATIONS),
                     spec=client.V1PodSpec(
                         service_account_name="pinetools",
-                        restart_policy="OnFailure",
+                        restart_policy="Never",
                         tolerations=[
                             client.V1Toleration(
                                 key="node.kubernetes.io/disk-pressure",
@@ -164,7 +183,7 @@ class ClusterUninstallerProvider(ResourceProvider):
                     pulumi.log.info(f"Uninstall job {job_name} completed successfully")
                     return
 
-                if job_status.status.failed and job_status.status.failed > 0:
+                if job_has_failed(job_status.status):
                     pods = core_v1.list_namespaced_pod(
                         namespace=namespace,
                         label_selector=f"job-name={job_name}",
