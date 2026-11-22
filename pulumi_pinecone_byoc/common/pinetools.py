@@ -133,10 +133,11 @@ class Pinetools(pulumi.ComponentResource):
 
         def make_pod_spec(
             init_containers: list[k8s.core.v1.ContainerArgs] | None = None,
+            restart_policy: str = "OnFailure",
         ) -> k8s.core.v1.PodSpecArgs:
             return k8s.core.v1.PodSpecArgs(
                 service_account_name="pinetools",
-                restart_policy="OnFailure",
+                restart_policy=restart_policy,
                 tolerations=tolerations,
                 containers=[pinetools_container],
                 init_containers=init_containers,
@@ -156,10 +157,25 @@ class Pinetools(pulumi.ComponentResource):
         ) -> k8s.batch.v1.JobSpecArgs:
             return k8s.batch.v1.JobSpecArgs(
                 backoff_limit=1,
+                pod_failure_policy=k8s.batch.v1.PodFailurePolicyArgs(
+                    rules=[
+                        k8s.batch.v1.PodFailurePolicyRuleArgs(
+                            action="Ignore",
+                            on_pod_conditions=[
+                                k8s.batch.v1.PodFailurePolicyOnPodConditionsPatternArgs(
+                                    type="DisruptionTarget", status="True"
+                                )
+                            ],
+                        )
+                    ]
+                ),
                 active_deadline_seconds=install_deadline_seconds,
                 ttl_seconds_after_finished=300,
                 template=k8s.core.v1.PodTemplateSpecArgs(
-                    spec=make_pod_spec(init_containers),
+                    metadata=k8s.meta.v1.ObjectMetaArgs(
+                        annotations={"cluster-autoscaler.kubernetes.io/safe-to-evict": "false"}
+                    ),
+                    spec=make_pod_spec(init_containers, restart_policy="Never"),
                 ),
             )
 
